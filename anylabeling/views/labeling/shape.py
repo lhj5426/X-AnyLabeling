@@ -1,5 +1,6 @@
 import copy
 import math
+from typing import List, Optional, Dict, Any, Union
 
 from PyQt5 import QtCore, QtGui
 
@@ -111,7 +112,39 @@ class Shape:
             self.line_color = line_color
         self.shape_type = shape_type
 
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the shape to a dictionary representation for serialization.
+
+        This method creates a complete dictionary representation of the shape
+        containing all essential properties, points, and metadata. The dictionary
+        format is suitable for JSON serialization and file storage.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing all shape data with keys:
+                - label: Shape label text
+                - score: Confidence score if available
+                - points: List of (x, y) coordinate tuples
+                - group_id: Group identifier for related shapes
+                - description: Text description
+                - difficult: Boolean indicating difficult annotation
+                - shape_type: Type string (polygon, rectangle, etc.)
+                - flags: Dictionary of boolean flags
+                - attributes: Custom attribute dictionary
+                - kie_linking: Key information extraction links
+                - direction: Rotation angle for rotated rectangles
+                - other custom data from other_data dict
+
+        Examples:
+            >>> shape = Shape(label="cat", shape_type="rectangle")
+            >>> shape_dict = shape.to_dict()
+            >>> print(shape_dict["label"])  # "cat"
+            >>> print(shape_dict["shape_type"])  # "rectangle"
+            
+        Note:
+            Points are converted from QPointF objects to (x, y) tuples.
+            Rotation shapes include additional 'direction' field.
+        """
         dictData = {
             "label": self.label,
             "score": self.score,
@@ -132,7 +165,46 @@ class Shape:
         }
         return dictData
 
-    def load_from_dict(self, data: dict, close=True):
+    def load_from_dict(self, data: Dict[str, Any], close: bool = True) -> "Shape":
+        """
+        Load shape data from a dictionary representation.
+
+        This method populates the shape with data from a dictionary, typically
+        loaded from JSON files or other serialized formats. It reconstructs all
+        shape properties, points, and metadata from the provided data.
+
+        Args:
+            data (Dict[str, Any]): Dictionary containing shape data with keys:
+                - label: Shape label text (required)
+                - score: Confidence score (optional)
+                - points: List of [x, y] coordinate pairs (required)
+                - group_id: Group identifier (optional)
+                - description: Text description (optional, defaults to "")
+                - difficult: Boolean for difficult annotation (optional, defaults to False)
+                - shape_type: Type string (optional, defaults to "polygon")
+                - flags: Dictionary of boolean flags (optional, defaults to {})
+                - attributes: Custom attributes (optional, defaults to {})
+                - kie_linking: KIE links (optional, defaults to [])
+                - direction: Rotation angle for "rotation" type (optional, defaults to 0)
+            close (bool): Whether to close the shape after loading (defaults to True).
+
+        Returns:
+            Shape: Self reference for method chaining.
+
+        Examples:
+            >>> shape_data = {
+            ...     "label": "person",
+            ...     "points": [[10, 20], [30, 40], [50, 60]],
+            ...     "shape_type": "polygon"
+            ... }
+            >>> shape = Shape().load_from_dict(shape_data)
+            >>> print(shape.label)  # "person"
+            >>> print(len(shape.points))  # 3
+            
+        Note:
+            Points are converted from [x, y] lists to QPointF objects.
+            Extra data not in KEYS is stored in other_data dictionary.
+        """
         self.label = data["label"]
         self.score = data.get("score")
         self.points = [QtCore.QPointF(p[0], p[1]) for p in data["points"]]
@@ -189,8 +261,35 @@ class Shape:
             return True
         return False
 
-    def add_point(self, point):
-        """Add a point"""
+    def add_point(self, point: QtCore.QPointF) -> None:
+        """
+        Add a new point to the shape.
+
+        This method adds a point to the shape, with behavior that depends on
+        the shape type. Rectangle shapes have a maximum of 4 points, while
+        polygon and linestrip shapes can accept unlimited points.
+
+        Args:
+            point (QtCore.QPointF): The point to add to the shape.
+
+        Returns:
+            None
+
+        Examples:
+            >>> shape = Shape(shape_type="polygon")
+            >>> shape.add_point(QtCore.QPointF(10, 20))
+            >>> shape.add_point(QtCore.QPointF(30, 40))
+            >>> print(len(shape.points))  # 2
+            
+            >>> # Rectangle shapes are limited to 4 points
+            >>> rect = Shape(shape_type="rectangle")
+            >>> rect.add_point(QtCore.QPointF(0, 0))
+            >>> print(rect.reach_max_points())  # False (until 4 points)
+            
+        Note:
+            For polygon shapes, adding the first point again will close the shape.
+            Rectangle shapes automatically limit points to prevent overflow.
+        """
         if self.shape_type == "rectangle":
             if not self.reach_max_points():
                 self.points.append(point)
@@ -200,8 +299,30 @@ class Shape:
             else:
                 self.points.append(point)
 
-    def can_add_point(self):
-        """Check if shape supports more points"""
+    def can_add_point(self) -> bool:
+        """
+        Check if the shape can accept additional points.
+
+        This method determines whether the current shape type supports
+        adding more points based on its geometric constraints.
+
+        Returns:
+            bool: True if more points can be added, False otherwise.
+
+        Examples:
+            >>> polygon = Shape(shape_type="polygon")
+            >>> print(polygon.can_add_point())  # True
+            
+            >>> line_strip = Shape(shape_type="linestrip")
+            >>> print(line_strip.can_add_point())  # True
+            
+            >>> rectangle = Shape(shape_type="rectangle")
+            >>> print(rectangle.can_add_point())  # False (fixed geometry)
+            
+        Note:
+            Only polygon and linestrip shapes support dynamic point addition.
+            Other shapes have fixed geometries that don't accept new points.
+        """
         return self.shape_type in ["polygon", "linestrip"]
 
     def pop_point(self):
@@ -379,8 +500,37 @@ class Shape:
                 post_i = i
         return post_i
 
-    def contains_point(self, point):
-        """Check if shape contains a point"""
+    def contains_point(self, point: QtCore.QPointF) -> bool:
+        """
+        Check if a point lies within the shape's boundaries.
+
+        This method performs geometric hit testing to determine if a given
+        point is contained within the shape's area. It uses the shape's
+        path representation for accurate boundary detection.
+
+        Args:
+            point (QtCore.QPointF): The point to test for containment.
+
+        Returns:
+            bool: True if the point is inside the shape, False otherwise.
+
+        Examples:
+            >>> # Create a rectangle shape
+            >>> rect = Shape(shape_type="rectangle")
+            >>> rect.points = [QPointF(0, 0), QPointF(100, 100)]
+            >>> 
+            >>> # Test point inside rectangle
+            >>> inside_point = QPointF(50, 50)
+            >>> print(rect.contains_point(inside_point))  # True
+            >>> 
+            >>> # Test point outside rectangle
+            >>> outside_point = QPointF(150, 150)
+            >>> print(rect.contains_point(outside_point))  # False
+            
+        Note:
+            Uses QPainterPath.contains() for accurate geometric calculations.
+            Works with all shape types including polygons, rectangles, and circles.
+        """
         return self.make_path().contains(point)
 
     def get_circle_rect_from_line(self, line):
@@ -414,12 +564,67 @@ class Shape:
         """Return bounding rectangle of the shape"""
         return self.make_path().boundingRect()
 
-    def move_by(self, offset):
-        """Move all points by an offset"""
+    def move_by(self, offset: QtCore.QPointF) -> None:
+        """
+        Move all points of the shape by a specified offset.
+
+        This method translates the entire shape by applying the same offset
+        to all points, effectively moving the shape to a new position while
+        maintaining its relative geometry and proportions.
+
+        Args:
+            offset (QtCore.QPointF): The translation vector to apply to all points.
+
+        Returns:
+            None
+
+        Examples:
+            >>> # Create a shape with some points
+            >>> shape = Shape()
+            >>> shape.points = [QPointF(10, 10), QPointF(20, 20)]
+            >>> 
+            >>> # Move shape 5 pixels right and 3 pixels down
+            >>> offset = QPointF(5, 3)
+            >>> shape.move_by(offset)
+            >>> print(shape.points[0])  # QPointF(15, 13)
+            >>> print(shape.points[1])  # QPointF(25, 23)
+            
+        Note:
+            This operation modifies the shape in-place and affects all points.
+            The shape's relative geometry and size remain unchanged.
+        """
         self.points = [p + offset for p in self.points]
 
-    def move_vertex_by(self, i, offset):
-        """Move a specific vertex by an offset"""
+    def move_vertex_by(self, i: int, offset: QtCore.QPointF) -> None:
+        """
+        Move a specific vertex by an offset while keeping others fixed.
+
+        This method moves only the vertex at the specified index, allowing
+        for shape deformation and vertex-level editing. This is commonly used
+        for interactive shape editing where users drag individual vertices.
+
+        Args:
+            i (int): Index of the vertex to move (0-based).
+            offset (QtCore.QPointF): The translation vector for the vertex.
+
+        Returns:
+            None
+
+        Examples:
+            >>> # Create a triangle
+            >>> shape = Shape()
+            >>> shape.points = [QPointF(0, 0), QPointF(10, 0), QPointF(5, 10)]
+            >>> 
+            >>> # Move the second vertex (index 1) up by 5 pixels
+            >>> shape.move_vertex_by(1, QPointF(0, -5))
+            >>> print(shape.points[1])  # QPointF(10, -5)
+            >>> # Other vertices remain unchanged
+            >>> print(shape.points[0])  # QPointF(0, 0)
+            
+        Note:
+            Index must be valid (0 <= i < len(points)) or IndexError will occur.
+            This enables precise vertex-level shape manipulation for editing.
+        """
         self.points[i] = self.points[i] + offset
 
     def highlight_vertex(self, i, action):
@@ -437,8 +642,31 @@ class Shape:
         """Clear the highlighted point"""
         self._highlight_index = None
 
-    def copy(self):
-        """Copy shape"""
+    def copy(self) -> "Shape":
+        """
+        Create a deep copy of the shape.
+
+        This method creates a completely independent copy of the shape,
+        including all points, properties, and metadata. The copy can be
+        modified without affecting the original shape.
+
+        Returns:
+            Shape: A new Shape instance that is a deep copy of this shape.
+
+        Examples:
+            >>> original = Shape(label="cat", shape_type="rectangle")
+            >>> original.points = [QPointF(0, 0), QPointF(10, 10)]
+            >>> 
+            >>> # Create independent copy
+            >>> copied = original.copy()
+            >>> copied.label = "dog"  # Doesn't affect original
+            >>> print(original.label)  # Still "cat"
+            >>> print(copied.label)    # Now "dog"
+            
+        Note:
+            Uses deep copy to ensure complete independence between shapes.
+            All nested objects (points, attributes, etc.) are also copied.
+        """
         return copy.deepcopy(self)
 
     def __len__(self):
