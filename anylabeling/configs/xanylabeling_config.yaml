@@ -43,6 +43,8 @@ shape:
   select_line_color: [255, 255, 255, 255]
   select_fill_color: [0, 255, 0, 155]
   hvertex_fill_color: [255, 255, 255, 255]
+  # overlap visualization
+  overlap_color: [255, 165, 0, 120]
   point_size: 10
   line_width: 4
 
@@ -119,6 +121,7 @@ shortcuts:
   zoom_to_original: Ctrl+0
   fit_window: Ctrl+F
   fit_width: Ctrl+Shift+F
+  show_navigator: F9
 
   create_polygon: [P, Ctrl+N]
   create_rectangle: [R, Ctrl+R]
