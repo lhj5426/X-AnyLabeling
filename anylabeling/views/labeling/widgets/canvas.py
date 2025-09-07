@@ -2,6 +2,7 @@
 
 import math
 from copy import deepcopy
+from typing import List, Optional, Union, Any
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QWheelEvent
@@ -13,10 +14,14 @@ from .. import utils
 from ..shape import Shape
 
 CURSOR_DEFAULT = QtCore.Qt.ArrowCursor
-CURSOR_POINT = QtCore.Qt.PointingHandCursor
+CURSOR_POINT = QtCore.Qt.PointingHandCursor  # 恢复为默认，用于顶点
 CURSOR_DRAW = QtCore.Qt.CrossCursor
-CURSOR_MOVE = QtCore.Qt.ClosedHandCursor
-CURSOR_GRAB = QtCore.Qt.OpenHandCursor
+CURSOR_MOVE = None   # 将在Canvas初始化时创建 - 拖拽矩形本体时
+CURSOR_GRAB = None   # 将在Canvas初始化时创建 - 接触矩形本体时
+
+# 自定义鼠标指针路径
+CUSTOM_CURSOR_GRAB_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Arrow.cur"
+CUSTOM_CURSOR_MOVE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Unavailiable.cur"
 
 AUTO_DECODE_DELAY_MS = 100
 MAX_AUTO_DECODE_MARKS = 42
@@ -27,8 +32,38 @@ SMALL_ROTATION_INCREMENT = 0.001745
 
 LABEL_COLORMAP = label_colormap()
 
-# 重叠区域的颜色
-OVERLAP_COLOR = QtGui.QColor(2, 71, 254, 150)  # 亮蓝色，较高不透明度
+
+def get_overlap_color(config: dict) -> QtGui.QColor:
+    """
+    Get the overlap color from configuration settings.
+
+    This function retrieves the overlap color configuration from the application
+    settings and returns a QColor object. The overlap color is used to highlight
+    areas where multiple shapes of the same label overlap on the canvas.
+
+    Args:
+        config (dict): Configuration dictionary containing shape settings.
+            Should have structure: config["shape"]["overlap_color"] = [R, G, B, A]
+
+    Returns:
+        QtGui.QColor: Color object for rendering shape overlaps with RGBA values.
+
+    Examples:
+        >>> config = {"shape": {"overlap_color": [255, 165, 0, 120]}}
+        >>> color = get_overlap_color(config)
+        >>> print(color.red(), color.green(), color.blue(), color.alpha())
+        # Output: 255 165 0 120
+
+    Note:
+        If overlap_color is not found in config, returns default orange color.
+        Color values should be in range 0-255 for RGB and alpha components.
+    """
+    try:
+        overlap_rgba = config.get("shape", {}).get("overlap_color", [255, 165, 0, 120])
+        return QtGui.QColor(*overlap_rgba)
+    except (KeyError, TypeError, ValueError):
+        # Fallback to default orange color if config is malformed
+        return QtGui.QColor(255, 165, 0, 120)
 
 
 class Canvas(
@@ -51,6 +86,7 @@ class Canvas(
     auto_labeling_marks_updated = QtCore.pyqtSignal(list)
     auto_decode_requested = QtCore.pyqtSignal(list)
     auto_decode_finish_requested = QtCore.pyqtSignal()
+    shape_hover_changed = QtCore.pyqtSignal()  # 新增信号：形状hover状态变化
 
     CREATE, EDIT = 0, 1
 
@@ -60,6 +96,38 @@ class Canvas(
     _fill_drawing = False
 
     def __init__(self, *args, **kwargs):
+        """
+        Initialize the Canvas widget with configuration and interaction settings.
+
+        This constructor sets up the canvas for image labeling with customizable
+        parameters for interaction behavior, shape editing, and visual appearance.
+        It initializes the drawing state, input handling, and rendering settings.
+
+        Args:
+            *args: Variable length argument list passed to parent QWidget.
+            **kwargs: Arbitrary keyword arguments including:
+                epsilon (float): Mouse sensitivity for shape selection (default: 10.0).
+                double_click (str): Double-click behavior - None or "close" (default: "close").
+                num_backups (int): Number of shape state backups to maintain (default: 10).
+                wheel_rectangle_editing (dict): Settings for mouse wheel rectangle editing.
+                config (dict): Application configuration dictionary for colors and settings.
+                parent: Parent widget reference for accessing application state.
+
+        Returns:
+            None
+
+        Examples:
+            >>> canvas = Canvas(
+            ...     epsilon=15.0,
+            ...     double_click="close",
+            ...     config={"shape": {"overlap_color": [255, 0, 0, 100]}},
+            ...     parent=main_window
+            ... )
+
+        Note:
+            The config parameter is used to customize overlap colors and other
+            visual settings. If not provided, default values are used.
+        """
         self.epsilon = kwargs.pop("epsilon", 10.0)
         self.double_click = kwargs.pop("double_click", "close")
         if self.double_click not in [None, "close"]:
@@ -80,6 +148,13 @@ class Canvas(
             "scale_step", 0.05
         )
         self.parent = kwargs.pop("parent")
+        
+        # Get configuration for colors and settings
+        self._config = kwargs.pop("config", {})
+        
+        # Initialize overlap color from configuration
+        self.overlap_color = get_overlap_color(self._config)
+        
         super().__init__(*args, **kwargs)
         # Initialise local state.
         self.mode = self.EDIT
@@ -120,6 +195,9 @@ class Canvas(
         self.allowed_oop_shape_types = ["rotation"]
         self._painter = QtGui.QPainter()
         self._cursor = CURSOR_DEFAULT
+        
+        # 初始化自定义鼠标指针
+        self._init_custom_cursors()
         # Menus:
         # 0: right-click without selection and dragging of shapes
         # 1: right-click with selection and dragging of shapes
@@ -153,15 +231,70 @@ class Canvas(
         self.auto_decode_tracklet = []
         self.last_mouse_pos = None
 
-    def set_loading(self, is_loading: bool, loading_text: str = None):
-        """Set loading state"""
+    def set_loading(self, is_loading: bool, loading_text: Optional[str] = None) -> None:
+        """
+        Set the canvas loading state with optional loading text.
+
+        This method controls the loading display state of the canvas, showing
+        a loading indicator and optional text message to users. When enabled,
+        the canvas displays loading feedback instead of normal content.
+
+        Args:
+            is_loading (bool): Whether to show loading state (True) or normal state (False).
+            loading_text (Optional[str]): Custom loading message to display.
+                If None, uses the existing loading_text or a default message.
+
+        Returns:
+            None
+
+        Examples:
+            >>> # Show loading with default text
+            >>> canvas.set_loading(True)
+            
+            >>> # Show loading with custom message
+            >>> canvas.set_loading(True, "Processing image...")
+            
+            >>> # Hide loading state
+            >>> canvas.set_loading(False)
+            
+        Note:
+            Automatically triggers a canvas repaint to show/hide the loading display.
+            Loading state blocks normal canvas interaction until disabled.
+        """
         self.is_loading = is_loading
         if loading_text:
             self.loading_text = loading_text
         self.update()
 
-    def set_auto_labeling_mode(self, mode: AutoLabelingMode):
-        """Set auto labeling mode"""
+    def set_auto_labeling_mode(self, mode: AutoLabelingMode) -> None:
+        """
+        Set the auto-labeling mode for automated shape detection and creation.
+
+        This method configures the canvas for automatic labeling functionality,
+        enabling AI-powered shape detection and creation. It switches between
+        manual and automatic labeling modes with appropriate UI updates.
+
+        Args:
+            mode (AutoLabelingMode): The auto-labeling mode to activate:
+                - AutoLabelingMode.NONE: Disable auto-labeling, return to manual mode
+                - Other modes: Enable auto-labeling with specific shape types
+
+        Returns:
+            None
+
+        Examples:
+            >>> from anylabeling.services.auto_labeling.types import AutoLabelingMode
+            >>> 
+            >>> # Enable auto-labeling for rectangles
+            >>> canvas.set_auto_labeling_mode(AutoLabelingMode.RECTANGLE)
+            >>> 
+            >>> # Disable auto-labeling
+            >>> canvas.set_auto_labeling_mode(AutoLabelingMode.NONE)
+            
+        Note:
+            When enabled, automatically switches to the appropriate drawing mode
+            and notifies the parent widget to update the UI accordingly.
+        """
         if mode == AutoLabelingMode.NONE:
             self.is_auto_labeling = False
             self.auto_labeling_mode = mode
@@ -282,22 +415,85 @@ class Canvas(
         """Mouse leave event"""
         self.store_moving_shape()
         self.un_highlight()
+        # 发射hover状态变化信号
+        self.shape_hover_changed.emit()
         self.restore_cursor()
 
     def focusOutEvent(self, _):
         """Window out of focus event"""
         self.restore_cursor()
 
-    def is_visible(self, shape):
-        """Check if a shape is visible"""
+    def is_visible(self, shape: Shape) -> bool:
+        """
+        Check if a shape should be visible based on current display settings.
+
+        This method determines whether a shape should be rendered on the canvas
+        by checking the current visibility mode and the shape's properties.
+        It supports different visibility modes for showing/hiding shapes.
+
+        Args:
+            shape (Shape): The shape to check for visibility.
+
+        Returns:
+            bool: True if the shape should be displayed, False otherwise.
+
+        Examples:
+            >>> shape = Shape(label="cat")
+            >>> if canvas.is_visible(shape):
+            ...     # Shape will be rendered
+            ...     canvas.draw_shape(shape)
+            
+        Note:
+            Visibility can be controlled by various factors including shape
+            properties, current mode settings, and user preferences.
+        """
         return self.visible.get(shape, True)
 
-    def drawing(self):
-        """Check if user is drawing (mode==CREATE)"""
+    def drawing(self) -> bool:
+        """
+        Check if the canvas is currently in drawing mode.
+
+        This property indicates whether the user is actively drawing a new shape.
+        Drawing mode is active when creating new shapes but not when editing
+        existing shapes or in selection mode.
+
+        Returns:
+            bool: True if currently drawing a new shape, False otherwise.
+
+        Examples:
+            >>> if canvas.drawing():
+            ...     print("User is creating a new shape")
+            >>> else:
+            ...     print("User is in selection or edit mode")
+            
+        Note:
+            Drawing mode affects cursor appearance, available actions, and
+            how mouse events are interpreted by the canvas.
+        """
         return self.mode == self.CREATE
 
-    def editing(self):
-        """Check if user is editing (mode==EDIT)"""
+    def editing(self) -> bool:
+        """
+        Check if the canvas is currently in editing mode.
+
+        This property indicates whether the user is editing an existing shape,
+        such as moving vertices, resizing, or repositioning shapes. Editing
+        mode is distinct from drawing mode and selection mode.
+
+        Returns:
+            bool: True if currently editing a shape, False otherwise.
+
+        Examples:
+            >>> if canvas.editing():
+            ...     print("User is modifying an existing shape")
+            ...     # Enable vertex manipulation tools
+            >>> else:
+            ...     print("User is not editing")
+            
+        Note:
+            Editing mode enables vertex highlighting, shape manipulation,
+            and other editing-specific interactions with existing shapes.
+        """
         return self.mode == self.EDIT
 
     def set_auto_labeling(self, value=True):
@@ -308,6 +504,33 @@ class Canvas(
             self.parent.toggle_draw_mode(
                 True, "rectangle", disable_auto_labeling=True
             )
+
+    def update_overlap_color(self, config: dict) -> None:
+        """
+        Update the overlap color from new configuration settings.
+
+        This method updates the canvas overlap color when configuration changes,
+        allowing real-time customization of overlap visualization without
+        requiring application restart.
+
+        Args:
+            config (dict): Updated configuration dictionary containing shape settings.
+                Should have structure: config['shape']['overlap_color'] = [R, G, B, A]
+
+        Returns:
+            None
+
+        Examples:
+            >>> new_config = {'shape': {'overlap_color': [255, 0, 0, 150]}}
+            >>> canvas.update_overlap_color(new_config)
+            >>> canvas.update()  # Trigger repaint to show new color
+
+        Note:
+            Automatically triggers a canvas repaint to apply the new overlap color.
+            Should be called when user changes overlap color in settings.
+        """
+        self.overlap_color = get_overlap_color(config)
+        self.update()  # Trigger repaint with new color
 
     def get_mode(self):
         """Get current mode"""
@@ -330,6 +553,8 @@ class Canvas(
             self.un_highlight()
             self.deselect_shape()
             self.is_move_editing = False
+            # 发射hover状态变化信号
+            self.shape_hover_changed.emit()
 
     def un_highlight(self):
         """Unhighlight shape/vertex/edge"""
@@ -369,6 +594,9 @@ class Canvas(
             pos = self.transform_pos(ev.localPos())
         except AttributeError:
             return
+
+        # 记录hover状态变化前的状态
+        prev_hover_shape = self.h_hape
 
         self.prev_move_point = pos
         self.repaint()
@@ -616,6 +844,10 @@ class Canvas(
             self.un_highlight()
             self.override_cursor(CURSOR_DEFAULT)
         self.vertex_selected.emit(self.h_vertex is not None)
+        
+        # 检查hover状态是否发生变化，如果变化则发射信号
+        if prev_hover_shape != self.h_hape:
+            self.shape_hover_changed.emit()
 
     def add_point_to_edge(self):
         """Add a point to current shape"""
@@ -1404,7 +1636,7 @@ class Canvas(
         if overlap_regions:
             for overlap_path in overlap_regions:
                 if not overlap_path.isEmpty():
-                    p.fillPath(overlap_path, OVERLAP_COLOR)
+                    p.fillPath(overlap_path, self.overlap_color)
 
         # Draw degrees
         for shape in self.shapes:
@@ -2539,3 +2771,21 @@ class Canvas(
                     shape.group_id = None
 
         self.update()
+
+    def _init_custom_cursors(self):
+        """初始化自定义鼠标指针"""
+        global CURSOR_GRAB, CURSOR_MOVE
+        
+        try:
+            # 创建自定义接触矩形指针
+            CURSOR_GRAB = QtGui.QCursor(QtGui.QPixmap(CUSTOM_CURSOR_GRAB_PATH))
+        except Exception:
+            # 如果自定义指针文件不存在，回退到默认指针
+            CURSOR_GRAB = QtCore.Qt.OpenHandCursor
+        
+        try:
+            # 创建自定义移动指针  
+            CURSOR_MOVE = QtGui.QCursor(QtGui.QPixmap(CUSTOM_CURSOR_MOVE_PATH))
+        except Exception:
+            # 如果自定义指针文件不存在，回退到默认指针
+            CURSOR_MOVE = QtCore.Qt.ClosedHandCursor
