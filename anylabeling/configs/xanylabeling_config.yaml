@@ -18,6 +18,7 @@ show_degrees: false
 show_shapes: true
 show_linking: true
 show_attributes: true
+show_order: true
 logger_level: info
 system_clipboard: false
 switch_to_checked: false
@@ -40,7 +41,11 @@ shape:
   fill_color: [220, 220, 220, 150]
   vertex_fill_color: [0, 255, 0, 255]
   # selecting / hovering
-  select_line_color: [255, 255, 255, 255]
+  select_line_color: [255, 255, 255, 255] # For "Highlight All"
+  canvas_select_line_color: [255, 0, 0, 255]
+  canvas_hover_line_color: [0, 255, 255, 255]
+  navigator_select_line_color: [255, 0, 255, 255]
+  navigator_hover_line_color: [255, 255, 0, 255]
   select_fill_color: [0, 255, 0, 155]
   hvertex_fill_color: [255, 255, 255, 255]
   # overlap visualization
@@ -156,6 +161,7 @@ shortcuts:
   toggle_auto_use_last_label: Ctrl+Y
   toggle_visibility_shapes: Ctrl+H
 
+  show_order: Ctrl+Shift+O
   auto_label: Ctrl+A
   auto_run: Ctrl+M
   loop_thru_labels: Ctrl+Shift+N
