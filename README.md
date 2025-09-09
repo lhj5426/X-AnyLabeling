@@ -60,3 +60,35 @@ https://github.com/user-attachments/assets/909e8f64-954a-466e-9d4c-e392386deb12
 
 魔改成朝外
 
+8.增加序号 查看 总序号 和 单一标签序号
+
+<img width="774" height="791" alt="image" src="https://github.com/user-attachments/assets/93156df6-6cdb-4057-810d-e4fe3f3d3b4d" />
+
+并且 主界面也增加序号显示
+
+<img width="1043" height="815" alt="image" src="https://github.com/user-attachments/assets/7bdbbf15-aaf6-4f95-9401-a03886b89bde" />
+
+9.修改序号 在修改标签窗口增加修改序号功能 能显示不能修改 那不能啊
+
+https://github.com/user-attachments/assets/908a5987-2c10-4bc3-a5aa-77e6969cb170
+
+10. 增加标签页面管理 排序功能 排序和修改序号还是有区别的
+
+https://github.com/user-attachments/assets/6223e8e2-fbee-4036-997e-48cde9284345
+
+11. 增加扩展缩放 微调功能 
+
+https://github.com/user-attachments/assets/bc4b4669-b713-464c-9cb4-f9f694e81196
+
+同样对旋转矩形也有效
+
+https://github.com/user-attachments/assets/a13697cb-8030-4035-aba8-bf939b6de90e
+
+
+目前魔改的就这些
+
+主要都是增强标注交互方面的 体验增强 后边随着使用看看还有什么需要魔改的
+
+
+
+
