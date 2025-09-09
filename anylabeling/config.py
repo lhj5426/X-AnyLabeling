@@ -15,7 +15,6 @@ def update_dict(target_dict, new_dict, validate_item=None):
         if validate_item:
             validate_item(key, value)
         if key not in target_dict:
-            logger.warning(f"Skipping unexpected key in config: {key}")
             continue
         if isinstance(target_dict[key], dict) and isinstance(value, dict):
             update_dict(target_dict[key], value, validate_item=validate_item)
@@ -46,6 +45,10 @@ def get_default_config():
     if not osp.exists(osp.join(osp.expanduser("~"), ".xanylabelingrc")):
         save_config(config)
 
+    # Add show_order to the default config
+    if "show_order" not in config:
+        config["show_order"] = True
+    
     return config
 
 
@@ -70,7 +73,17 @@ def get_config(
     # 1. Load default configuration
     config = get_default_config()
 
-    # 2. Load configuration from file or YAML string
+    # 2. Load user's config file and merge it
+    user_config_file = osp.join(osp.expanduser("~"), ".xanylabelingrc")
+    if osp.exists(user_config_file):
+        with open(user_config_file, "r", encoding="utf-8") as f:
+            user_config = yaml.safe_load(f)
+        if user_config:
+            update_dict(
+                config, user_config, validate_item=validate_config_item
+            )
+
+    # 3. Load configuration from file or YAML string
     if not config_file_or_yaml:
         config_file_or_yaml = current_config_file
 
@@ -84,7 +97,7 @@ def get_config(
             f"🔧️ Initializing config from local file: {config_file_or_yaml}"
         )
 
-    # 3. Update configuration with command line arguments
+    # 4. Update configuration with command line arguments
     if config_from_args:
         update_dict(
             config, config_from_args, validate_item=validate_config_item
