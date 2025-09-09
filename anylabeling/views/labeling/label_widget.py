@@ -10,6 +10,7 @@ from typing import Optional, List, Dict, Any, Union
 
 import cv2
 import numpy as np
+import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtCore import QTimer
@@ -57,6 +58,7 @@ from .widgets import (
     LabelListWidgetItem,
     DigitShortcutDialog,
     LabelModifyDialog,
+    ObjectManagerDialog,
     GroupIDModifyDialog,
     OverviewDialog,
     SearchBar,
@@ -65,6 +67,8 @@ from .widgets import (
     ZoomWidget,
     NavigatorWidget,
     NavigatorDialog,
+    ExpandMarginsDialog,
+    LabelCategoryWidget,
 )
 
 LABEL_COLORMAP = utils.label_colormap()
@@ -76,6 +80,7 @@ class LabelingWidget(LabelDialog):
 
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = 0, 1, 2
     next_files_changed = QtCore.pyqtSignal(list)
+    shape_list_changed = QtCore.pyqtSignal()
 
     def __init__(  # noqa: C901
         self,
@@ -109,6 +114,8 @@ class LabelingWidget(LabelDialog):
         self.fn_to_index = {}
         self.cache_auto_label = None
         self.cache_auto_label_group_id = None
+        self.object_manager_dialog = None
+        self.expand_margins_dialog = None
 
         # see configs/anylabeling_config.yaml for valid configuration
         if config is None:
@@ -124,6 +131,12 @@ class LabelingWidget(LabelDialog):
         Shape.fill_color = QtGui.QColor(*self._config["shape"]["fill_color"])
         Shape.select_line_color = QtGui.QColor(
             *self._config["shape"]["select_line_color"]
+        )
+        Shape.canvas_select_line_color = QtGui.QColor(
+            *self._config["shape"]["canvas_select_line_color"]
+        )
+        Shape.canvas_hover_line_color = QtGui.QColor(
+            *self._config["shape"]["canvas_hover_line_color"]
         )
         Shape.select_fill_color = QtGui.QColor(
             *self._config["shape"]["select_fill_color"]
@@ -227,6 +240,7 @@ class LabelingWidget(LabelDialog):
             for item in self.label_list:
                 shape = item.shape()
                 shape.selected = self._highlight_on
+                shape.is_mouse_selected = False
             self.canvas.update()
         btn_highlight.clicked.connect(toggle_highlight)
 
@@ -250,6 +264,8 @@ class LabelingWidget(LabelDialog):
             "QDockWidget::title {" "text-align: center;" "padding: 0px;" "}"
         )
         self.shape_dock.setTitleBarWidget(QtWidgets.QWidget())
+        if self.shape_dock.titleBarWidget():
+            self.shape_dock.titleBarWidget().installEventFilter(self)
 
         self.unique_label_list = UniqueLabelQListWidget(self)
         self.unique_label_list.setToolTip(
@@ -262,8 +278,7 @@ class LabelingWidget(LabelDialog):
         self.unique_label_list.label_visibility_changed.connect(
             self.update_label_visibility
         )
-        self.load_labels(self._config["labels"])
-
+        self.unique_label_list.labels_ordered.connect(self.on_labels_ordered)
         # 创建标签控制按钮
         self.create_label_control_buttons()
 
@@ -314,6 +329,14 @@ class LabelingWidget(LabelDialog):
         
         # Create navigator dialog
         self.navigator_dialog = NavigatorDialog(self)
+        self.navigator_dialog.navigator.set_colors(
+            select_line_color=QtGui.QColor(
+                *self._config["shape"]["navigator_select_line_color"]
+            ),
+            hover_line_color=QtGui.QColor(
+                *self._config["shape"]["navigator_hover_line_color"]
+            ),
+        )
         self.navigator_dialog.navigator.navigation_requested.connect(
             self.on_navigator_request
         )
@@ -344,6 +367,8 @@ class LabelingWidget(LabelDialog):
             config=self._config,
         )
         self.canvas.zoom_request.connect(self.zoom_request)
+
+        self.load_labels(self._config["labels"])
 
         scroll_area = QScrollArea()
         scroll_area.setWidget(self.canvas)
@@ -821,6 +846,12 @@ class LabelingWidget(LabelDialog):
             icon="edit",
             tip=self.tr("Manage Labels: Rename, Delete, Adjust Color"),
         )
+        object_manager = action(
+            self.tr("标签页管理器"),
+            self.object_manager,
+            icon="objects",
+            tip=self.tr("在新窗口中管理和重排序当前页的对象"),
+        )
         gid_manager = action(
             self.tr("&Group ID Manager"),
             self.gid_manager,
@@ -867,6 +898,12 @@ class LabelingWidget(LabelDialog):
             tip=self.tr(
                 "Perform conversion from polygon to oriented bounding box"
             ),
+        )
+        expand_margins = action(
+            self.tr("标注框边距扩展工具"),
+            self.open_expand_margins_dialog,
+            icon="edit",
+            tip=self.tr("批量扩展或收缩标注框的边界"),
         )
         open_chatbot = action(
             self.tr("ChatBot"),
@@ -1079,6 +1116,17 @@ class LabelingWidget(LabelDialog):
             icon=None,
             checkable=True,
             checked=self._config["show_linking"],
+            enabled=True,
+            auto_trigger=True,
+        )
+        show_order = action(
+            self.tr("显示序号"),
+            lambda x: self.set_canvas_params("show_order", x),
+            shortcut=shortcuts["show_order"],
+            tip=self.tr("Show order of shapes"),
+            icon=None,
+            checkable=True,
+            checked=self._config["show_order"],
             enabled=True,
             auto_trigger=True,
         )
@@ -1558,6 +1606,7 @@ class LabelingWidget(LabelDialog):
             show_degrees=show_degrees,
             show_attributes=show_attributes,
             show_linking=show_linking,
+            show_order=show_order,
             show_navigator=show_navigator,
             zoom_actions=zoom_actions,
             open_next_image=open_next_image,
@@ -1694,12 +1743,15 @@ class LabelingWidget(LabelDialog):
                 None,
                 digit_shortcut_manager,
                 label_manager,
+                object_manager,
                 gid_manager,
                 None,
                 hbb_to_obb,
                 obb_to_hbb,
                 polygon_to_hbb,
                 polygon_to_obb,
+                None,
+                expand_margins,
             ),
         )
         utils.add_actions(
@@ -1811,6 +1863,7 @@ class LabelingWidget(LabelDialog):
                 show_attributes,
                 show_linking,
                 show_groups,
+                show_order,
                 hide_selected_polygons,
                 show_hidden_polygons,
                 group_selected_shapes,
@@ -2086,6 +2139,8 @@ class LabelingWidget(LabelDialog):
         
         # 延迟恢复导航器状态，确保在界面完全初始化后执行
         QtCore.QTimer.singleShot(100, self.restore_navigator_state)
+
+        self.shape_list_changed.connect(self._update_object_manager)
         
     def restore_navigator_state(self) -> None:
         """
@@ -2657,6 +2712,154 @@ class LabelingWidget(LabelDialog):
         if result == QtWidgets.QDialog.Accepted:
             self.load_file(self.filename)
 
+    def object_manager(self):
+        """Open the object manager dialog."""
+        if self.no_shape():
+            self.error_message(
+                self.tr("No Objects"),
+                self.tr("There are no objects on this page to manage."),
+            )
+            return
+
+        if self.object_manager_dialog is None:
+            self.object_manager_dialog = ObjectManagerDialog(
+                [item for item in self.label_list], self
+            )
+            self.object_manager_dialog.order_changed.connect(
+                self.on_object_order_changed
+            )
+            self.object_manager_dialog.apply_to_all_requested.connect(
+                self.on_apply_reorder_to_all
+            )
+            self.object_manager_dialog.selection_changed.connect(
+                self.on_object_manager_selection_changed
+            )
+            self.canvas.selection_changed.connect(
+                self.object_manager_dialog.sync_selection
+            )
+            self.object_manager_dialog.item_double_clicked.connect(
+               self.on_object_manager_double_clicked
+            )
+            self.object_manager_dialog.setAttribute(
+                QtCore.Qt.WA_DeleteOnClose, False
+            )
+
+        # Always update the items before showing, to reflect the latest state.
+        self.object_manager_dialog.update_items([item for item in self.label_list])
+
+        if self.object_manager_dialog.isVisible():
+            self.object_manager_dialog.raise_()
+            self.object_manager_dialog.activateWindow()
+        else:
+            self.object_manager_dialog.show()
+
+    def on_object_order_changed(self, ordered_shapes):
+        """Callback for when the object order is changed in the dialog."""
+        # Check if order has actually changed
+        current_shapes = [item.shape() for item in self.label_list]
+        if ordered_shapes == current_shapes:
+            return
+
+        self.load_shapes(ordered_shapes, replace=True)
+        self.set_dirty()
+        self._update_all_item_orders()
+        self.shape_list_changed.emit()
+
+    def on_object_manager_selection_changed(self, selected_shapes):
+        """Callback for selection changes in the object manager dialog."""
+        self.canvas.select_shapes(selected_shapes)
+
+    def on_object_manager_double_clicked(self, shape):
+        """Callback for double-clicks in the object manager dialog."""
+        item = self.label_list.find_item_by_shape(shape)
+        if item:
+            # Ensure the shape is selected before editing
+            # To match the behavior of a single click, we ensure the item is
+            # the only one selected before editing.
+            if item not in self.label_list.selected_items():
+                index = self.label_list.model().indexFromItem(item)
+                self.label_list.selectionModel().setCurrentIndex(
+                    index, QtCore.QItemSelectionModel.ClearAndSelect
+                )
+            self.edit_label(item)
+
+    def on_apply_reorder_to_all(self, selected_categories, move_to_top):
+        """Handle reordering shapes for all images based on selected categories."""
+        if not self.image_list:
+            self.status(self.tr("No images loaded."))
+            return
+
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            self.tr("确认操作"),
+            self.tr(
+                "您将要对当前目录下的全部 {} 张图片应用此对象顺序更改。\n"
+                "此操作将直接修改 JSON 文件且无法撤销。\n\n"
+                "您确定要继续吗？"
+            ).format(len(self.image_list)),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        processed_files = 0
+        modified_shapes_total = 0
+
+        for image_path in self.image_list:
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+            if not osp.exists(label_file_path):
+                continue
+
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                shapes_data = data.get("shapes", [])
+                if not shapes_data:
+                    continue
+
+                selected_shapes = []
+                other_shapes = []
+                for shape_dict in shapes_data:
+                    if shape_dict.get("label") in selected_categories:
+                        selected_shapes.append(shape_dict)
+                    else:
+                        other_shapes.append(shape_dict)
+
+                if not selected_shapes:
+                    continue
+
+                if move_to_top:
+                    new_shapes_data = selected_shapes + other_shapes
+                else:
+                    new_shapes_data = other_shapes + selected_shapes
+
+                if new_shapes_data != shapes_data:
+                    data["shapes"] = new_shapes_data
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    processed_files += 1
+                    modified_shapes_total += len(selected_shapes)
+
+            except Exception as e:
+                logger.error(f"Failed to process file {label_file_path}: {e}")
+                continue
+
+        # Reload current file to reflect changes if it was modified
+        if self.filename in self.image_list:
+            self.load_file(self.filename)
+
+        self.status(
+            self.tr(
+                "操作完成！已修改 {processed_files} 个文件，并对 {modified_shapes_total} 个对象进行了重新排序。"
+            ).format(processed_files=processed_files, modified_shapes_total=modified_shapes_total)
+        )
+
     def gid_manager(self):
         modify_gid_dialog = GroupIDModifyDialog(parent=self)
         result = modify_gid_dialog.exec_()
@@ -2666,6 +2869,41 @@ class LabelingWidget(LabelDialog):
     def open_chatbot(self):
         dialog = ChatbotDialog(self)
         _ = dialog.exec_()
+
+    def open_expand_margins_dialog(self):
+        """Open the expand margins dialog."""
+        # Extract labels from the unique_label_list widget
+        labels = []
+        for i in range(self.unique_label_list.count()):
+            item = self.unique_label_list.item(i)
+            # The actual label name is stored in UserRole
+            label_text = item.data(QtCore.Qt.UserRole)
+            labels.append(label_text)
+
+        if not labels:
+            self.error_message(
+                self.tr("无可用标签"),
+                self.tr("右侧标签列表中没有标签可用于配置。"),
+            )
+            return
+
+        if self.expand_margins_dialog is None:
+            self.expand_margins_dialog = ExpandMarginsDialog(labels, self)
+            self.expand_margins_dialog.apply_current.connect(self.on_expand_margins_current)
+            self.expand_margins_dialog.apply_selected.connect(self.on_expand_margins_selected)
+            self.expand_margins_dialog.apply_all.connect(self.on_expand_margins_all)
+            self.expand_margins_dialog.setAttribute(
+                QtCore.Qt.WA_DeleteOnClose, False
+            )
+        else:
+            # Update the labels in the dialog every time it's opened
+            self.expand_margins_dialog.update_labels(labels)
+
+        if self.expand_margins_dialog.isVisible():
+            self.expand_margins_dialog.raise_()
+            self.expand_margins_dialog.activateWindow()
+        else:
+            self.expand_margins_dialog.show()
 
     def open_vqa(self):
         if not self.image_list:
@@ -2973,12 +3211,13 @@ class LabelingWidget(LabelDialog):
             difficult=first_shape.difficult,
             kie_linking=first_shape.kie_linking,
             move_mode="center",
+            order=None,  # Disable order editing in batch mode
         )
 
         if result[0] is None:
             return
 
-        text, flags, group_id, description, difficult, kie_linking = result
+        text, flags, group_id, description, difficult, kie_linking, _ = result
 
         if not self.validate_label(text):
             self.error_message(
@@ -3004,12 +3243,8 @@ class LabelingWidget(LabelDialog):
 
             item = self.label_list.find_item_by_shape(shape)
             if item is not None:
-                if shape.group_id is None:
-                    color = shape.fill_color.getRgb()[:3]
-                    item.setText("{}".format(html.escape(shape.label)))
-                    item.setBackground(QtGui.QColor(*color, LABEL_OPACITY))
-                else:
-                    item.setText(f"{shape.label} ({shape.group_id})")
+                # No need to update text here, _update_all_item_orders will handle it.
+                pass
 
         self.label_dialog.add_label_history(text)
 
@@ -3024,8 +3259,11 @@ class LabelingWidget(LabelDialog):
             )
 
         self.set_dirty()
+        self._update_all_item_orders()
         self.update_combo_box()
         self.update_gid_box()
+        self.update_label_counts()
+        self.shape_list_changed.emit()
 
     def edit_label(self, item=None):
         if item and not isinstance(item, LabelListWidgetItem):
@@ -3048,6 +3286,7 @@ class LabelingWidget(LabelDialog):
         shape = item.shape()
         if shape is None:
             return
+        current_order = self.label_list.model().indexFromItem(item).row() + 1
         (
             text,
             flags,
@@ -3055,6 +3294,7 @@ class LabelingWidget(LabelDialog):
             description,
             difficult,
             kie_linking,
+            new_order,
         ) = self.label_dialog.pop_up(
             text=shape.label,
             flags=shape.flags,
@@ -3063,6 +3303,7 @@ class LabelingWidget(LabelDialog):
             difficult=shape.difficult,
             kie_linking=shape.kie_linking,
             move_mode=self._config.get("move_mode", "auto"),
+            order=current_order,
         )
         if text is None:
             return
@@ -3098,15 +3339,26 @@ class LabelingWidget(LabelDialog):
             )
 
         self._update_shape_color(shape)
-        if shape.group_id is None:
-            color = shape.fill_color.getRgb()[:3]
-            item.setText("{}".format(html.escape(shape.label)))
-            item.setBackground(QtGui.QColor(*color, LABEL_OPACITY))
-        else:
-            item.setText(f"{shape.label} ({shape.group_id})")
+        # This will be handled by _update_all_item_orders
+        pass
         self.set_dirty()
+
+        # Handle reordering if the order was changed
+        if (
+            new_order is not None
+            and new_order != current_order
+            and 1 <= new_order <= len(self.label_list)
+        ):
+            all_shapes = [it.shape() for it in self.label_list]
+            shape_to_move = all_shapes.pop(current_order - 1)
+            all_shapes.insert(new_order - 1, shape_to_move)
+            self.load_shapes(all_shapes, replace=True)
+
+        self._update_all_item_orders()
         self.update_combo_box()
         self.update_gid_box()
+        self.update_label_counts()
+        self.shape_list_changed.emit()
 
     def file_search_changed(self):
         self.import_image_folder(
@@ -3289,6 +3541,8 @@ class LabelingWidget(LabelDialog):
     # React to canvas signals.
     def shape_selection_changed(self, selected_shapes):
         self._no_selection_slot = True
+        for shape in self.canvas.shapes:
+            shape.is_mouse_selected = False
         for shape in self.canvas.selected_shapes:
             shape.selected = False
         self.label_list.clearSelection()
@@ -3296,6 +3550,7 @@ class LabelingWidget(LabelDialog):
         allow_merge_shape_type = {"rectangle": 0, "polygon": 0, "rotation": 0}
         for shape in self.canvas.selected_shapes:
             shape.selected = True
+            shape.is_mouse_selected = True
             if shape.shape_type in ["rectangle", "polygon", "rotation"]:
                 allow_merge_shape_type[shape.shape_type] += 1
             item = self.label_list.find_item_by_shape(shape)
@@ -3327,20 +3582,25 @@ class LabelingWidget(LabelDialog):
                 if self.canvas.shapes[i].selected:
                     self.update_attributes(i)
                     break
+        self.update_navigator_shapes()  # 更新导航器以同步点击选中效果
 
     def add_label(self, shape, update_last_label=True):
-        if shape.group_id is None:
-            text = shape.label
-        else:
-            text = f"{shape.label} ({shape.group_id})"
+        global_order = len(self.label_list) + 1
+
+        # Text will be set in _update_all_item_orders
+        text = shape.label
+
         label_list_item = LabelListWidgetItem(text, shape)
-        self.label_list.add_iem(label_list_item)
+        self.label_list.addItem(label_list_item)
         if not self.unique_label_list.find_items_by_label(shape.label):
             item = self.unique_label_list.create_item_from_label(shape.label)
             self.unique_label_list.addItem(item)
             rgb = self._get_rgb_by_label(shape.label)
+            # Correctly set initial text. `update_label_counts` will handle subsequent updates.
+            count = sum(1 for s in self.canvas.shapes if s.label == shape.label)
+            display_text = f"{shape.label} ({count})"
             self.unique_label_list.set_item_label(
-                item, shape.label, rgb, LABEL_OPACITY
+                item, display_text, rgb, LABEL_OPACITY
             )
 
         # Add label to history if it is not a special label
@@ -3357,11 +3617,14 @@ class LabelingWidget(LabelDialog):
             action.setEnabled(True)
 
         self._update_shape_color(shape)
+        self._update_all_item_orders()
         color = shape.fill_color.getRgb()[:3]
-        label_list_item.setText("{}".format(html.escape(text)))
+        # label_list_item.setText is now handled by _update_all_item_orders
         label_list_item.setBackground(QtGui.QColor(*color, LABEL_OPACITY))
         self.update_combo_box()
         self.update_gid_box()
+        self.update_label_counts()
+        self.shape_list_changed.emit()
 
     def create_label_control_buttons(self):
         """创建标签控制按钮"""
@@ -3430,15 +3693,48 @@ class LabelingWidget(LabelDialog):
         if clear_existing:
             self.unique_label_list.clear()
 
-        for label in labels:
+        label_counts = {}
+        for shape in self.canvas.shapes:
+            label = shape.label
+            if label in label_counts:
+                label_counts[label] += 1
+            else:
+                label_counts[label] = 1
+
+        for i, label in enumerate(labels):
             # Check if label already exists to avoid duplicates
             if not self.unique_label_list.find_items_by_label(label):
                 item = self.unique_label_list.create_item_from_label(label)
                 self.unique_label_list.addItem(item)
                 rgb = self._get_rgb_by_label(label)
+                count = label_counts.get(label, 0)
+                display_text = f"{label} ({count})"
                 self.unique_label_list.set_item_label(
-                    item, label, rgb, LABEL_OPACITY
+                    item, display_text, rgb, LABEL_OPACITY
                 )
+
+    def update_label_counts(self):
+        """Update the counts of all labels in the unique label list."""
+        label_counts = {}
+        for shape in self.canvas.shapes:
+            label = shape.label
+            if label in [
+                AutoLabelingMode.OBJECT,
+                AutoLabelingMode.ADD,
+                AutoLabelingMode.REMOVE,
+            ]:
+                continue
+            label_counts[label] = label_counts.get(label, 0) + 1
+
+        for i in range(self.unique_label_list.count()):
+            item = self.unique_label_list.item(i)
+            label = item.data(Qt.UserRole)
+            count = label_counts.get(label, 0)
+            display_text = f"{label} ({count})"
+            rgb = self._get_rgb_by_label(label)
+            self.unique_label_list.set_item_label(
+                item, display_text, rgb, LABEL_OPACITY
+            )
 
     def _update_shape_color(self, shape):
         r, g, b = self._get_rgb_by_label(shape.label)
@@ -3476,9 +3772,31 @@ class LabelingWidget(LabelDialog):
             self.label_list.remove_item(item)
         self.update_combo_box()
         self.update_gid_box()
+        self._update_all_item_orders()
+        self.update_label_counts()
+        self.shape_list_changed.emit()
+
+    def _update_all_item_orders(self):
+        """Update the order number for all items in the label list."""
+        label_counts = {}
+        for i, item in enumerate(self.label_list):
+            shape = item.shape()
+            order = i + 1
+
+            label = shape.label
+            label_counts[label] = label_counts.get(label, 0) + 1
+            label_specific_order = label_counts[label]
+
+            if shape.group_id is None:
+                text = f"{order} {label}({label_specific_order})"
+            else:
+                text = f"{order} {label}({label_specific_order}) ({shape.group_id})"
+            item.setText("{}".format(html.escape(text)))
 
     def load_shapes(self, shapes, replace=True, update_last_label=True):
         self._no_selection_slot = True
+        if replace:
+            self.label_list.clear()
         for shape in shapes:
             self.add_label(shape, update_last_label=update_last_label)
         self.label_list.clearSelection()
@@ -3494,6 +3812,12 @@ class LabelingWidget(LabelDialog):
                 shape.fill = False
         self.canvas.load_shapes(shapes, replace=replace)
         self.canvas.update()
+        self.shape_list_changed.emit()
+
+    def _update_object_manager(self):
+        """Update the object manager dialog if it's visible."""
+        if self.object_manager_dialog and self.object_manager_dialog.isVisible():
+            self.object_manager_dialog.update_items([item for item in self.label_list])
 
     def load_flags(self, flags):
         self.flag_widget.clear()
@@ -3712,6 +4036,7 @@ class LabelingWidget(LabelDialog):
     def label_order_changed(self):
         self.set_dirty()
         self.canvas.load_shapes([item.shape() for item in self.label_list])
+        self._update_all_item_orders()
 
     # Callback functions:
     def new_shape(self):
@@ -3754,9 +4079,11 @@ class LabelingWidget(LabelDialog):
                     description,
                     difficult,
                     kie_linking,
+                    _,  # new_order is not used here
                 ) = self.label_dialog.pop_up(
                     text,
                     move_mode=self._config.get("move_mode", "auto"),
+                    order=None,
                 )
                 if not text:
                     self.label_dialog.edit.setText(previous_text)
@@ -4296,6 +4623,9 @@ class LabelingWidget(LabelDialog):
             return False
 
         self.reset_state()
+        if self.object_manager_dialog is not None:
+            self.object_manager_dialog.close()
+            self.object_manager_dialog = None
         self.canvas.setEnabled(False)
         if filename is None:
             filename = self.settings.value("filename", "")
@@ -4416,6 +4746,7 @@ class LabelingWidget(LabelDialog):
             self.update_combo_box()
             self.update_gid_box()
             self.load_shapes(self.label_file.shapes, update_last_label=False)
+            self.update_label_counts()
             if self.label_file.flags is not None:
                 flags.update(self.label_file.flags)
         self.load_flags(flags)
@@ -4553,6 +4884,14 @@ class LabelingWidget(LabelDialog):
         save_config(self._config)
         # ask the use for where to save the labels
         # self.settings.setValue('window/geometry', self.saveGeometry())
+
+    def eventFilter(self, obj, event):
+        """Filter events for double-click on dock title."""
+        if hasattr(self, "shape_dock") and self.shape_dock and obj is self.shape_dock.titleBarWidget():
+            if event.type() == QtCore.QEvent.MouseButtonDblClick:
+                self.object_manager()
+                return True
+        return super(LabelingWidget, self).eventFilter(obj, event)
 
     # QT Overload
     def dragEnterEvent(self, event):
@@ -5410,3 +5749,263 @@ class LabelingWidget(LabelDialog):
 
         except Exception as e:
             logger.error(f"Failed to load thumbnail image: {str(e)}")
+
+    def on_labels_ordered(self, labels):
+        self._config["labels"] = labels
+        save_config(self._config)
+        self.set_dirty()
+
+    def _adjust_shape_margins(self, shape, margins):
+        """Adjusts the margins of a single shape, supporting both rectangle and rotation types."""
+        if shape.shape_type not in ["rectangle", "rotation"]:
+            return False
+
+        label = shape.label
+        if label not in margins:
+            return False
+
+        top, bottom, left, right = margins[label]
+
+        if top == 0 and bottom == 0 and left == 0 and right == 0:
+            return False
+
+        if shape.shape_type == "rectangle":
+            points = shape.points
+            xs = [p.x() for p in points]
+            ys = [p.y() for p in points]
+            x_min, y_min, x_max, y_max = min(xs), min(ys), max(xs), max(ys)
+
+            nx_min = x_min - left
+            ny_min = y_min - top
+            nx_max = x_max + right
+            ny_max = y_max + bottom
+
+            if nx_min >= nx_max or ny_min >= ny_max:
+                return False
+
+            shape.points = [
+                QtCore.QPointF(nx_min, ny_min),
+                QtCore.QPointF(nx_max, ny_min),
+                QtCore.QPointF(nx_max, ny_max),
+                QtCore.QPointF(nx_min, ny_max),
+            ]
+            return True
+
+        elif shape.shape_type == "rotation":
+            points = np.array([[p.x(), p.y()] for p in shape.points])
+            
+            # Calculate center, width, height, and angle
+            center = np.mean(points, axis=0)
+            width = np.linalg.norm(points[0] - points[1])
+            height = np.linalg.norm(points[0] - points[3])
+            
+            vec = points[1] - points[0]
+            angle = np.arctan2(vec[1], vec[0])
+
+            # Adjust width and height
+            new_width = width + left + right
+            new_height = height + top + bottom
+
+            if new_width <= 0 or new_height <= 0:
+                return False
+
+            # Adjust center based on margin changes
+            # This keeps the expansion centered correctly
+            center_offset_x = (right - left) / 2.0
+            center_offset_y = (bottom - top) / 2.0
+            
+            dx = center_offset_x * np.cos(angle) - center_offset_y * np.sin(angle)
+            dy = center_offset_x * np.sin(angle) + center_offset_y * np.cos(angle)
+            
+            new_center = center + np.array([dx, dy])
+
+            # Recalculate the four corners
+            hw = new_width / 2.0
+            hh = new_height / 2.0
+            
+            cos_a = np.cos(angle)
+            sin_a = np.sin(angle)
+
+            new_points = np.array([
+                [-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]
+            ])
+            
+            rotation_matrix = np.array([
+                [cos_a, -sin_a],
+                [sin_a, cos_a]
+            ])
+            
+            rotated_points = np.dot(new_points, rotation_matrix.T)
+            final_points = rotated_points + new_center
+
+            shape.points = [QtCore.QPointF(p[0], p[1]) for p in final_points]
+            return True
+            
+        return False
+
+    def on_expand_margins_current(self, margins):
+        """Handle applying margins to all shapes in the current image."""
+        modified_count = 0
+        for shape in self.canvas.shapes:
+            if self._adjust_shape_margins(shape, margins):
+                modified_count += 1
+        
+        if modified_count > 0:
+            self.canvas.update()
+            self.set_dirty()
+            self.status(self.tr(f"已更新当前页面上的 {modified_count} 个标注框。"))
+        else:
+            self.status(self.tr("当前页面上没有需要更新的标注框。"))
+
+    def on_expand_margins_selected(self, margins):
+        """Handle applying margins to selected shapes in the current image."""
+        if not self.canvas.selected_shapes:
+            self.status(self.tr("没有选中的标注框。"))
+            return
+
+        modified_count = 0
+        for shape in self.canvas.selected_shapes:
+            if self._adjust_shape_margins(shape, margins):
+                modified_count += 1
+
+        if modified_count > 0:
+            self.canvas.update()
+            self.set_dirty()
+            self.status(self.tr(f"已更新选中的 {modified_count} 个标注框。"))
+        else:
+            self.status(self.tr("选中的标注框没有需要更新的。"))
+
+    def on_expand_margins_all(self, margins):
+        """Handle applying margins to all shapes in all images."""
+        if not self.image_list:
+            self.status(self.tr("没有加载图像列表。"))
+            return
+
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            self.tr("确认操作"),
+            self.tr(
+                f"你确定要将这些边距更改应用到全部 {len(self.image_list)} 个文件的标注吗？\n"
+                "这个操作会直接修改文件且无法撤销。"
+            ),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        processed_files = 0
+        modified_shapes_total = 0
+
+        for image_path in self.image_list:
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+            
+            if not osp.exists(label_file_path):
+                continue
+
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                shapes_data = data.get("shapes", [])
+                modified_in_file = False
+                modified_shapes_count = 0
+
+                for shape_dict in shapes_data:
+                    shape_type = shape_dict.get("shape_type")
+                    label = shape_dict.get("label")
+
+                    if label not in margins:
+                        continue
+                    
+                    top, bottom, left, right = margins[label]
+                    if top == 0 and bottom == 0 and left == 0 and right == 0:
+                        continue
+
+                    points = shape_dict.get("points", [])
+                    if not points: continue
+
+                    if shape_type == "rectangle":
+                        xs = [p[0] for p in points]
+                        ys = [p[1] for p in points]
+                        x_min, y_min, x_max, y_max = min(xs), min(ys), max(xs), max(ys)
+
+                        nx_min = x_min - left
+                        ny_min = y_min - top
+                        nx_max = x_max + right
+                        ny_max = y_max + bottom
+
+                        if nx_min < nx_max and ny_min < ny_max:
+                            shape_dict["points"] = [
+                                [nx_min, ny_min], [nx_max, ny_min],
+                                [nx_max, ny_max], [nx_min, ny_max]
+                            ]
+                            modified_in_file = True
+                            modified_shapes_count += 1
+                    
+                    elif shape_type == "rotation":
+                        np_points = np.array(points)
+                        center = np.mean(np_points, axis=0)
+                        width = np.linalg.norm(np_points[0] - np_points[1])
+                        height = np.linalg.norm(np_points[0] - np_points[3])
+                        
+                        vec = np_points[1] - np_points[0]
+                        angle = np.arctan2(vec[1], vec[0])
+
+                        new_width = width + left + right
+                        new_height = height + top + bottom
+
+                        if new_width <= 0 or new_height <= 0:
+                            continue
+
+                        center_offset_x = (right - left) / 2.0
+                        center_offset_y = (bottom - top) / 2.0
+                        
+                        dx = center_offset_x * np.cos(angle) - center_offset_y * np.sin(angle)
+                        dy = center_offset_x * np.sin(angle) + center_offset_y * np.cos(angle)
+                        
+                        new_center = center + np.array([dx, dy])
+
+                        hw = new_width / 2.0
+                        hh = new_height / 2.0
+                        
+                        cos_a = np.cos(angle)
+                        sin_a = np.sin(angle)
+
+                        new_points_local = np.array([
+                            [-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]
+                        ])
+                        
+                        rotation_matrix = np.array([
+                            [cos_a, -sin_a],
+                            [sin_a, cos_a]
+                        ])
+                        
+                        rotated_points = np.dot(new_points_local, rotation_matrix.T)
+                        final_points = rotated_points + new_center
+
+                        shape_dict["points"] = final_points.tolist()
+                        modified_in_file = True
+                        modified_shapes_count += 1
+
+                if modified_in_file:
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    processed_files += 1
+                    modified_shapes_total += modified_shapes_count
+
+            except Exception as e:
+                logger.error(f"处理文件失败 {label_file_path}: {e}")
+                continue
+        
+        # Reload current file to reflect changes if it was modified
+        self.load_file(self.filename)
+
+        self.status(
+            self.tr(
+                f"处理完成！总共修改了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框。"
+            )
+        )

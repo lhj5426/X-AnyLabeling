@@ -14,6 +14,8 @@ from ..labeling.logger import logger
 DEFAULT_LINE_COLOR = QtGui.QColor(0, 255, 0, 128)  # bf hovering
 DEFAULT_FILL_COLOR = QtGui.QColor(255, 168, 0, 100)  # hovering - 橙色半透明
 DEFAULT_SELECT_LINE_COLOR = QtGui.QColor(255, 255, 255)  # selected
+DEFAULT_CANVAS_SELECT_LINE_COLOR = QtGui.QColor(255, 0, 0)  # mouse selected
+DEFAULT_CANVAS_HOVER_LINE_COLOR = QtGui.QColor(0, 255, 255)  # mouse hovered
 DEFAULT_SELECT_FILL_COLOR = QtGui.QColor(255, 0, 0, 155)  # selected - 红色半透明
 DEFAULT_VERTEX_FILL_COLOR = QtGui.QColor(0, 255, 0, 255)  # hovering
 DEFAULT_HVERTEX_FILL_COLOR = QtGui.QColor(255, 255, 255, 255)  # hovering
@@ -50,6 +52,8 @@ class Shape:
     line_color = DEFAULT_LINE_COLOR
     fill_color = DEFAULT_FILL_COLOR
     select_line_color = DEFAULT_SELECT_LINE_COLOR
+    canvas_select_line_color = DEFAULT_CANVAS_SELECT_LINE_COLOR
+    canvas_hover_line_color = DEFAULT_CANVAS_HOVER_LINE_COLOR
     select_fill_color = DEFAULT_SELECT_FILL_COLOR
     vertex_fill_color = DEFAULT_VERTEX_FILL_COLOR
     hvertex_fill_color = DEFAULT_HVERTEX_FILL_COLOR
@@ -81,6 +85,8 @@ class Shape:
         self.points = []
         self.fill = True
         self.selected = True
+        self.is_mouse_selected = False
+        self.is_hovered = False
         self.shape_type = shape_type
         self.flags = flags
         self.other_data = {}
@@ -356,9 +362,14 @@ class Shape:
     def paint(self, painter: QtGui.QPainter):  # noqa: max-complexity: 18
         """Paint shape using QPainter"""
         if self.points:
-            color = (
-                self.select_line_color if self.selected else self.line_color
-            )
+            if self.is_mouse_selected:
+                color = self.canvas_select_line_color
+            elif self.is_hovered:
+                color = self.canvas_hover_line_color
+            elif self.selected:
+                color = self.select_line_color
+            else:
+                color = self.line_color
             pen = QtGui.QPen(color)
             # Try using integer sizes for smoother drawing(?)
             pen.setWidth(max(1, int(round(self.line_width / self.scale))))
