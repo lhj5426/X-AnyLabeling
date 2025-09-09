@@ -72,11 +72,11 @@ https://github.com/user-attachments/assets/909e8f64-954a-466e-9d4c-e392386deb12
 
 https://github.com/user-attachments/assets/908a5987-2c10-4bc3-a5aa-77e6969cb170
 
-10. 增加标签页面管理 排序功能 排序和修改序号还是有区别的
+10.增加标签页面管理 排序功能 排序和修改序号还是有区别的
 
 https://github.com/user-attachments/assets/6223e8e2-fbee-4036-997e-48cde9284345
 
-11. 增加扩展缩放 微调功能 
+11.增加扩展缩放 微调功能 
 
 https://github.com/user-attachments/assets/bc4b4669-b713-464c-9cb4-f9f694e81196
 
