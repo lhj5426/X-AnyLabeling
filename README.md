@@ -51,6 +51,7 @@ https://github.com/user-attachments/assets/aa42d52c-74eb-4a81-b2aa-a9c310e5e327
 https://github.com/user-attachments/assets/909e8f64-954a-466e-9d4c-e392386deb12
 
 7.修改标签显示方向 
+
 <img width="500" height="279" alt="image" src="https://github.com/user-attachments/assets/abacd92a-ca54-4ffa-8a77-18dc9b4c319f" />
 
 官方这个 标签等 显示的 朝内 说真的 碍眼 
