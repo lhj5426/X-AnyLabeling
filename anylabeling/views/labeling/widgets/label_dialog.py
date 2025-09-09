@@ -1199,10 +1199,14 @@ class LabelDialog(QtWidgets.QDialog):
         self.edit.setPlaceholderText(text)
         self.edit.setValidator(utils.label_validator())
         self.edit.editingFinished.connect(self.postprocess)
+        self.setFixedWidth(280)
         if flags:
             self.edit.textChanged.connect(self.update_flags)
         self.edit_group_id = QtWidgets.QLineEdit()
         self.edit_group_id.setPlaceholderText(self.tr("Group ID"))
+        self.edit_order = QtWidgets.QLineEdit()
+        self.edit_order.setPlaceholderText(self.tr("Order"))
+        self.edit_order.setValidator(QtGui.QIntValidator())
         self.edit_group_id.setValidator(
             QtGui.QRegularExpressionValidator(
                 QtCore.QRegularExpression(r"\d*"), None
@@ -1237,6 +1241,7 @@ class LabelDialog(QtWidgets.QDialog):
         layout.setContentsMargins(10, 10, 10, 10)
         if show_text_field:
             layout_edit = QtWidgets.QHBoxLayout()
+            layout_edit.addWidget(self.edit_order, 1)
             layout_edit.addWidget(self.edit, 4)
             layout_edit.addWidget(self.edit_group_id, 2)
             layout.addLayout(layout_edit)
@@ -1490,6 +1495,12 @@ class LabelDialog(QtWidgets.QDialog):
     def get_description(self):
         return self.edit_description.toPlainText()
 
+    def get_order(self):
+        try:
+            return int(self.edit_order.text())
+        except ValueError:
+            return None
+
     def get_difficult_state(self):
         return self.edit_difficult.isChecked()
 
@@ -1510,6 +1521,7 @@ class LabelDialog(QtWidgets.QDialog):
         description=None,
         difficult=False,
         kie_linking=[],
+        order=None,
     ):
         if self._fit_to_content["row"]:
             self.label_list.setMinimumHeight(
@@ -1542,6 +1554,10 @@ class LabelDialog(QtWidgets.QDialog):
             self.edit_group_id.clear()
         else:
             self.edit_group_id.setText(str(group_id))
+        if order is not None:
+            self.edit_order.setText(str(order))
+        else:
+            self.edit_order.clear()
         items = self.label_list.findItems(text, QtCore.Qt.MatchFixedString)
 
         if items:
@@ -1596,5 +1612,6 @@ class LabelDialog(QtWidgets.QDialog):
                 self.get_description(),
                 self.get_difficult_state(),
                 self.get_kie_linking(),
+                self.get_order(),
             )
-        return None, None, None, None, False, []
+        return None, None, None, None, False, [], None

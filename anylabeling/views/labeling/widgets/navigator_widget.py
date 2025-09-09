@@ -94,7 +94,18 @@ class NavigatorWidget(QWidget):
         self.shape_pen = QPen(QColor(0, 255, 0, 180), 1)     # Green pen for shapes
         
         self.setMouseTracking(True)
+
+        self.navigator_select_line_color = QColor(255, 0, 255, 255)
+        self.navigator_hover_line_color = QColor(255, 255, 0, 255)
         
+    def set_colors(
+        self,
+        select_line_color: QColor,
+        hover_line_color: QColor,
+    ):
+        self.navigator_select_line_color = select_line_color
+        self.navigator_hover_line_color = hover_line_color
+
     def set_image(self, image_data: Any) -> None:
         """
         Set the image to display in the navigator widget.
@@ -420,12 +431,20 @@ class NavigatorWidget(QWidget):
         if hasattr(shape, '_is_highlighted') and shape._is_highlighted:
             return QColor(255, 255, 0)  # Bright yellow for hover state
         
-        # Handle selection state
-        if hasattr(shape, 'selected') and shape.selected:
-            if hasattr(shape, 'select_line_color') and shape.select_line_color:
-                color = shape.select_line_color
-                if color and color.isValid():
-                    return color
+        # 优先处理鼠标单击选中
+        # 其次处理鼠标单击选中
+        if getattr(shape, "is_mouse_selected", False):
+            return self.navigator_select_line_color
+
+        # 再次处理鼠标悬停
+        if getattr(shape, "is_hovered", False):
+            return self.navigator_hover_line_color
+
+        # 处理全局高亮（"Highlight All"）
+        if getattr(shape, 'selected', False) and hasattr(shape, 'select_line_color'):
+            color = getattr(shape, 'select_line_color')
+            if color and color.isValid():
+                return color
         
         # Use normal line color
         if hasattr(shape, 'line_color') and shape.line_color:
@@ -737,8 +756,7 @@ class NavigatorDialog(QtWidgets.QDialog):
         
         self.setWindowTitle("导航器")
         self.setWindowFlags(
-            Qt.Window | 
-            Qt.WindowStaysOnTopHint | 
+            Qt.Tool |
             Qt.WindowCloseButtonHint
         )
         

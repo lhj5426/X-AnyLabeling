@@ -13,6 +13,7 @@ class UniqueLabelQListWidget(EscapableQListWidget):
     label_visibility_changed = pyqtSignal(str, bool)  # label, visible
     # 新增：选中项变化信号
     selection_changed = pyqtSignal()
+    labels_ordered = pyqtSignal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -20,6 +21,7 @@ class UniqueLabelQListWidget(EscapableQListWidget):
 
         # Set the selection mode to allow multiple selections.
         self.setSelectionMode(QtWidgets.QAbstractItemView.MultiSelection)
+        self.setDragDropMode(QtWidgets.QAbstractItemView.NoDragDrop)
 
         # Connect the itemChanged signal to the on_item_changed slot.
         self.itemChanged.connect(self.on_item_changed)
@@ -60,7 +62,7 @@ class UniqueLabelQListWidget(EscapableQListWidget):
     def set_item_label(self, item, label, color=None, opacity=128):
         """设置标签项的文本和颜色（仅影响显示，不影响选中/勾选状态）"""
         item.setText(label)
-        if color:
+        if color is not None:
             background_color = QtGui.QColor(*color, opacity)
             item.setBackground(background_color)
 
@@ -141,3 +143,15 @@ class UniqueLabelQListWidget(EscapableQListWidget):
     def on_selection_changed(self):
         # 选中项变化时发射信号
         self.selection_changed.emit()
+
+
+    def get_ordered_labels(self):
+        labels = []
+        for i in range(self.count()):
+            item = self.item(i)
+            labels.append(item.data(Qt.UserRole))
+        return labels
+
+    def update_label_order(self):
+        ordered_labels = self.get_ordered_labels()
+        self.labels_ordered.emit(ordered_labels)

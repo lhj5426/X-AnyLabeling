@@ -212,6 +212,7 @@ class Canvas(
         self.show_degrees = False
         self.show_attributes = True
         self.show_linking = True
+        self.show_order = True
 
         # Set cross line options.
         self.cross_line_show = True
@@ -565,6 +566,8 @@ class Canvas(
         self.prev_h_vertex = self.h_vertex
         self.prev_h_edge = self.h_edge
         self.h_hape = self.h_vertex = self.h_edge = None
+        for shape in self.shapes:
+            shape.is_hovered = False
 
     def selected_vertex(self):
         """Check if selected a vertex"""
@@ -823,6 +826,7 @@ class Canvas(
 #                     )
                 self.setStatusTip(self.toolTip())
                 self.override_cursor(CURSOR_GRAB)
+                shape.is_hovered = True
                 # [Feature] Automatically highlight shape when the mouse is moved inside it
                 if self.h_shape_is_hovered:
                     group_mode = (
@@ -1762,25 +1766,34 @@ class Canvas(
                 )
             )
             labels = []
+            shape_orders = {}
+            if self.show_order:
+                label_counters_for_ordering = {}
+                for i, shape_in_list in enumerate(self.shapes):
+                    label = shape_in_list.label
+                    label_counters_for_ordering[label] = label_counters_for_ordering.get(label, 0) + 1
+                    shape_orders[id(shape_in_list)] = (i + 1, label_counters_for_ordering[label])
+
             for shape in self.shapes:
-                if not shape.visible:
+                if not self.is_visible(shape):
                     continue
                 d_react = shape.point_size / shape.scale
                 d_text = 1.5
-                if not shape.visible:
-                    continue
                 if shape.label in [
                     "AUTOLABEL_OBJECT",
                     "AUTOLABEL_ADD",
                     "AUTOLABEL_REMOVE",
                 ]:
                     continue
-                label_text = (
-                    (
-                        f"id:{shape.group_id} "
-                        if shape.group_id is not None
-                        else ""
-                    )
+
+                label_text = ""
+                if self.show_order:
+                    global_order, label_order = shape_orders.get(id(shape), (0, 0))
+                    if global_order > 0:
+                        label_text += f"{global_order} ({label_order}) "
+
+                label_text += (
+                    (f"id:{shape.group_id} " if shape.group_id is not None else "")
                     + (f"{shape.label}")
                     + (
                         f" {float(shape.score):.2f}"
@@ -1788,7 +1801,7 @@ class Canvas(
                         else ""
                     )
                 )
-                if not label_text:
+                if not label_text.strip():
                     continue
                 fm = QtGui.QFontMetrics(p.font())
                 bound_rect = fm.boundingRect(label_text)
@@ -1797,15 +1810,16 @@ class Canvas(
                         bbox = shape.bounding_rect()
                     except IndexError:
                         continue
+                    padding = 10  # Add horizontal padding to the right
                     rect = QtCore.QRect(
                         int(bbox.x()),
-                        int(bbox.y()),
-                        int(bound_rect.width()),
+                        int(bbox.y() - bound_rect.height()),
+                        int(bound_rect.width() + padding),
                         int(bound_rect.height()),
                     )
                     text_pos = QtCore.QPoint(
                         int(bbox.x()),
-                        int(bbox.y() + bound_rect.height() - d_text),
+                        int(bbox.y() - d_text),
                     )
                 elif shape.shape_type in [
                     "circle",

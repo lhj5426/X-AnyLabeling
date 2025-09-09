@@ -17,6 +17,7 @@ from .label_dialog import (
     DigitShortcutDialog,
     GroupIDModifyDialog,
 )
+from .object_manager_dialog import ObjectManagerDialog
 from .model_dropdown_widget import SearchBar
 from .label_list_widget import LabelListWidget, LabelListWidgetItem
 from .overview_dialog import OverviewDialog
@@ -25,3 +26,38 @@ from .toolbar import ToolBar
 from .unique_label_qlist_widget import UniqueLabelQListWidget
 from .zoom_widget import ZoomWidget
 from .navigator_widget import NavigatorWidget, NavigatorDialog
+from .expand_margins_dialog import ExpandMarginsDialog
+from .label_category_widget import LabelCategoryWidget
+
+
+__all__ = [
+    "AboutDialog",
+    "AutoLabelingWidget",
+    "BrightnessContrastDialog",
+    "Canvas",
+    "ChatbotDialog",
+    "VQADialog",
+    "ColorDialog",
+    "FileDialogPreview",
+    "GroupIDFilterComboBox",
+    "LabelFilterComboBox",
+    "CrosshairSettingsDialog",
+    "LabelDialog",
+    "LabelQLineEdit",
+    "LabelModifyDialog",
+    "DigitShortcutDialog",
+    "GroupIDModifyDialog",
+    "ObjectManagerDialog",
+    "SearchBar",
+    "LabelListWidget",
+    "LabelListWidgetItem",
+    "OverviewDialog",
+    "Popup",
+    "ToolBar",
+    "UniqueLabelQListWidget",
+    "ZoomWidget",
+    "NavigatorWidget",
+    "NavigatorDialog",
+    "ExpandMarginsDialog",
+    "LabelCategoryWidget",
+]

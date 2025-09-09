@@ -159,7 +159,7 @@ class LabelListWidget(QtWidgets.QListView):
     def scroll_to_item(self, item):
         self.scrollTo(self.model().indexFromItem(item))
 
-    def add_iem(self, item):
+    def addItem(self, item):
         if not isinstance(item, LabelListWidgetItem):
             raise TypeError("item must be LabelListWidgetItem")
         self.model().setItem(self.model().rowCount(), 0, item)
