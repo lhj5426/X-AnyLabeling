@@ -21,12 +21,12 @@ CURSOR_GRAB = None   # 将在Canvas初始化时创建 - 接触矩形本体时
 
 # 自定义鼠标指针路径
 CUSTOM_CURSOR_GRAB_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Arrow.cur"
-CUSTOM_CURSOR_MOVE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Unavailiable.cur"
+CUSTOM_CURSOR_MOVE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Link.cur"
 
 AUTO_DECODE_DELAY_MS = 100
 MAX_AUTO_DECODE_MARKS = 42
 AUTO_DECODE_MOVE_THRESHOLD = 5.0
-MOVE_SPEED = 5.0
+MOVE_SPEED = 0.5
 LARGE_ROTATION_INCREMENT = 0.0087
 SMALL_ROTATION_INCREMENT = 0.001745
 
@@ -766,7 +766,7 @@ class Canvas(
         # - Highlight shapes
         # - Highlight vertex
         # Update shape/vertex fill and tooltip value accordingly.
-        self.setToolTip(self.tr("Image"))
+        self.setToolTip(self.tr(""))
         for shape in reversed([s for s in self.shapes if self.is_visible(s)]):
             # Look for a nearby vertex to highlight. If that fails,
             # check if we happen to be inside a shape.
@@ -781,10 +781,10 @@ class Canvas(
                 self.h_edge = None
                 shape.highlight_vertex(index, shape.MOVE_VERTEX)
                 self.override_cursor(CURSOR_POINT)
-                self.setToolTip(
-                    self.tr("Click & drag to move point of shape '%s'")
-                    % shape.label
-                )
+# #                 self.setToolTip(
+# #                     self.tr("Click & drag to move point of shape '%s'")
+# #                     % shape.label
+# #                 )
                 self.setStatusTip(self.toolTip())
                 self.update()
                 break
@@ -796,10 +796,10 @@ class Canvas(
                 self.prev_h_shape = self.h_hape = shape
                 self.prev_h_edge = self.h_edge = index_edge
                 self.override_cursor(CURSOR_POINT)
-                self.setToolTip(
-                    self.tr("Click to create point of shape '%s'")
-                    % shape.label
-                )
+# #                 self.setToolTip(
+# #                     self.tr("Click to create point of shape '%s'")
+# #                     % shape.label
+# #                 )
                 self.setStatusTip(self.toolTip())
                 self.update()
                 break
@@ -811,16 +811,16 @@ class Canvas(
                 self.prev_h_shape = self.h_hape = shape
                 self.prev_h_edge = self.h_edge
                 self.h_edge = None
-                if shape.group_id and shape.shape_type == "rectangle":
-                    tooltip_text = "Click & drag to move shape '{label} {group_id}'".format(
-                        label=shape.label, group_id=shape.group_id
-                    )
-                    self.setToolTip(self.tr(tooltip_text))
-                else:
-                    self.setToolTip(
-                        self.tr("Click & drag to move shape '%s'")
-                        % shape.label
-                    )
+#                 if shape.group_id and shape.shape_type == "rectangle":
+#                     tooltip_text = "Click & drag to move shape '{label} {group_id}'".format(
+#                         label=shape.label, group_id=shape.group_id
+#                     )
+#                     self.setToolTip(self.tr(tooltip_text))
+#                 else:
+#                     self.setToolTip(
+#                         self.tr("Click & drag to move shape '%s'")
+#                         % shape.label
+#                     )
                 self.setStatusTip(self.toolTip())
                 self.override_cursor(CURSOR_GRAB)
                 # [Feature] Automatically highlight shape when the mouse is moved inside it
@@ -2212,7 +2212,10 @@ class Canvas(
             if shape.contains_point(pos):
                 self._scale_rectangle(shape, wheel_up)
             else:
-                self._adjust_rectangle_edge(shape, pos, wheel_up)
+                if shape.shape_type == "rotation":
+                    self._adjust_rotation_edge(shape, pos, wheel_up)
+                else:
+                    self._adjust_rectangle_edge(shape, pos, wheel_up)
 
             self.store_shapes()
             self.shape_moved.emit()
@@ -2297,6 +2300,71 @@ class Canvas(
         if shape.shape_type == "rotation":
             shape.center = center
 
+    def _adjust_rotation_edge(self, shape, cursor_pos, move_outward):
+        """Adjust the rotated rectangle edge closest to the cursor position."""
+        if len(shape.points) < 4:
+            return
+
+        if self.pixmap is None:
+            return
+        img_width = self.pixmap.width()
+        img_height = self.pixmap.height()
+
+        # For rotated rectangles, we need to find the nearest edge
+        # The direction should be based on wheel scroll, not cursor position
+        step = (
+            self.rect_adjust_step if move_outward else -self.rect_adjust_step
+        )
+
+        # Calculate distance to each edge (line segment)
+        distances = {}
+        edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+        for i, (start_idx, end_idx) in enumerate(edges):
+            p1 = shape.points[start_idx]
+            p2 = shape.points[end_idx]
+            dist = self._point_to_line_distance(cursor_pos, p1, p2)
+            distances[i] = dist
+
+        closest_edge_index = min(distances, key=distances.get)
+        idx1, idx2 = edges[closest_edge_index]
+        p1, p2 = shape.points[idx1], shape.points[idx2]
+
+        # Calculate perpendicular direction to the edge
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        length = math.sqrt(dx * dx + dy * dy)
+        if length > 0:
+            # Perpendicular vector, pointing outward
+            perp_dx, perp_dy = -dy / length, dx / length
+
+            # Check if the perpendicular vector is pointing outward from the center
+            center = (shape.points[0] + shape.points[2]) / 2
+            edge_mid_point = QtCore.QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2)
+            
+            # Vector from center to the edge's midpoint
+            center_to_edge = edge_mid_point - center
+            
+            # Dot product to check direction alignment
+            dot_product = center_to_edge.x() * perp_dx + center_to_edge.y() * perp_dy
+            if dot_product < 0:
+                # If the perpendicular vector is pointing inward, flip it
+                perp_dx, perp_dy = -perp_dx, -perp_dy
+
+            move_x = step * perp_dx
+            move_y = step * perp_dy
+
+            # Move only the two points of the selected edge
+            new_x1 = p1.x() + move_x
+            new_y1 = p1.y() + move_y
+            new_x2 = p2.x() + move_x
+            new_y2 = p2.y() + move_y
+
+            # Check if new points are within bounds
+            if (0 <= new_x1 < img_width and 0 <= new_y1 < img_height and
+                0 <= new_x2 < img_width and 0 <= new_y2 < img_height):
+                shape.points[idx1] = QtCore.QPointF(new_x1, new_y1)
+                shape.points[idx2] = QtCore.QPointF(new_x2, new_y2)
+
     def _adjust_rectangle_edge(self, shape, cursor_pos, move_outward):
         """Adjust the rectangle edge closest to cursor position within image boundaries"""
         if len(shape.points) < 4:
@@ -2305,36 +2373,6 @@ class Canvas(
         rect = shape.bounding_rect()
         min_x, max_x = rect.left(), rect.right()
         min_y, max_y = rect.top(), rect.bottom()
-
-        # For rotated rectangles, we need to find the nearest edge based on the actual points
-        if shape.shape_type == "rotation":
-            # Convert cursor position to shape's coordinate system
-            if hasattr(shape, 'direction'):
-                # Calculate distance to each edge (line segment)
-                distances = {}
-                edges = [
-                    (0, 1, "top"),
-                    (1, 2, "right"),
-                    (2, 3, "bottom"),
-                    (3, 0, "left")
-                ]
-                
-                for start_idx, end_idx, edge_name in edges:
-                    p1 = shape.points[start_idx]
-                    p2 = shape.points[end_idx]
-                    # Calculate distance from point to line segment
-                    dist = self._point_to_line_distance(cursor_pos, p1, p2)
-                    distances[edge_name] = dist
-                
-                closest_edge = min(distances, key=distances.get)
-            else:
-                # Fallback to regular rectangle logic if no rotation info
-                distances = self._calculate_edge_distances(cursor_pos, min_x, max_x, min_y, max_y)
-                closest_edge = self._determine_closest_edge(cursor_pos, min_x, max_x, min_y, max_y, distances)
-        else:
-            # Original rectangle logic
-            distances = self._calculate_edge_distances(cursor_pos, min_x, max_x, min_y, max_y)
-            closest_edge = self._determine_closest_edge(cursor_pos, min_x, max_x, min_y, max_y, distances)
 
         step = (
             self.rect_adjust_step if move_outward else -self.rect_adjust_step
@@ -2345,104 +2383,29 @@ class Canvas(
         img_width = self.pixmap.width()
         img_height = self.pixmap.height()
 
-        if shape.shape_type == "rotation":
-            # For rotated rectangles, adjust points maintaining the shape
-            edge_indices = {
-                "top": (0, 1),
-                "right": (1, 2),
-                "bottom": (2, 3),
-                "left": (3, 0)
-            }
-            
-            if closest_edge in edge_indices:
-                idx1, idx2 = edge_indices[closest_edge]
-                p1, p2 = shape.points[idx1], shape.points[idx2]
-                
-                # Calculate movement for the selected edge
-                if closest_edge in ["left", "right"]:
-                    # For left/right edges, calculate perpendicular direction to the edge
-                    dx = p2.x() - p1.x()
-                    dy = p2.y() - p1.y()
-                    length = math.sqrt(dx * dx + dy * dy)
-                    if length > 0:
-                        # Get perpendicular vector (rotate by 90 degrees)
-                        move_x = step * (-dy / length)  # Perpendicular to edge
-                        move_y = step * (dx / length)   # Perpendicular to edge
-                        
-                        # Move only the points on the selected edge
-                        new_points = shape.points.copy()
-                        if closest_edge == "left":
-                            move_x = -move_x
-                            move_y = -move_y
-                            
-                        # Only move the two points of the selected edge
-                        new_x1 = p1.x() + move_x
-                        new_y1 = p1.y() + move_y
-                        new_x2 = p2.x() + move_x
-                        new_y2 = p2.y() + move_y
-                        
-                        # Check if new points are within bounds
-                        if (0 <= new_x1 < img_width and 0 <= new_y1 < img_height and
-                            0 <= new_x2 < img_width and 0 <= new_y2 < img_height):
-                            new_points[idx1] = QtCore.QPointF(new_x1, new_y1)
-                            new_points[idx2] = QtCore.QPointF(new_x2, new_y2)
-                            
-                            # Update the points
-                            for i, new_point in enumerate(new_points):
-                                shape.points[i] = new_point
-                            
-                else:  # top or bottom edges
-                    dx = p2.x() - p1.x()
-                    dy = p2.y() - p1.y()
-                    length = math.sqrt(dx * dx + dy * dy)
-                    if length > 0:
-                        # Get perpendicular vector (rotate by 90 degrees), same as left/right edges
-                        move_x = step * (-dy / length)  # Perpendicular to edge
-                        move_y = step * (dx / length)   # Perpendicular to edge
-                        
-                        # Move only the points on the selected edge
-                        new_points = shape.points.copy()
-                        if closest_edge == "bottom":
-                            move_x = -move_x
-                            move_y = -move_y
-                            
-                        # Only move the two points of the selected edge
-                        new_x1 = p1.x() + move_x
-                        new_y1 = p1.y() + move_y
-                        new_x2 = p2.x() + move_x
-                        new_y2 = p2.y() + move_y
-                        
-                        # Check if new points are within bounds
-                        if (0 <= new_x1 < img_width and 0 <= new_y1 < img_height and
-                            0 <= new_x2 < img_width and 0 <= new_y2 < img_height):
-                            new_points[idx1] = QtCore.QPointF(new_x1, new_y1)
-                            new_points[idx2] = QtCore.QPointF(new_x2, new_y2)
-                            
-                            # Update the points
-                            for i, new_point in enumerate(new_points):
-                                shape.points[i] = new_point
-                        
-        else:
-            # Original rectangle adjustment logic
-            for i, point in enumerate(shape.points):
-                new_point = None
+        # Original rectangle adjustment logic
+        distances = self._calculate_edge_distances(cursor_pos, min_x, max_x, min_y, max_y)
+        closest_edge = self._determine_closest_edge(cursor_pos, min_x, max_x, min_y, max_y, distances)
+        
+        for i, point in enumerate(shape.points):
+            new_point = None
 
-                if closest_edge == "left" and abs(point.x() - min_x) < 1e-6:
-                    new_x = max(0, point.x() - step)
-                    new_point = QtCore.QPointF(new_x, point.y())
-                elif closest_edge == "right" and abs(point.x() - max_x) < 1e-6:
-                    new_x = min(img_width - 1, point.x() + step)
-                    new_point = QtCore.QPointF(new_x, point.y())
-                elif closest_edge == "top" and abs(point.y() - min_y) < 1e-6:
-                    new_y = max(0, point.y() - step)
-                    new_point = QtCore.QPointF(point.x(), new_y)
-                elif closest_edge == "bottom" and abs(point.y() - max_y) < 1e-6:
-                    new_y = min(img_height - 1, point.y() + step)
-                    new_point = QtCore.QPointF(point.x(), new_y)
+            if closest_edge == "left" and abs(point.x() - min_x) < 1e-6:
+                new_x = max(0, point.x() - step)
+                new_point = QtCore.QPointF(new_x, point.y())
+            elif closest_edge == "right" and abs(point.x() - max_x) < 1e-6:
+                new_x = min(img_width - 1, point.x() + step)
+                new_point = QtCore.QPointF(new_x, point.y())
+            elif closest_edge == "top" and abs(point.y() - min_y) < 1e-6:
+                new_y = max(0, point.y() - step)
+                new_point = QtCore.QPointF(point.x(), new_y)
+            elif closest_edge == "bottom" and abs(point.y() - max_y) < 1e-6:
+                new_y = min(img_height - 1, point.y() + step)
+                new_point = QtCore.QPointF(point.x(), new_y)
 
-                if new_point is not None:
-                    shape.points[i] = new_point
-                    
+            if new_point is not None:
+                shape.points[i] = new_point
+
     def _point_to_line_distance(self, point, line_start, line_end):
         """Calculate the distance from a point to a line segment"""
         px = point.x()
