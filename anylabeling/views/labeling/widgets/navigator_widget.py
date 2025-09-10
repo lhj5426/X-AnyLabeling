@@ -751,9 +751,11 @@ class NavigatorDialog(QtWidgets.QDialog):
     # Signal for viewport update requests
     viewport_update_requested = pyqtSignal()
     
-    def __init__(self, parent=None, settings=None):
+    def __init__(self, parent=None, settings=None, config=None):
         super().__init__(parent)
         self.settings = settings
+        self.config = config
+        self.app_closing = False  # 标志应用是否正在关闭
         
         self.setWindowTitle("导航器")
         self.setWindowFlags(
@@ -867,16 +869,33 @@ class NavigatorDialog(QtWidgets.QDialog):
     def resizeEvent(self, event):
         """Handle dialog resize"""
         super().resizeEvent(event)
-        if self.settings:
-            self.settings.setValue("navigator/size", self.size())
+        self._save_navigator_config()
         # Emit signal for viewport update
         self.viewport_update_requested.emit()
 
     def moveEvent(self, event):
         """Handle dialog move"""
         super().moveEvent(event)
-        if self.settings:
-            self.settings.setValue("navigator/position", self.pos())
+        self._save_navigator_config()
+        
+    def _save_navigator_config(self):
+        """Save navigator position and size to config"""
+        if self.config is not None:
+            # Update config in memory
+            if "navigator" not in self.config:
+                self.config["navigator"] = {}
+            
+            self.config["navigator"]["position_x"] = self.x()
+            self.config["navigator"]["position_y"] = self.y()
+            self.config["navigator"]["width"] = self.width()
+            self.config["navigator"]["height"] = self.height()
+            
+            # 立即保存到配置文件，避免被其他保存覆盖
+            try:
+                from anylabeling.config import save_config
+                save_config(self.config)
+            except Exception as e:
+                print(f"Failed to save navigator config: {e}")
         
     def set_image(self, image_data):
         """Set image in navigator"""
@@ -1046,41 +1065,6 @@ class NavigatorDialog(QtWidgets.QDialog):
         self.total_pages = total_pages
         self._update_file_info_display()
         
-    def closeEvent(self, event):
-        """
-        Handle dialog close event to save position and size.
-        
-        This method is called when the navigator dialog is closed by the user.
-        It saves the current position and size to settings before closing.
-        
-        Args:
-            event: Qt close event containing close information.
-            
-        Returns:
-            None
-            
-        Examples:
-            # This is automatically called by PyQt - no direct usage
-            >>> # User closes navigator -> closeEvent() -> position/size saved
-            
-        Note:
-            Saves both geometry (position + size) and individual position/size
-            for maximum compatibility with restoration logic.
-        """
-        if self.settings:
-            # Save geometry (position + size combined)
-            self.settings.setValue("navigator/geometry", self.saveGeometry())
-            
-            # Also save position and size separately for fallback
-            self.settings.setValue("navigator/position", self.pos())
-            self.settings.setValue("navigator/size", self.size())
-            
-            # Save visibility state
-            self.settings.setValue("navigator/visible", False)
-        
-        # Call parent close event
-        super().closeEvent(event)
-        
     def _update_file_info_display(self):
         """Update the file info label display"""
         if not self.current_filename:
@@ -1100,3 +1084,62 @@ class NavigatorDialog(QtWidgets.QDialog):
         # Format: filename: page/total
         info_text = f"{display_name}: {self.current_page}/{self.total_pages}"
         self.file_info_label.setText(info_text)
+
+    def closeEvent(self, event):
+        """
+        Handle dialog close event to save position and size.
+        
+        This method is called when the navigator dialog is closed by the user.
+        It saves the current position and size to config file before closing.
+        
+        Args:
+            event: Qt close event containing close information.
+            
+        Returns:
+            None
+        """
+        # 只有在用户手动关闭导航器时才设置 visible=False
+        # 如果是应用关闭导致的，则不改变 visible 状态
+        if not self.app_closing:
+            # Save navigator state to config
+            if self.config is not None:
+                if "navigator" not in self.config:
+                    self.config["navigator"] = {}
+                
+                self.config["navigator"]["visible"] = False
+                self.config["navigator"]["position_x"] = self.x()
+                self.config["navigator"]["position_y"] = self.y()
+                self.config["navigator"]["width"] = self.width()
+                self.config["navigator"]["height"] = self.height()
+                
+                # 立即保存到配置文件
+                try:
+                    from anylabeling.config import save_config
+                    save_config(self.config)
+                except Exception as e:
+                    print(f"Failed to save navigator config on close: {e}")
+        else:
+            pass
+        
+        # Call parent close event
+        super().closeEvent(event)
+
+    def restore_from_config(self):
+        """Restore navigator position and size from config"""
+        if self.config is not None and "navigator" in self.config:
+            nav_config = self.config["navigator"]
+            
+            # Restore position
+            if "position_x" in nav_config and "position_y" in nav_config:
+                self.move(nav_config["position_x"], nav_config["position_y"])
+            
+            # Restore size
+            if "width" in nav_config and "height" in nav_config:
+                self.resize(nav_config["width"], nav_config["height"])
+            
+            # Restore visibility
+            if "visible" in nav_config and nav_config["visible"]:
+                self.show()
+                return True
+                
+        return False

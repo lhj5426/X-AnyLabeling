@@ -770,6 +770,11 @@ class Canvas(
         # - Highlight vertex
         # Update shape/vertex fill and tooltip value accordingly.
         self.setToolTip(self.tr(""))
+        
+        # 首先清除所有形状的hover状态，确保只有一个形状被hover
+        for shape in self.shapes:
+            shape.is_hovered = False
+            
         for shape in reversed([s for s in self.shapes if self.is_visible(s)]):
             # Look for a nearby vertex to highlight. If that fails,
             # check if we happen to be inside a shape.
