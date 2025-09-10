@@ -79,6 +79,14 @@ file_dock:
   movable: false
   floatable: false
 
+# navigator
+navigator:
+  visible: false
+  position_x: 100
+  position_y: 100
+  width: 220
+  height: 280
+
 # label_dialog
 show_label_text_field: true
 label_completion: startswith
