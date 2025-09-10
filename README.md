@@ -95,6 +95,18 @@ https://github.com/user-attachments/assets/c5c79242-eee2-4039-9379-2743fb202082
 
 https://github.com/user-attachments/assets/c64d54bc-d89d-4c5c-91c6-9098d8f01e9e
 
+14.设置独立配置 在魔改版配置文件里增加很多新的设置项目 在启动官方的时候会被覆盖 为了放置覆盖 决定区分独立配置
+可以和官方共存互不影响
+
+<img width="460" height="230" alt="image" src="https://github.com/user-attachments/assets/f0c7a957-fb7f-4413-821a-6d13d0275de3" />
+
+<img width="909" height="285" alt="image" src="https://github.com/user-attachments/assets/7ce58294-3ca7-4db3-b53e-7e6a6f7734ee" />
+
+
+15.在6.增加鼠标 悬浮 和点击时  图形边框的颜色自定义 的基础上 再增加 这个自定义边颜色 的 线条粗细的自定义
+在不点击 不选中状态下 基础的矩形边框线条不变的前提下 增加 选中 和悬浮 的彩色边框厚度 大大增强视觉辨识度
+本来做数据标注就是一件非常累眼睛的事情 对自己的眼睛好点 
+https://github.com/user-attachments/assets/eb63145f-b88e-4945-9ad6-86a7cb14fd60
 
 目前魔改的就这些
 
