@@ -15,6 +15,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         super(ExpandMarginsDialog, self).__init__(parent)
         self.setWindowTitle(self.tr("标注框边距扩展工具"))
         self.setMinimumWidth(550)
+        self.resize(565, 404)
 
         # Main Layout
         layout = QtWidgets.QVBoxLayout(self)

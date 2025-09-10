@@ -23,6 +23,7 @@ from anylabeling.views.labeling.utils.qt import new_icon, new_icon_path
 class SearchBar(QLineEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setClearButtonEnabled(True)
         self.setPlaceholderText("Search models")
         self.setFixedHeight(DEFAULT_FIXED_HEIGHT)
         self.setStyleSheet(
