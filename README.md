@@ -84,6 +84,7 @@ https://github.com/user-attachments/assets/bc4b4669-b713-464c-9cb4-f9f694e81196
 
 https://github.com/user-attachments/assets/a13697cb-8030-4035-aba8-bf939b6de90e
 
+12. 可自定义鼠标 悬浮到矩形 和移动矩形的 指针样式 我不喜欢系统的小手 改成自定义
 
 目前魔改的就这些
 
