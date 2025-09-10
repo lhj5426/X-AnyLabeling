@@ -44,6 +44,10 @@ shape:
   select_line_color: [255, 255, 255, 255] # For "Highlight All"
   canvas_select_line_color: [255, 0, 0, 255]
   canvas_hover_line_color: [0, 255, 255, 255]
+  # Optional widths (pixels). If null/omitted, fallback to line_width
+  select_line_width: null
+  canvas_select_line_width: null
+  canvas_hover_line_width: null
   navigator_select_line_color: [255, 0, 255, 255]
   navigator_hover_line_color: [255, 255, 0, 255]
   select_fill_color: [0, 255, 0, 155]
