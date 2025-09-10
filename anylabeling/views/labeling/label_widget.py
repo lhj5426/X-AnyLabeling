@@ -159,6 +159,7 @@ class LabelingWidget(LabelDialog):
         self.dirty = False
 
         self._no_selection_slot = False
+        self._programmatic_selection_change = False
         self._copied_shapes = None
         self._batch_edit_warning_shown = False
 
@@ -3361,13 +3362,29 @@ class LabelingWidget(LabelDialog):
         self.shape_list_changed.emit()
 
     def file_search_changed(self):
+        current_file = self.filename
+        pattern = self.file_search.text()
         self.import_image_folder(
             self.last_open_dir,
-            pattern=self.file_search.text(),
+            pattern=pattern,
             load=False,
         )
+        if not pattern and current_file in self.fn_to_index:
+            try:
+                index = self.fn_to_index[current_file]
+                item = self.file_list_widget.item(index)
+                if item:
+                    self._programmatic_selection_change = True
+                    self.file_list_widget.setCurrentItem(item)
+                    self.file_list_widget.scrollToItem(item)
+                    self._programmatic_selection_change = False
+            except KeyError:
+                # This can happen if the file is no longer in the list after a filter change, which is fine.
+                pass
 
     def file_selection_changed(self):
+        if self._programmatic_selection_change:
+            return
         items = self.file_list_widget.selectedItems()
         if not items:
             return
@@ -5381,8 +5398,8 @@ class LabelingWidget(LabelDialog):
             return
 
         self.last_open_dir = dirpath
-        self.filename = None
         self.file_list_widget.clear()
+        self.fn_to_index = {}
         for filename in utils.scan_all_images(dirpath):
             if pattern and pattern not in filename:
                 continue
@@ -5407,7 +5424,8 @@ class LabelingWidget(LabelDialog):
         self.actions.open_next_unchecked_image.setEnabled(True)
         self.actions.open_prev_unchecked_image.setEnabled(True)
 
-        self.open_next_image(load=load)
+        if load:
+            self.open_next_image(load=load)
 
     def toggle_auto_labeling_widget(self):
         """Toggle auto labeling widget visibility."""
