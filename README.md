@@ -47,7 +47,8 @@ https://github.com/user-attachments/assets/aa42d52c-74eb-4a81-b2aa-a9c310e5e327
 <img width="1014" height="675" alt="image" src="https://github.com/user-attachments/assets/bd6cec61-a89d-4843-bd6b-318352735a98" />
 
 
-6.增加鼠标 悬浮 和点击时  图形边框的颜色自定义 官方在高亮的时候全是白框 你点击也是白框根本不好区分
+6.增加鼠标 悬浮 和点击时  图形边框的颜色自定义 官方在高亮的时候全是白框 
+你点击也是白框根本不好区分
 魔改之后就是高亮也可以正常区分 点击和 悬浮的颜色不再全是单一的白色 
 
 https://github.com/user-attachments/assets/909e8f64-954a-466e-9d4c-e392386deb12
@@ -91,12 +92,14 @@ https://github.com/user-attachments/assets/a13697cb-8030-4035-aba8-bf939b6de90e
 https://github.com/user-attachments/assets/c5c79242-eee2-4039-9379-2743fb202082
 
 13.修复搜索功能 官方原版 搜索框内搜索完图片 并跳转之后 清空搜索框 图片无法继续接着当前的页数位置继续往下翻页
+
 魔改之后 可以在搜索框清空后继续连续翻页 并且增加了清空搜索框的X
 
 https://github.com/user-attachments/assets/c64d54bc-d89d-4c5c-91c6-9098d8f01e9e
 
-14.设置独立配置 在魔改版配置文件里增加很多新的设置项目 在启动官方的时候会被覆盖 为了放置覆盖 决定区分独立配置
-可以和官方共存互不影响
+14.设置独立配置 在魔改版配置文件里增加很多新的设置项目在启动官方的时候会被覆盖
+
+为了防止被覆盖 决定区分独立配置可以和官方共存互不影响
 
 <img width="460" height="230" alt="image" src="https://github.com/user-attachments/assets/f0c7a957-fb7f-4413-821a-6d13d0275de3" />
 
@@ -104,8 +107,11 @@ https://github.com/user-attachments/assets/c64d54bc-d89d-4c5c-91c6-9098d8f01e9e
 
 
 15.在6.增加鼠标 悬浮 和点击时  图形边框的颜色自定义 的基础上 再增加 这个自定义边颜色 的 线条粗细的自定义
+
 在不点击 不选中状态下 基础的矩形边框线条不变的前提下 增加 选中 和悬浮 的彩色边框厚度 大大增强视觉辨识度
+
 本来做数据标注就是一件非常累眼睛的事情 对自己的眼睛好点 
+
 https://github.com/user-attachments/assets/eb63145f-b88e-4945-9ad6-86a7cb14fd60
 
 目前魔改的就这些
