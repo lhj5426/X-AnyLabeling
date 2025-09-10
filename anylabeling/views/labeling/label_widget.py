@@ -152,6 +152,10 @@ class LabelingWidget(LabelDialog):
         Shape.point_size = self._config["shape"]["point_size"]
         # Set line width from config file
         Shape.line_width = self._config["shape"]["line_width"]
+        # Optional specific widths for interaction states
+        Shape.select_line_width = self._config["shape"].get("select_line_width")
+        Shape.canvas_select_line_width = self._config["shape"].get("canvas_select_line_width")
+        Shape.canvas_hover_line_width = self._config["shape"].get("canvas_hover_line_width")
 
         super(LabelDialog, self).__init__()
 

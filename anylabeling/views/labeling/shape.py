@@ -60,7 +60,13 @@ class Shape:
     point_type = P_ROUND
     point_size = 4
     scale = 1.5
+    # Base line width
     line_width = 2.0
+    # Additional configurable line widths for different interaction states
+    # Fallbacks will use line_width if not overridden via config
+    select_line_width = None
+    canvas_select_line_width = None
+    canvas_hover_line_width = None
 
     def __init__(
         self,
@@ -364,15 +370,31 @@ class Shape:
         if self.points:
             if self.is_mouse_selected:
                 color = self.canvas_select_line_color
+                width = (
+                    self.canvas_select_line_width
+                    if self.canvas_select_line_width is not None
+                    else self.line_width
+                )
             elif self.is_hovered:
                 color = self.canvas_hover_line_color
+                width = (
+                    self.canvas_hover_line_width
+                    if self.canvas_hover_line_width is not None
+                    else self.line_width
+                )
             elif self.selected:
                 color = self.select_line_color
+                width = (
+                    self.select_line_width
+                    if self.select_line_width is not None
+                    else self.line_width
+                )
             else:
                 color = self.line_color
+                width = self.line_width
             pen = QtGui.QPen(color)
             # Try using integer sizes for smoother drawing(?)
-            pen.setWidth(max(1, int(round(self.line_width / self.scale))))
+            pen.setWidth(max(1, int(round(width / self.scale))))
             painter.setPen(pen)
 
             line_path = QtGui.QPainterPath()
