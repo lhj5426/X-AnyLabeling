@@ -159,6 +159,17 @@ class LabelingWidget(LabelDialog):
 
         super(LabelDialog, self).__init__()
 
+        # Restore application settings.
+        self.settings = QtCore.QSettings("anylabeling", "anylabeling")
+        self.recent_files = self.settings.value("recent_files", []) or []
+        size = self.settings.value("window/size", QtCore.QSize(600, 500))
+        position = self.settings.value("window/position", QtCore.QPoint(0, 0))
+        # state = self.settings.value("window/state", QtCore.QByteArray())
+        self.parent.parent.resize(size)
+        self.parent.parent.move(position)
+        # or simply:
+        # self.restoreGeometry(settings['window/geometry']
+
         # Whether we need to save or not.
         self.dirty = False
 
@@ -333,7 +344,7 @@ class LabelingWidget(LabelDialog):
         self.zoom_widget = ZoomWidget()
         
         # Create navigator dialog
-        self.navigator_dialog = NavigatorDialog(self)
+        self.navigator_dialog = NavigatorDialog(self, settings=self.settings)
         self.navigator_dialog.navigator.set_colors(
             select_line_color=QtGui.QColor(
                 *self._config["shape"]["navigator_select_line_color"]
@@ -2111,17 +2122,6 @@ class LabelingWidget(LabelDialog):
             self.file_search.setText(config["file_search"])
             self.file_search_changed()
 
-        # XXX: Could be completely declarative.
-        # Restore application settings.
-        self.settings = QtCore.QSettings("anylabeling", "anylabeling")
-        self.recent_files = self.settings.value("recent_files", []) or []
-        size = self.settings.value("window/size", QtCore.QSize(600, 500))
-        position = self.settings.value("window/position", QtCore.QPoint(0, 0))
-        # state = self.settings.value("window/state", QtCore.QByteArray())
-        self.resize(size)
-        self.move(position)
-        # or simply:
-        # self.restoreGeometry(settings['window/geometry']
 
         # Populate the File menu dynamically.
         self.update_file_menu()
@@ -2210,8 +2210,8 @@ class LabelingWidget(LabelDialog):
         Handle navigator dialog close event.
 
         This method is called when the navigator dialog is closed by the user
-        clicking the close button. It ensures the menu item state is updated
-        to reflect the navigator's closed state.
+        clicking the close button. It saves the position and size, updates the
+        menu item state, and ensures proper cleanup.
 
         Args:
             event (QtGui.QCloseEvent): The close event from Qt framework.
@@ -2222,16 +2222,29 @@ class LabelingWidget(LabelDialog):
         Examples:
             >>> # This method is automatically called when navigator is closed
             >>> # No direct usage required
-            
+
         Note:
-            This method calls the original close event to maintain proper cleanup.
+            This method saves geometry, position, size, and visibility state
+            before updating the menu and calling the parent close event.
         """
+        # Save navigator state before closing
+        if hasattr(self, 'settings') and self.settings:
+            # Save geometry (position + size combined)
+            self.settings.setValue("navigator/geometry", self.navigator_dialog.saveGeometry())
+            
+            # Also save position and size separately for fallback
+            self.settings.setValue("navigator/position", self.navigator_dialog.pos())
+            self.settings.setValue("navigator/size", self.navigator_dialog.size())
+            
+            # Save visibility state
+            self.settings.setValue("navigator/visible", False)
+        
         # Update menu item state to reflect navigator closure
         if hasattr(self, 'actions') and hasattr(self.actions, 'show_navigator'):
             self.actions.show_navigator.setChecked(False)
-        
-        # Call original close event handler
-        NavigatorDialog.closeEvent(self.navigator_dialog, event)
+
+        # Call parent close event handler
+        super(NavigatorDialog, self.navigator_dialog).closeEvent(event)
 
     def set_language(self, language):
         if self._config["language"] == language:
@@ -4440,20 +4453,13 @@ class LabelingWidget(LabelDialog):
 
     def toggle_navigator(self):
         """Toggle the navigator window visibility"""
-        if self.navigator_dialog.isVisible():
-            self.navigator_dialog.hide()
-            # Update menu item state
-            if hasattr(self, 'actions') and hasattr(self.actions, 'show_navigator'):
-                self.actions.show_navigator.setChecked(False)
-        else:
-            self.navigator_dialog.show()
-            # Update navigator when shown, only if image is loaded
-            if hasattr(self, 'image') and not self.image.isNull():
-                self.navigator_dialog.set_image(QtGui.QPixmap.fromImage(self.image))
-                self.update_navigator_viewport()
-            # Update menu item state
-            if hasattr(self, 'actions') and hasattr(self.actions, 'show_navigator'):
-                self.actions.show_navigator.setChecked(True)
+        visible = not self.navigator_dialog.isVisible()
+        self.navigator_dialog.setVisible(visible)
+        self.actions.show_navigator.setChecked(visible)
+        self.settings.setValue("navigator/visible", visible)
+        if visible and hasattr(self, 'image') and not self.image.isNull():
+            self.navigator_dialog.set_image(QtGui.QPixmap.fromImage(self.image))
+            self.update_navigator_viewport()
 
     def set_zoom(self, value):
         self.actions.fit_width.setChecked(False)
@@ -4886,21 +4892,11 @@ class LabelingWidget(LabelDialog):
         self.settings.setValue(
             "filename", self.filename if self.filename else ""
         )
-        self.settings.setValue("window/size", self.size())
-        self.settings.setValue("window/position", self.pos())
+        self.settings.setValue("window/size", self.parent.parent.size())
+        self.settings.setValue("window/position", self.parent.parent.pos())
         self.settings.setValue("window/state", self.parent.parent.saveState())
         self.settings.setValue("recent_files", self.recent_files)
         
-        # 保存导航器状态
-        if hasattr(self, 'navigator_dialog'):
-            navigator_visible = self.navigator_dialog.isVisible()
-            self.settings.setValue("navigator/visible", navigator_visible)
-            
-            if navigator_visible:
-                # 保存导航器的位置和大小
-                self.settings.setValue("navigator/geometry", self.navigator_dialog.saveGeometry())
-                self.settings.setValue("navigator/size", self.navigator_dialog.size())
-                self.settings.setValue("navigator/position", self.navigator_dialog.pos())
         
         save_config(self._config)
         # ask the use for where to save the labels
