@@ -70,7 +70,7 @@ def main():
         ),
     )
     default_config_file = os.path.join(
-        os.path.expanduser("~"), ".xanylabelingrc"
+        os.path.expanduser("~"), ".YSGxanylabelingrc"
     )
     parser.add_argument(
         "--config",
@@ -183,7 +183,7 @@ def main():
         logger.error(
             "--labels must be specified with --validatelabel or "
             "validate_label: exact in the config file "
-            "(ex. ~/.xanylabelingrc)."
+            "(ex. ~/.YSGxanylabelingrc)."
         )
         sys.exit(1)
 

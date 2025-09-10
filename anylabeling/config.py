@@ -23,7 +23,7 @@ def update_dict(target_dict, new_dict, validate_item=None):
 
 
 def save_config(config):
-    user_config_file = osp.join(osp.expanduser("~"), ".xanylabelingrc")
+    user_config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
     try:
         with open(user_config_file, "w", encoding="utf-8") as f:
             yaml.safe_dump(config, f, allow_unicode=True)
@@ -33,7 +33,7 @@ def save_config(config):
 
 def get_default_config():
     old_cfg_file = osp.join(osp.expanduser("~"), ".anylabelingrc")
-    new_cfg_file = osp.join(osp.expanduser("~"), ".xanylabelingrc")
+    new_cfg_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
     if osp.exists(old_cfg_file) and not osp.exists(new_cfg_file):
         shutil.copyfile(old_cfg_file, new_cfg_file)
 
@@ -41,8 +41,8 @@ def get_default_config():
     with pkg_resources.open_text(anylabeling_configs, config_file) as f:
         config = yaml.safe_load(f)
 
-    # Save default config to ~/.xanylabelingrc
-    if not osp.exists(osp.join(osp.expanduser("~"), ".xanylabelingrc")):
+    # Save default config to ~/.YSGxanylabelingrc
+    if not osp.exists(osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")):
         save_config(config)
 
     # Add show_order to the default config
@@ -74,7 +74,7 @@ def get_config(
     config = get_default_config()
 
     # 2. Load user's config file and merge it
-    user_config_file = osp.join(osp.expanduser("~"), ".xanylabelingrc")
+    user_config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
     if osp.exists(user_config_file):
         with open(user_config_file, "r", encoding="utf-8") as f:
             user_config = yaml.safe_load(f)
