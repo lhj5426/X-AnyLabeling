@@ -90,6 +90,10 @@ https://github.com/user-attachments/assets/a13697cb-8030-4035-aba8-bf939b6de90e
 
 https://github.com/user-attachments/assets/c5c79242-eee2-4039-9379-2743fb202082
 
+13.修复搜索功能 官方原版 搜索框内搜索完图片 并跳转之后 清空搜索框 图片无法继续接着当前的页码继续往下翻页
+魔改之后 可以在搜索情况后继续连续翻页 并且增加了清空搜索框的X
+
+https://github.com/user-attachments/assets/c64d54bc-d89d-4c5c-91c6-9098d8f01e9e
 
 
 目前魔改的就这些
