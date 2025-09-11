@@ -141,7 +141,7 @@ https://github.com/user-attachments/assets/007ed1f6-dd8a-48c2-9377-88c79a9649bc
 
 所以增加在矩形内调整增加一个CTRL+滚轮调整高度
 
-默认滚轮调整宽度 按住CTRL+滚轮调整宽度
+默认滚轮调整宽度 按住CTRL+滚轮调整高度 
 
 https://github.com/user-attachments/assets/727cc8b5-8125-4f11-8b0f-38d4c1ada284
 
