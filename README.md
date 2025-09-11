@@ -114,15 +114,41 @@ https://github.com/user-attachments/assets/c64d54bc-d89d-4c5c-91c6-9098d8f01e9e
 
 https://github.com/user-attachments/assets/eb63145f-b88e-4945-9ad6-86a7cb14fd60
 
+16.修改鼠标在矩形内向四周扩展改为横向扩展
+
+因为主要为了https://github.com/lhj5426/YSG 的魔改项目
+
+为了这盘醋包的这顿饺子 漫画都是竖条文字 居多 实际标注过程中调整左右边界比扩用的用的多为了提升效率
+
+把向四周扩展 改完只扩展宽度方便包裹文字
+
+https://github.com/user-attachments/assets/9abbc276-1c26-40b4-bd8e-3aec7724a5e9
+
+17.鼠标滚轮调整四条边 添加快速调整 按住CTRL+鼠标滚轮 可以设置一个值来快速调整边界
+
+只用滚轮是微调 按住CTRL+滚轮是快速修正
+
+  wheel_rectangle_editing:
+    adjust_step: 1
+    enable: true
+    fast_adjust_step: 10.0
+    scale_step: 3
+
+
+https://github.com/user-attachments/assets/007ed1f6-dd8a-48c2-9377-88c79a9649bc
+
 目前魔改的就这些
 
-主要都是增强标注交互方面的 体验增强 后边随着使用看看还有什么需要魔改的
+主要都是增强标注交互方面的 体验增强 后边随着使用看看还有什么需要魔改的 
+
+没有什么新功能 就是打磨细节 提升效率
 
 
+接下来想要实现的 像PS一样的功能模块化移动 可以把功能区域放在其他屏幕 让画布有更多的显示图片空间
 
 https://github.com/user-attachments/assets/f365dbed-9018-4fcc-bfff-3b3c8362fb57
 
-接下来想要实现的
+
 
 
 
