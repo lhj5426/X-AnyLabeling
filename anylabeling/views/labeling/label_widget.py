@@ -5446,6 +5446,7 @@ class LabelingWidget(LabelDialog):
         self.actions.open_prev_unchecked_image.setEnabled(True)
 
         if load:
+            self.filename = None
             self.open_next_image(load=load)
 
     def toggle_auto_labeling_widget(self):
