@@ -14,9 +14,7 @@ def update_dict(target_dict, new_dict, validate_item=None):
     for key, value in new_dict.items():
         if validate_item:
             validate_item(key, value)
-        if key not in target_dict:
-            continue
-        if isinstance(target_dict[key], dict) and isinstance(value, dict):
+        if key in target_dict and isinstance(target_dict[key], dict) and isinstance(value, dict):
             update_dict(target_dict[key], value, validate_item=validate_item)
         else:
             target_dict[key] = value
@@ -101,7 +99,23 @@ def get_config(
     # 1. Load default configuration
     config = get_default_config()
 
-    # 2. Load user's config file and merge it
+    # 2. Load configuration from file or YAML string
+    # This is for backward compatibility, and this will be overwritten
+    # by user config file.
+    if not config_file_or_yaml:
+        config_file_or_yaml = current_config_file
+
+    if config_file_or_yaml and osp.exists(config_file_or_yaml):
+        if show_msg:
+            logger.info(f"Loaded config file from: {config_file_or_yaml}")
+        with open(config_file_or_yaml, "r", encoding="utf-8") as f:
+            user_config = yaml.safe_load(f)
+        if user_config:
+            update_dict(
+                config, user_config, validate_item=validate_config_item
+            )
+
+    # 3. Load user's config file and merge it.
     user_config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
     if osp.exists(user_config_file):
         with open(user_config_file, "r", encoding="utf-8") as f:
@@ -110,20 +124,6 @@ def get_config(
             update_dict(
                 config, user_config, validate_item=validate_config_item
             )
-
-    # 3. Load configuration from file or YAML string
-    if not config_file_or_yaml:
-        config_file_or_yaml = current_config_file
-
-    config_from_yaml = yaml.safe_load(config_file_or_yaml)
-    if not isinstance(config_from_yaml, dict):
-        with open(config_file_or_yaml, encoding="utf-8") as f:
-            config_from_yaml = yaml.safe_load(f)
-    update_dict(config, config_from_yaml, validate_item=validate_config_item)
-    if show_msg:
-        logger.info(
-            f"🔧️ Initializing config from local file: {config_file_or_yaml}"
-        )
 
     # 4. Update configuration with command line arguments
     if config_from_args:
