@@ -117,7 +117,13 @@ def get_config(
 
     # 3. Load user's config file and merge it.
     user_config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
-    if osp.exists(user_config_file):
+    # Do not load the global config if a custom config file was provided
+    is_custom_config = (
+        config_file_or_yaml and
+        osp.exists(config_file_or_yaml) and
+        osp.realpath(config_file_or_yaml) != osp.realpath(user_config_file)
+    )
+    if not is_custom_config and osp.exists(user_config_file):
         with open(user_config_file, "r", encoding="utf-8") as f:
             user_config = yaml.safe_load(f)
         if user_config:
