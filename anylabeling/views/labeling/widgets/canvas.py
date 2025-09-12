@@ -145,7 +145,10 @@ class Canvas(
             "adjust_step", 2.0
         )
         self.rect_scale_step = self.wheel_rectangle_editing.get(
-            "scale_step", 0.05
+            "scale_step", 2.0
+        )
+        self.fast_rect_adjust_step = self.wheel_rectangle_editing.get(
+            "fast_adjust_step", 10.0
         )
         self.parent = kwargs.pop("parent")
         
@@ -2212,13 +2215,13 @@ class Canvas(
         """Mouse wheel event"""
         mods = ev.modifiers()
         delta = ev.angleDelta()
+        is_ctrl_pressed = (QtCore.Qt.ControlModifier & int(mods))
 
         if (
             self.editing()
             and self.enable_wheel_rectangle_editing
             and len(self.selected_shapes) == 1
             and self.selected_shapes[0].shape_type in ["rectangle", "rotation"]
-            and not (QtCore.Qt.ControlModifier & int(mods))
         ):
             try:
                 pos = self.transform_pos(ev.posF())
@@ -2228,34 +2231,51 @@ class Canvas(
             shape = self.selected_shapes[0]
             wheel_up = delta.y() > 0
 
+            # If cursor is inside the shape, scale width/height
             if shape.contains_point(pos):
-                self._scale_rectangle(shape, wheel_up)
+                # Ctrl+scroll to adjust height, default scroll to adjust width
+                adjust_height = is_ctrl_pressed
+                self._scale_rectangle(shape, wheel_up, adjust_height)
+                self.store_shapes()
+                self.shape_moved.emit()
+                self.update()
+                ev.accept()
+                return
+            # If cursor is outside, handle edge adjustment or canvas zooming
             else:
-                if shape.shape_type == "rotation":
-                    self._adjust_rotation_edge(shape, pos, wheel_up)
-                else:
-                    self._adjust_rectangle_edge(shape, pos, wheel_up)
+                if is_ctrl_pressed:
+                    # fast adjustment for edges
+                    if shape.shape_type == "rotation":
+                        self._adjust_rotation_edge(shape, pos, wheel_up, fast_mode=True)
+                    else:
+                        self._adjust_rectangle_edge(shape, pos, wheel_up, fast_mode=True)
+                    self.store_shapes()
+                    self.shape_moved.emit()
+                    self.update()
+                    ev.accept()
+                    return
+                else: # regular edge adjustment
+                    if shape.shape_type == "rotation":
+                        self._adjust_rotation_edge(shape, pos, wheel_up, fast_mode=False)
+                    else:
+                        self._adjust_rectangle_edge(shape, pos, wheel_up, fast_mode=False)
+                    self.store_shapes()
+                    self.shape_moved.emit()
+                    self.update()
+                    ev.accept()
+                    return
 
-            self.store_shapes()
-            self.shape_moved.emit()
-            self.update()
-            ev.accept()
-            return
-
-        # 处理普通的画布滚动
-        if QtCore.Qt.ControlModifier == int(mods):
-            # with Ctrl/Command key
-            # 使用原始的delta.y()值，确保缩放平滑
+        # Default canvas scroll/zoom behavior
+        if is_ctrl_pressed:
             self.zoom_request.emit(delta.y(), ev.pos())
         else:
-            # scroll
             self.scroll_request.emit(delta.x(), QtCore.Qt.Horizontal, 0)
             self.scroll_request.emit(delta.y(), QtCore.Qt.Vertical, 0)
 
         ev.accept()
 
-    def _scale_rectangle(self, shape, scale_up):
-        """Scale rectangle from center while keeping within image boundaries"""
+    def _scale_rectangle(self, shape, scale_up, adjust_height=False):
+        """Adjust rectangle width or height from center by a fixed pixel amount."""
         if len(shape.points) < 4:
             return
 
@@ -2264,62 +2284,79 @@ class Canvas(
         img_width = self.pixmap.width()
         img_height = self.pixmap.height()
 
-        x_coords = [p.x() for p in shape.points]
-        y_coords = [p.y() for p in shape.points]
-        center_x = sum(x_coords) / 4
-        center_y = sum(y_coords) / 4
-        center = QtCore.QPointF(center_x, center_y)
+        # Use scale_step as the pixel adjustment value.
+        # Divided by 2 because we are adjusting from the center, moving each side.
+        adjustment = self.rect_scale_step / 2.0 if scale_up else -self.rect_scale_step / 2.0
 
-        scale_factor = (
-            1.0 + self.rect_scale_step
-            if scale_up
-            else 1.0 - self.rect_scale_step
-        )
-        scale_factor = max(0.1, scale_factor)
-
-        new_points = []
-        for i in range(len(shape.points)):
-            point = shape.points[i]
-            offset = point - center
-            scaled_offset = offset * scale_factor
-            new_point = center + scaled_offset
-
-            # For rotated rectangles, we don't check boundaries point by point
-            # Instead, we'll check the overall bounding box
-            if shape.shape_type == "rectangle":
-                if (
-                    new_point.x() < 0
-                    or new_point.x() >= img_width
-                    or new_point.y() < 0
-                    or new_point.y() >= img_height
-                ):
-                    return
-
-            new_points.append(new_point)
-
-        # For rotated rectangles, check if the bounding box is within image boundaries
         if shape.shape_type == "rotation":
-            min_x = min(p.x() for p in new_points)
-            max_x = max(p.x() for p in new_points)
-            min_y = min(p.y() for p in new_points)
-            max_y = max(p.y() for p in new_points)
-            if (
-                min_x < 0
-                or max_x >= img_width
-                or min_y < 0
-                or max_y >= img_height
-            ):
-                return
+            # For rotated rectangles, the delta must be along the shape's width or height axis.
+            theta = shape.direction
+            if adjust_height:  # Adjust height (perpendicular to width)
+                theta += math.pi / 2
+                current_height_vector = shape.points[3] - shape.points[0]
+                if adjustment < 0 and current_height_vector.manhattanLength() < abs(adjustment * 2):
+                    return
+            else:  # Adjust width
+                current_width_vector = shape.points[1] - shape.points[0]
+                if adjustment < 0 and current_width_vector.manhattanLength() < abs(adjustment * 2):
+                    return
+            delta = QtCore.QPointF(adjustment * math.cos(theta), adjustment * math.sin(theta))
+            
+            # Apply the delta to the points based on the adjusted dimension
+            if adjust_height:
+                new_points = [
+                    shape.points[0] - delta,
+                    shape.points[1] - delta,
+                    shape.points[2] + delta,
+                    shape.points[3] + delta,
+                ]
+            else:  # Adjust width
+                new_points = [
+                    shape.points[0] - delta,
+                    shape.points[1] + delta,
+                    shape.points[2] + delta,
+                    shape.points[3] - delta,
+                ]
 
-        # Update points for both rectangle and rotation shapes
+        elif shape.shape_type == "rectangle":
+            # For axis-aligned rectangles, the delta is simple.
+            if adjust_height:
+                delta = QtCore.QPointF(0, adjustment)
+                new_points = [
+                    shape.points[0] - delta,
+                    shape.points[1] - delta,
+                    shape.points[2] + delta,
+                    shape.points[3] + delta,
+                ]
+            else:
+                delta = QtCore.QPointF(adjustment, 0)
+                new_points = [
+                    shape.points[0] - delta,
+                    shape.points[1] + delta,
+                    shape.points[2] + delta,
+                    shape.points[3] - delta,
+                ]
+        else:
+            return # Not applicable to other shapes
+
+        # Check if all new points are within the image boundaries.
+        min_x = min(p.x() for p in new_points)
+        max_x = max(p.x() for p in new_points)
+        min_y = min(p.y() for p in new_points)
+        max_y = max(p.y() for p in new_points)
+        if (
+            min_x < 0
+            or max_x >= img_width
+            or min_y < 0
+            or max_y >= img_height
+        ):
+            return
+
+        # If all checks pass, update the shape's points.
         for i, new_point in enumerate(new_points):
             shape.points[i] = new_point
-            
-        # For rotation shapes, update the center point
-        if shape.shape_type == "rotation":
-            shape.center = center
 
-    def _adjust_rotation_edge(self, shape, cursor_pos, move_outward):
+    def _adjust_rotation_edge(self, shape, cursor_pos, move_outward, fast_mode=False):
         """Adjust the rotated rectangle edge closest to the cursor position."""
         if len(shape.points) < 4:
             return
@@ -2329,11 +2366,9 @@ class Canvas(
         img_width = self.pixmap.width()
         img_height = self.pixmap.height()
 
-        # For rotated rectangles, we need to find the nearest edge
-        # The direction should be based on wheel scroll, not cursor position
-        step = (
-            self.rect_adjust_step if move_outward else -self.rect_adjust_step
-        )
+        # Determine the step size based on whether fast_mode is enabled
+        step_value = self.fast_rect_adjust_step if fast_mode else self.rect_adjust_step
+        step = step_value if move_outward else -step_value
 
         # Calculate distance to each edge (line segment)
         distances = {}
@@ -2384,7 +2419,7 @@ class Canvas(
                 shape.points[idx1] = QtCore.QPointF(new_x1, new_y1)
                 shape.points[idx2] = QtCore.QPointF(new_x2, new_y2)
 
-    def _adjust_rectangle_edge(self, shape, cursor_pos, move_outward):
+    def _adjust_rectangle_edge(self, shape, cursor_pos, move_outward, fast_mode=False):
         """Adjust the rectangle edge closest to cursor position within image boundaries"""
         if len(shape.points) < 4:
             return
@@ -2393,9 +2428,9 @@ class Canvas(
         min_x, max_x = rect.left(), rect.right()
         min_y, max_y = rect.top(), rect.bottom()
 
-        step = (
-            self.rect_adjust_step if move_outward else -self.rect_adjust_step
-        )
+        # Determine the step size based on whether fast_mode is enabled
+        step_value = self.fast_rect_adjust_step if fast_mode else self.rect_adjust_step
+        step = step_value if move_outward else -step_value
 
         if self.pixmap is None:
             return
