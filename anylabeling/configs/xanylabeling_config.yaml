@@ -107,7 +107,8 @@ canvas:
   wheel_rectangle_editing:
     enable: false
     adjust_step: 2.0
-    scale_step: 0.05
+    scale_step: 2.0
+    fast_adjust_step: 10.0
   crosshair:
     show: true
     width: 2.0
