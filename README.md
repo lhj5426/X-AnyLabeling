@@ -145,6 +145,14 @@ https://github.com/user-attachments/assets/007ed1f6-dd8a-48c2-9377-88c79a9649bc
 
 https://github.com/user-attachments/assets/727cc8b5-8125-4f11-8b0f-38d4c1ada284
 
+19.修复导航器激活焦点自动聚焦百分比输入框 让A D翻页可在导航器处于焦点时候可以使用
+
+https://github.com/user-attachments/assets/d1406f33-a4a7-4f51-ad91-862f6ca71145
+
+20.导航器增加CTRL+滚轮 增加快速调整功能 调整5% 默认滚轮调整为1% 
+
+https://github.com/user-attachments/assets/28d9afd3-6d26-4a7a-9954-d41eaeaae3e4
+
 
 主要都是增强标注交互方面的 体验增强 后边随着使用看看还有什么需要魔改的 
 
