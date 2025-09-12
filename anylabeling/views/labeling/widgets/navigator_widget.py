@@ -94,6 +94,7 @@ class NavigatorWidget(QWidget):
         self.shape_pen = QPen(QColor(0, 255, 0, 180), 1)     # Green pen for shapes
         
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
 
         self.navigator_select_line_color = QColor(255, 0, 255, 255)
         self.navigator_hover_line_color = QColor(255, 255, 0, 255)
@@ -751,8 +752,10 @@ class NavigatorDialog(QtWidgets.QDialog):
     # Signal for viewport update requests
     viewport_update_requested = pyqtSignal()
     
-    def __init__(self, parent=None, settings=None, config=None):
+    def __init__(self, parent=None, settings=None, config=None, actions=None):
         super().__init__(parent)
+        if actions:
+            self.addActions(actions)
         self.settings = settings
         self.config = config
         self.app_closing = False  # 标志应用是否正在关闭
@@ -806,6 +809,7 @@ class NavigatorDialog(QtWidgets.QDialog):
         self.file_info_label.setMinimumWidth(80)
         
         self.zoom_input = QLineEdit()
+        self.zoom_input.setFocusPolicy(Qt.ClickFocus)
         self.zoom_input.setFixedWidth(35)  # Made slightly smaller
         self.zoom_input.setAlignment(Qt.AlignCenter)
         self.zoom_input.setText("100")
@@ -1007,12 +1011,17 @@ class NavigatorDialog(QtWidgets.QDialog):
         # Get wheel delta - force 1% increment regardless of wheel sensitivity
         delta = event.angleDelta().y()
         
-        # Force exactly 1% increment/decrement per wheel event
-        # Ignore wheel sensitivity, always change by exactly 1%
+        # Check for Ctrl modifier for faster zoom
+        if event.modifiers() == Qt.ControlModifier:
+            zoom_step = 5
+        else:
+            zoom_step = 1
+
+        # Force exactly 1% or 5% increment/decrement per wheel event
         if delta > 0:
-            zoom_increment = 1  # Zoom in by 1%
+            zoom_increment = zoom_step  # Zoom in
         elif delta < 0:
-            zoom_increment = -1  # Zoom out by 1%
+            zoom_increment = -zoom_step  # Zoom out
         else:
             zoom_increment = 0  # No change if no delta
         

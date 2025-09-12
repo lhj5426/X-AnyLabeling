@@ -2300,7 +2300,27 @@ class Canvas(
                 current_width_vector = shape.points[1] - shape.points[0]
                 if adjustment < 0 and current_width_vector.manhattanLength() < abs(adjustment * 2):
                     return
-            delta = QtCore.QPointF(adjustment * math.cos(theta), adjustment * math.sin(theta))
+            
+            # Create a base unit vector for the direction
+            base_delta = QtCore.QPointF(math.cos(theta), math.sin(theta))
+            
+            # Ensure the base vector points in a canonical "outward" direction for expansion.
+            p0, p1, p2, p3 = shape.points
+            center = (p0 + p2) / 2.0
+            
+            if adjust_height:
+                # For height, "outward" is opposite to the vector from center to the edge (p0, p1).
+                center_to_edge = ((p0 + p1) / 2.0) - center
+                if QtCore.QPointF.dotProduct(base_delta, center_to_edge) > 0:
+                    base_delta *= -1
+            else:  # Adjust width
+                # For width, "outward" is opposite to the vector from center to the edge (p3, p0).
+                center_to_edge = ((p3 + p0) / 2.0) - center
+                if QtCore.QPointF.dotProduct(base_delta, center_to_edge) > 0:
+                    base_delta *= -1
+            
+            # Apply the final adjustment, which includes the direction (scale_up/down)
+            delta = adjustment * base_delta
             
             # Apply the delta to the points based on the adjusted dimension
             if adjust_height:
