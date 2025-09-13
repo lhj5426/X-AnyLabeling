@@ -153,6 +153,10 @@ https://github.com/user-attachments/assets/d1406f33-a4a7-4f51-ad91-862f6ca71145
 
 https://github.com/user-attachments/assets/28d9afd3-6d26-4a7a-9954-d41eaeaae3e4
 
+21.优化导航器 1.导航器滚动条增加刻度 2.百分比输入框增加预设可滚动快速调整150%-500% 3.边缘收缩增大图片占比
+
+<img width="682" height="395" alt="image" src="https://github.com/user-attachments/assets/6337f67a-4ba1-4f11-a3ab-2c2913d3a0fb" />
+
 
 主要都是增强标注交互方面的 体验增强 后边随着使用看看还有什么需要魔改的 
 
