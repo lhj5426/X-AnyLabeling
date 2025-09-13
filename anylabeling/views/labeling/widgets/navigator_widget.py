@@ -19,6 +19,7 @@ class ClickableSlider(QSlider):
         """Handle mouse press events for click-to-jump functionality"""
         if event.button() == Qt.LeftButton:
             if self.orientation() == Qt.Horizontal:
+                # Let the custom TickMarkSlider handle its own painting
                 # Get the slider handle position and size
                 handle_width = self.style().pixelMetric(self.style().PM_SliderThickness)
                 
@@ -166,7 +167,7 @@ class NavigatorWidget(QWidget):
             
         widget_size = self.size()
         # Leave some margin
-        available_size = QSize(widget_size.width() - 20, widget_size.height() - 20)
+        available_size = QSize(widget_size.width() - 4, widget_size.height() - 4)
         
         # Scale image to fit available space while keeping aspect ratio
         self.thumbnail = self.original_image.scaled(
@@ -808,13 +809,20 @@ class NavigatorDialog(QtWidgets.QDialog):
         """)
         self.file_info_label.setMinimumWidth(80)
         
-        self.zoom_input = QLineEdit()
-        self.zoom_input.setFocusPolicy(Qt.ClickFocus)
-        self.zoom_input.setFixedWidth(35)  # Made slightly smaller
-        self.zoom_input.setAlignment(Qt.AlignCenter)
-        self.zoom_input.setText("100")
-        self.zoom_input.returnPressed.connect(self.on_zoom_input_changed)
-        self.zoom_input.editingFinished.connect(self.on_zoom_input_changed)
+        # Create a QComboBox for zoom input
+        self.zoom_input = QtWidgets.QComboBox()
+        self.zoom_input.setEditable(True)
+        self.zoom_input.setFixedWidth(45)
+        self.zoom_input.setFocusPolicy(QtCore.Qt.ClickFocus)
+        
+        # Add preset zoom levels
+        presets = [str(i) for i in range(150, 501, 25)]
+        self.zoom_input.addItems(presets)
+        self.zoom_input.setCurrentText("100")
+
+        # Connect signals
+        self.zoom_input.lineEdit().returnPressed.connect(self.on_zoom_input_changed)
+        self.zoom_input.activated[str].connect(self.apply_zoom_value)
         
         percentage_label = QLabel("%")
         percentage_label.setFixedWidth(15)
@@ -838,6 +846,8 @@ class NavigatorDialog(QtWidgets.QDialog):
         self.zoom_slider = ClickableSlider(Qt.Horizontal)
         self.zoom_slider.setRange(1, 1000)  # 1% to 1000%
         self.zoom_slider.setValue(100)
+        self.zoom_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.zoom_slider.setTickInterval(20)
         self.zoom_slider.valueChanged.connect(self.on_slider_changed)
         
         # Zoom in button
@@ -947,7 +957,7 @@ class NavigatorDialog(QtWidgets.QDialog):
         
         # Update controls
         self.zoom_slider.setValue(zoom_percentage)
-        self.zoom_input.setText(str(zoom_percentage))
+        self.zoom_input.setCurrentText(str(zoom_percentage))
         
         # Re-enable signals
         self.zoom_slider.blockSignals(False)
@@ -956,22 +966,29 @@ class NavigatorDialog(QtWidgets.QDialog):
     def on_slider_changed(self, value):
         """Handle slider value change"""
         self.current_zoom = value
-        self.zoom_input.setText(str(value))
+        self.zoom_input.setCurrentText(str(value))
         self.zoom_changed[int].emit(value)
         
     def on_zoom_input_changed(self):
-        """Handle zoom input change"""
+        """Handle zoom input change from QComboBox's line edit (manual input)"""
+        self.apply_zoom_value(self.zoom_input.currentText())
+
+    def apply_zoom_value(self, text):
+        """Apply a zoom value from a text string."""
         try:
-            value = int(self.zoom_input.text())
+            value = int(text)
             value = max(1, min(1000, value))  # Clamp between 1-1000%
-            
+
             self.current_zoom = value
             self.zoom_slider.setValue(value)
-            self.zoom_input.setText(str(value))
+            
+            # Ensure the combo box shows the clamped value
+            self.zoom_input.setCurrentText(str(value))
+            
             self.zoom_changed[int].emit(value)
         except ValueError:
             # Reset to current value if invalid input
-            self.zoom_input.setText(str(self.current_zoom))
+            self.zoom_input.setCurrentText(str(self.current_zoom))
             
     def zoom_in(self):
         """Zoom in by 1%"""
