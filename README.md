@@ -188,4 +188,16 @@ https://github.com/user-attachments/assets/029b8aaa-953c-44b2-a61f-ea88d4cdcee8
 ![MouseInc_2025年09月18日11点06分48秒453](https://github.com/user-attachments/assets/6fe872c8-1d8a-4e0b-8a39-c33f9901bfcb)
 
 
+24.标签页管理器不在因翻页而自动关闭 没有标注的页面也可以正常打开标签页管理器不再报错
+
+标签也管理器增加管理CTRL+E功能 同时增加右键菜单 
+
+https://github.com/user-attachments/assets/899d5cd3-c5f2-4100-ab4e-b33f1ae715f3
+
+25.CTRL+E窗口增加快速调整旋转矩形角度功能 不再只依靠ZX CV来调整
+
+可以输入数值快速调整 并且支持多选调整
+
+https://github.com/user-attachments/assets/c1643ea5-97a8-4bdf-b094-8d9b1f581fd7
+
 
