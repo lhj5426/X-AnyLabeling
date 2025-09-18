@@ -200,4 +200,8 @@ https://github.com/user-attachments/assets/899d5cd3-c5f2-4100-ab4e-b33f1ae715f3
 
 https://github.com/user-attachments/assets/c1643ea5-97a8-4bdf-b094-8d9b1f581fd7
 
+26. 支持开源漫画翻译软件https://github.com/dmMaze/BallonsTranslator 项目JSON的导出导入
+
+https://github.com/user-attachments/assets/4712607c-8ffc-45a4-b540-facddd7caee1
+
 
