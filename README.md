@@ -157,17 +157,35 @@ https://github.com/user-attachments/assets/28d9afd3-6d26-4a7a-9954-d41eaeaae3e4
 
 <img width="682" height="395" alt="image" src="https://github.com/user-attachments/assets/6337f67a-4ba1-4f11-a3ab-2c2913d3a0fb" />
 
+22.原版导入不同标签会被覆盖 我魔改成了导入不同标签不再是简单粗暴的覆盖 而是可以选择是覆盖还是合并 更灵活的导入 更人性化
 
-主要都是增强标注交互方面的 体验增强 后边随着使用看看还有什么需要魔改的 
+https://github.com/user-attachments/assets/ed632835-25f3-43a9-ad1c-401390df9333
 
-没有什么新功能 就是打磨细节 提升效率
+23.原版的后续0913更新了调整矩形时候全透明无填充色的功能
 
+https://github.com/user-attachments/assets/3203c14a-dbd7-4927-91e7-4ef57b36ce62
 
-接下来想要实现的 像PS一样的功能模块化移动 可以把功能区域放在其他屏幕 让画布有更多的显示图片空间
+我感觉不够好用我本身魔改就可以设置是否开启高亮
 
-https://github.com/user-attachments/assets/f365dbed-9018-4fcc-bfff-3b3c8362fb57
+所以魔改填充透明度的调整开启高亮和不开启高亮设置2个不同的透明度 更灵活
 
+https://github.com/user-attachments/assets/029b8aaa-953c-44b2-a61f-ea88d4cdcee8
 
+填充透明度使用2个设置来控制
+
+  shape_fill_alpha_highlight: 150
+
+  shape_fill_alpha_idle: 30
+
+不开启高亮时
+
+![MouseInc_2025年09月18日11点06分31秒214](https://github.com/user-attachments/assets/204ce1a3-2b1c-45b4-9eb7-2370946940a9)
+
+![MouseInc_2025年09月18日11点07分55秒875](https://github.com/user-attachments/assets/066f94b9-deb2-46c0-ba25-9b0e17371e76)
+
+开启高亮时
+
+![MouseInc_2025年09月18日11点06分48秒453](https://github.com/user-attachments/assets/6fe872c8-1d8a-4e0b-8a39-c33f9901bfcb)
 
 
 
