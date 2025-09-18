@@ -51,6 +51,8 @@ shape:
   navigator_select_line_color: [255, 0, 255, 255]
   navigator_hover_line_color: [255, 255, 0, 255]
   select_fill_color: [0, 255, 0, 155]
+  shape_fill_alpha_idle: 50
+  shape_fill_alpha_highlight: 180
   hvertex_fill_color: [255, 255, 255, 255]
   # overlap visualization
   overlap_color: [255, 165, 0, 120]
