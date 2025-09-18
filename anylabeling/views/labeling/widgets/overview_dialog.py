@@ -457,8 +457,8 @@ class OverviewDialog(QtWidgets.QDialog):
             os.remove(classes_path)
 
             template = self.tr(
-                "Exporting annotations successfully!\n"
-                "Results have been saved to:\n"
+                "导出标注成功！\n"
+                "结果已保存到：\n"
                 "%s"
             )
             message_text = template % zip_path

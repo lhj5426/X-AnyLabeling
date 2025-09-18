@@ -21,6 +21,7 @@ from anylabeling.views.labeling.utils.style import (
     get_spinbox_style,
 )
 
+
 # TODO(unknown):
 # - Calculate optimal position so as not to go out of screen area.
 
@@ -811,6 +812,7 @@ class LabelColorButton(QtWidgets.QWidget):
         self.color_label.setStyleSheet(
             f"background-color: {self.color.name()}; border: 1px solid transparent; border-radius: 10px;"
         )
+        self.update()
 
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
@@ -1115,17 +1117,22 @@ class LabelModifyDialog(QtWidgets.QDialog):
                 self.parent.unique_label_list.set_item_label(
                     unique_label_item, c, rgb, self.opacity
                 )
-            # Update label info - 使用正确的颜色获取方法
-            rgb = self.parent._get_rgb_by_label(c, skip_label_info=True)
-            color = list(rgb)  # 将元组转换为列表
-            opacity = 255
-            # 移除有问题的styleSheet颜色解析代码
-            self.parent.label_info[c] = dict(
-                delete=False,
-                value=None,
-                color=color,
-                opacity=opacity,
-            )
+            
+            if c in self.parent.label_info:
+                self.parent.label_info[c]["delete"] = False
+                self.parent.label_info[c]["value"] = None
+            else:
+                # Update label info - 使用正确的颜色获取方法
+                rgb = self.parent._get_rgb_by_label(c, skip_label_info=True)
+                color = list(rgb)  # 将元组转换为列表
+                opacity = 255
+                # 移除有问题的styleSheet颜色解析代码
+                self.parent.label_info[c] = dict(
+                    delete=False,
+                    value=None,
+                    color=color,
+                    opacity=opacity,
+                )
 
     def update_range(self):
         from_value = (
