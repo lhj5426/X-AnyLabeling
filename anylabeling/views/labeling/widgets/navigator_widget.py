@@ -814,9 +814,10 @@ class NavigatorDialog(QtWidgets.QDialog):
         self.zoom_input.setEditable(True)
         self.zoom_input.setFixedWidth(45)
         self.zoom_input.setFocusPolicy(QtCore.Qt.ClickFocus)
+        self.zoom_input.installEventFilter(self)
         
         # Add preset zoom levels
-        presets = [str(i) for i in range(150, 501, 25)]
+        presets = [str(i) for i in range(75, 501, 25)]
         self.zoom_input.addItems(presets)
         self.zoom_input.setCurrentText("100")
 
@@ -847,7 +848,7 @@ class NavigatorDialog(QtWidgets.QDialog):
         self.zoom_slider.setRange(1, 1000)  # 1% to 1000%
         self.zoom_slider.setValue(100)
         self.zoom_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
-        self.zoom_slider.setTickInterval(20)
+        self.zoom_slider.setTickInterval(50)
         self.zoom_slider.valueChanged.connect(self.on_slider_changed)
         
         # Zoom in button
@@ -923,6 +924,46 @@ class NavigatorDialog(QtWidgets.QDialog):
         """Set shapes to display in navigator"""
         self.navigator.set_shapes(shapes, visible_shapes)
         
+    def eventFilter(self, source, event):
+        if source == self.zoom_input and event.type() == QtCore.QEvent.Wheel:
+            # Custom wheel event handling for zoom_input
+            delta = event.angleDelta().y()
+            
+            # Get current actual zoom value
+            current_zoom = self.current_zoom
+            
+            # Get all preset values as integers
+            int_presets = sorted([int(self.zoom_input.itemText(i)) for i in range(self.zoom_input.count())])
+            
+            if not int_presets: # Should not happen if presets are added
+                event.accept()
+                return True
+
+            new_zoom = current_zoom
+            if delta > 0: # Scroll up (zoom in)
+                # Find the next higher preset
+                for preset in int_presets:
+                    if preset > current_zoom:
+                        new_zoom = preset
+                        break
+                else: # If current_zoom is already at or above max preset
+                    new_zoom = int_presets[-1]
+            elif delta < 0: # Scroll down (zoom out)
+                # Find the next lower preset
+                for preset in reversed(int_presets):
+                    if preset < current_zoom:
+                        new_zoom = preset
+                        break
+                else: # If current_zoom is already at or below min preset
+                    new_zoom = int_presets[0]
+            
+            if new_zoom != current_zoom:
+                self.apply_zoom_value(str(new_zoom))
+            
+            event.accept() # Accept the event to stop default QComboBox wheel behavior
+            return True
+        return super().eventFilter(source, event)
+
     def set_zoom_value(self, zoom_percentage: int) -> None:
         """
         Set the zoom value from external sources like the main canvas.
@@ -1030,7 +1071,7 @@ class NavigatorDialog(QtWidgets.QDialog):
         
         # Check for Ctrl modifier for faster zoom
         if event.modifiers() == Qt.ControlModifier:
-            zoom_step = 5
+            zoom_step = 10
         else:
             zoom_step = 1
 
