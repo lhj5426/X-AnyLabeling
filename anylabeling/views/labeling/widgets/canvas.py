@@ -1275,6 +1275,10 @@ class Canvas(
             shape[lindex] = p2
             shape[rindex] = p4
             shape.close()
+            # Recalculate direction after moving a vertex
+            p0, p1 = shape.points[0], shape.points[1]
+            vec = p1 - p0
+            shape.direction = math.atan2(vec.y(), vec.x())
         elif shape.shape_type == "rectangle":
             shift_pos = pos - point
             shape.move_vertex_by(index, shift_pos)
@@ -1363,7 +1367,7 @@ class Canvas(
             # if self.out_off_pixmap(pos):
             #     return False  # No need to rotate
             new_shape.points[j] = pos
-        new_shape.direction = (new_shape.direction - theta) % (2 * math.pi)
+        new_shape.direction = (new_shape.direction + theta) % (2 * math.pi)
         self.selected_shapes[i].points = new_shape.points
         self.selected_shapes[i].direction = new_shape.direction
         return True
@@ -2580,6 +2584,36 @@ class Canvas(
                     self.repaint()
                     self.rotating_shape = True
 
+    def set_shape_rotation(self, shape, angle_radians):
+        """Set the absolute rotation of a shape to a specific angle."""
+        if shape.shape_type != 'rotation' or len(shape.points) != 4:
+            return
+
+        # Get intrinsic properties from the current shape's points.
+        center = (shape.points[0] + shape.points[2]) / 2.0
+        width = utils.distance(shape.points[0] - shape.points[1])
+        height = utils.distance(shape.points[1] - shape.points[2])
+
+        # Define the four corners of the unrotated rectangle around the center.
+        half_w, half_h = width / 2.0, height / 2.0
+        canonical_points = [
+            center + QtCore.QPointF(-half_w, -half_h),
+            center + QtCore.QPointF(half_w, -half_h),
+            center + QtCore.QPointF(half_w, half_h),
+            center + QtCore.QPointF(-half_w, half_h),
+        ]
+
+        # Invert the angle for visual rotation to match user expectation
+        rotation_to_apply = -angle_radians
+
+        # Rotate these canonical points to the desired absolute angle.
+        for i, p in enumerate(canonical_points):
+            shape.points[i] = self.rotate_point(p, center, rotation_to_apply)
+
+        # IMPORTANT: Store the original, non-inverted angle so the UI value is correct.
+        shape.direction = angle_radians
+        self.update()
+
     # QT Overload
     def keyPressEvent(self, ev):
         """Key press event"""
@@ -2604,13 +2638,13 @@ class Canvas(
             elif key == QtCore.Qt.Key_Right:
                 self.move_by_keyboard(QtCore.QPointF(MOVE_SPEED, 0.0))
             elif key == QtCore.Qt.Key_Z:
-                self.rotate_by_keyboard(LARGE_ROTATION_INCREMENT)
-            elif key == QtCore.Qt.Key_X:
-                self.rotate_by_keyboard(SMALL_ROTATION_INCREMENT)
-            elif key == QtCore.Qt.Key_C:
-                self.rotate_by_keyboard(-SMALL_ROTATION_INCREMENT)
-            elif key == QtCore.Qt.Key_V:
                 self.rotate_by_keyboard(-LARGE_ROTATION_INCREMENT)
+            elif key == QtCore.Qt.Key_X:
+                self.rotate_by_keyboard(-SMALL_ROTATION_INCREMENT)
+            elif key == QtCore.Qt.Key_C:
+                self.rotate_by_keyboard(SMALL_ROTATION_INCREMENT)
+            elif key == QtCore.Qt.Key_V:
+                self.rotate_by_keyboard(LARGE_ROTATION_INCREMENT)
 
     # QT Overload
     def keyReleaseEvent(self, ev):

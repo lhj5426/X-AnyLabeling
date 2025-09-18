@@ -2,7 +2,7 @@
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 
-
+from .. import utils
 from .label_category_widget import LabelCategoryWidget
 from .object_list_widget import ObjectListWidget
 
@@ -12,6 +12,9 @@ class ObjectManagerDialog(QtWidgets.QDialog):
     selection_changed = QtCore.pyqtSignal(list)
     item_double_clicked = QtCore.pyqtSignal(object)
     apply_to_all_requested = QtCore.pyqtSignal(list, bool)
+    edit_requested = QtCore.pyqtSignal()
+    delete_requested = QtCore.pyqtSignal()
+    union_requested = QtCore.pyqtSignal()
 
     def __init__(self, items, parent=None):
         super(ObjectManagerDialog, self).__init__(parent)
@@ -34,6 +37,8 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.list_widget.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
         self.list_widget.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.list_widget.setDefaultDropAction(QtCore.Qt.MoveAction)
+        self.list_widget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.list_widget.installEventFilter(self)
 
         for item in items:
             new_item = QtWidgets.QListWidgetItem(item.text())
@@ -79,6 +84,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.list_widget.order_changed.connect(self._emit_order_changed)
         self.list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.list_widget.itemSelectionChanged.connect(self._on_internal_selection_changed)
+        self.list_widget.customContextMenuRequested.connect(self._pop_list_menu)
         
         self.btn_move_category_top.clicked.connect(lambda: self.reorder_by_category(move_to_top=True))
         self.btn_move_category_bottom.clicked.connect(lambda: self.reorder_by_category(move_to_top=False))
@@ -89,6 +95,36 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_bottom.clicked.connect(self.move_to_bottom)
 
         self.update_button_states()
+
+    def eventFilter(self, source, event):
+        if (source is self.list_widget and
+            event.type() == QtCore.QEvent.KeyPress and
+            event.key() == QtCore.Qt.Key_E and
+            event.modifiers() == QtCore.Qt.ControlModifier):
+            if self.list_widget.selectedItems():
+                self.edit_requested.emit()
+            return True
+        return super(ObjectManagerDialog, self).eventFilter(source, event)
+
+    def _pop_list_menu(self, point):
+        if not self.list_widget.selectedItems():
+            return
+        
+        menu = QtWidgets.QMenu()
+        edit_action = menu.addAction(utils.new_icon('edit'), self.tr("编辑标签 (Ctrl+E)"))
+        delete_action = menu.addAction(utils.new_icon('cancel'), self.tr("删除标签"))
+        union_action = menu.addAction(utils.new_icon('union'), self.tr("合并选中"))
+
+        union_action.setEnabled(len(self.list_widget.selectedItems()) > 1)
+
+        action = menu.exec_(self.list_widget.mapToGlobal(point))
+
+        if action == edit_action:
+            self.edit_requested.emit()
+        elif action == delete_action:
+            self.delete_requested.emit()
+        elif action == union_action:
+            self.union_requested.emit()
 
     def move_items(self, offset):
         selected_items = self.list_widget.selectedItems()
@@ -215,6 +251,8 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.category_list.blockSignals(True)
 
         try:
+            current_selection = [item.data(QtCore.Qt.UserRole) for item in self.list_widget.selectedItems()]
+            
             self.list_widget.clear()
             self.category_list.clear()
 
@@ -231,11 +269,17 @@ class ObjectManagerDialog(QtWidgets.QDialog):
                 new_item.setData(QtCore.Qt.UserRole, item.shape())
                 new_item.setFlags(item.flags() & ~QtCore.Qt.ItemIsUserCheckable)
                 self.list_widget.addItem(new_item)
+
+            # Restore selection
+            self.sync_selection(current_selection)
+
         finally:
             self.list_widget.blockSignals(False)
             self.category_list.blockSignals(False)
-            if self.main_window and hasattr(self.main_window, "canvas"):
-                self.sync_selection(self.main_window.canvas.selected_shapes)
+            # Sync selection from canvas if no local selection is maintained
+            if not self.list_widget.selectedItems() and self.main_window and hasattr(self.main_window, "canvas"):
+                 self.sync_selection(self.main_window.canvas.selected_shapes)
+
 
     def _on_internal_selection_changed(self):
         selected_shapes = []

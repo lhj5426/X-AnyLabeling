@@ -1179,7 +1179,27 @@ class LabelQLineEdit(QtWidgets.QLineEdit):
             super(LabelQLineEdit, self).keyPressEvent(e)
 
 
+import math
+
+class InvertedWheelSpinBox(QtWidgets.QDoubleSpinBox):
+    def setPlaceholderText(self, text):
+        self.lineEdit().setPlaceholderText(text)
+
+    def wheelEvent(self, event: QtGui.QWheelEvent):
+        if not self.hasFocus():
+            event.ignore()
+            return
+            
+        if event.angleDelta().y() > 0: # Scroll up -> counter-clockwise (decrease)
+            self.stepBy(-1)
+        elif event.angleDelta().y() < 0: # Scroll down -> clockwise (increase)
+            self.stepBy(1)
+        event.accept()
+
+
 class LabelDialog(QtWidgets.QDialog):
+    angle_changed = QtCore.pyqtSignal(float)
+
     def __init__(
         self,
         text=None,
@@ -1221,6 +1241,15 @@ class LabelDialog(QtWidgets.QDialog):
         )
         self.edit_group_id.setAlignment(QtCore.Qt.AlignCenter)
 
+        # Add angle editor
+        self.edit_angle = InvertedWheelSpinBox()
+        self.edit_angle.setWrapping(True)
+        self.edit_angle.setRange(0, 360)
+        self.edit_angle.setSingleStep(0.5)
+        self.edit_angle.setDecimals(2)
+        self.edit_angle.setPlaceholderText(self.tr("角度"))
+        self.edit_angle.valueChanged.connect(self.angle_changed)
+
         # Add difficult checkbox
         self.edit_difficult = QtWidgets.QCheckBox(self.tr("useDifficult"))
         self.edit_difficult.setChecked(difficult)
@@ -1252,6 +1281,8 @@ class LabelDialog(QtWidgets.QDialog):
             layout_edit.addWidget(self.edit, 4)
             layout_edit.addWidget(self.edit_group_id, 2)
             layout.addLayout(layout_edit)
+
+        layout.addWidget(self.edit_angle)
 
         # Add linking layout
         layout_linking = QtWidgets.QHBoxLayout()
@@ -1508,6 +1539,9 @@ class LabelDialog(QtWidgets.QDialog):
         except ValueError:
             return None
 
+    def get_direction(self):
+        return math.radians(self.edit_angle.value())
+
     def get_difficult_state(self):
         return self.edit_difficult.isChecked()
 
@@ -1529,6 +1563,8 @@ class LabelDialog(QtWidgets.QDialog):
         difficult=False,
         kie_linking=[],
         order=None,
+        direction=None,
+        shape_type=None,
     ):
         if self._fit_to_content["row"]:
             self.label_list.setMinimumHeight(
@@ -1565,6 +1601,13 @@ class LabelDialog(QtWidgets.QDialog):
             self.edit_order.setText(str(order))
         else:
             self.edit_order.clear()
+
+        if shape_type == "rotation":
+            self.edit_angle.show()
+            self.edit_angle.setValue(math.degrees(direction or 0) % 360)
+        else:
+            self.edit_angle.hide()
+
         items = self.label_list.findItems(text, QtCore.Qt.MatchFixedString)
 
         if items:
@@ -1620,5 +1663,6 @@ class LabelDialog(QtWidgets.QDialog):
                 self.get_difficult_state(),
                 self.get_kie_linking(),
                 self.get_order(),
+                self.get_direction(),
             )
-        return None, None, None, None, False, [], None
+        return None, None, None, None, False, [], None, None
