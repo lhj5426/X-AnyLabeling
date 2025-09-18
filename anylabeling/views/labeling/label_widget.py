@@ -126,6 +126,12 @@ class LabelingWidget(LabelDialog):
         self.digit_to_label = None
         self.drawing_digit_shortcuts = self._config.get("digit_shortcuts", {})
 
+        Shape.highlighting_enabled = False
+
+        # Load alpha settings for shape fill
+        Shape.alpha_idle = self._config["shape"].get("shape_fill_alpha_idle", 50)
+        Shape.alpha_highlight = self._config["shape"].get("shape_fill_alpha_highlight", 180)
+
         # set default shape colors
         Shape.line_color = QtGui.QColor(*self._config["shape"]["line_color"])
         Shape.fill_color = QtGui.QColor(*self._config["shape"]["fill_color"])
@@ -242,10 +248,10 @@ class LabelingWidget(LabelDialog):
         btn_highlight.setCheckable(True)
         def toggle_highlight():
             self._highlight_on = not self._highlight_on
+            Shape.highlighting_enabled = self._highlight_on
             for item in self.label_list:
                 shape = item.shape()
                 shape.selected = self._highlight_on
-                shape.is_mouse_selected = False
             self.canvas.update()
         btn_highlight.clicked.connect(toggle_highlight)
 
@@ -3749,7 +3755,7 @@ class LabelingWidget(LabelDialog):
         shape.vertex_fill_color = QtGui.QColor(r, g, b)
         shape.hvertex_fill_color = QtGui.QColor(255, 255, 255)
         shape.fill_color = QtGui.QColor(r, g, b, 128)
-        shape.select_line_color = QtGui.QColor(255, 255, 255)
+        shape.select_line_color = QtGui.QColor(r, g, b)
         shape.select_fill_color = QtGui.QColor(r, g, b, 155)
 
     def _get_rgb_by_label(self, label, skip_label_info=False):

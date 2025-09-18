@@ -457,8 +457,12 @@ class LabelConverter:
         except Exception as e:
             logger.error(e)
 
-    def yolo_obb_to_custom(self, input_file, output_file, image_file):
-        self.reset()
+    def yolo_obb_to_custom(self, input_file, output_file, image_file, merge=False):
+        if merge and osp.exists(output_file):
+            with open(output_file, 'r', encoding='utf-8') as f:
+                self.custom_data = json.load(f)
+        else:
+            self.reset()
         with open(input_file, "r", encoding="utf-8") as f:
             lines = f.readlines()
         img_w, img_h = self.get_image_size(image_file)
@@ -500,8 +504,12 @@ class LabelConverter:
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(self.custom_data, f, indent=2, ensure_ascii=False)
 
-    def yolo_pose_to_custom(self, input_file, output_file, image_file):
-        self.reset()
+    def yolo_pose_to_custom(self, input_file, output_file, image_file, merge=False):
+        if merge and osp.exists(output_file):
+            with open(output_file, 'r', encoding='utf-8') as f:
+                self.custom_data = json.load(f)
+        else:
+            self.reset()
         with open(input_file, "r", encoding="utf-8") as f:
             lines = f.readlines()
         img_w, img_h = self.get_image_size(image_file)
@@ -568,8 +576,12 @@ class LabelConverter:
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(self.custom_data, f, indent=2, ensure_ascii=False)
 
-    def yolo_to_custom(self, input_file, output_file, image_file, mode):
-        self.reset()
+    def yolo_to_custom(self, input_file, output_file, image_file, mode, merge=False):
+        if merge and osp.exists(output_file):
+            with open(output_file, 'r', encoding='utf-8') as f:
+                self.custom_data = json.load(f)
+        else:
+            self.reset()
         with open(input_file, "r", encoding="utf-8") as f:
             lines = f.readlines()
         img_w, img_h = self.get_image_size(image_file)

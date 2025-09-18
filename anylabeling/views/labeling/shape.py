@@ -57,6 +57,9 @@ class Shape:
     select_fill_color = DEFAULT_SELECT_FILL_COLOR
     vertex_fill_color = DEFAULT_VERTEX_FILL_COLOR
     hvertex_fill_color = DEFAULT_HVERTEX_FILL_COLOR
+    highlighting_enabled = False
+    alpha_idle = 50
+    alpha_highlight = 180
     point_type = P_ROUND
     point_size = 4
     scale = 1.5
@@ -462,12 +465,15 @@ class Shape:
             if self._vertex_fill_color is not None:
                 painter.fillPath(vrtx_path, self._vertex_fill_color)
             if self.fill:
-                color = (
-                    self.select_fill_color
-                    if self.selected
-                    else self.fill_color
-                )
-                painter.fillPath(line_path, color)
+                r, g, b = self.line_color.red(), self.line_color.green(), self.line_color.blue()
+                if Shape.highlighting_enabled:
+                    alpha = Shape.alpha_highlight
+                else:
+                    alpha = Shape.alpha_idle
+                
+                if alpha > 0:
+                    fill_color = QtGui.QColor(r, g, b, alpha)
+                    painter.fillPath(line_path, fill_color)
 
     def draw_vertex(self, path, i, show_difficult=False):
         """Draw a vertex"""
