@@ -448,7 +448,7 @@ def save_crop(self):
         progress_dialog.close()
         popup = Popup(
             self.tr(
-                f"Cropped images successfully!\nResults have been saved to:\n{save_path}"
+                f"图片裁剪成功！\n结果已保存到：\n{save_path}"
             ),
             self,
             msec=3000,

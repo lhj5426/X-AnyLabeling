@@ -121,7 +121,7 @@ def export_yolo_annotation(self, mode):
         converter = LabelConverter(classes_file=self.classes_file)
 
     dialog = QtWidgets.QDialog(self)
-    dialog.setWindowTitle(self.tr("Export options"))
+    dialog.setWindowTitle(self.tr("导出选项"))
     dialog.setMinimumWidth(500)
     dialog.setStyleSheet(get_export_option_style())
 
@@ -130,7 +130,7 @@ def export_yolo_annotation(self, mode):
     layout.setSpacing(16)
 
     path_layout = QVBoxLayout()
-    path_label = QtWidgets.QLabel(self.tr("Export path"))
+    path_label = QtWidgets.QLabel(self.tr("导出路径"))
     path_layout.addWidget(path_label)
 
     path_input_layout = QHBoxLayout()
@@ -161,15 +161,15 @@ def export_yolo_annotation(self, mode):
     path_layout.addLayout(path_input_layout)
     layout.addLayout(path_layout)
 
-    options_label = QtWidgets.QLabel(self.tr("Export Options"))
+    options_label = QtWidgets.QLabel(self.tr("导出选项"))
     layout.addWidget(options_label)
 
-    save_images_checkbox = QtWidgets.QCheckBox(self.tr("Save with images?"))
+    save_images_checkbox = QtWidgets.QCheckBox(self.tr("同时保存图片？"))
     save_images_checkbox.setChecked(False)
     layout.addWidget(save_images_checkbox)
 
     skip_empty_files_checkbox = QtWidgets.QCheckBox(
-        self.tr("Skip empty labels?")
+        self.tr("跳过没有标签的空文件？")
     )
     skip_empty_files_checkbox.setChecked(False)
     layout.addWidget(skip_empty_files_checkbox)
@@ -204,22 +204,22 @@ def export_yolo_annotation(self, mode):
     if osp.exists(save_path):
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle(self.tr("Output Directory Exists!"))
-        msg_box.setText(self.tr("Directory already exists. Choose an action:"))
+        msg_box.setWindowTitle(self.tr("输出目录已存在！"))
+        msg_box.setText(self.tr("目录已存在，请选择一个操作："))
         msg_box.setInformativeText(
             self.tr(
-                "• Yes    - Merge with existing files\n"
-                "• No     - Delete existing directory\n"
-                "• Cancel - Abort export"
+                "• 是 (Yes) - 合并到现有文件\n"
+                "• 否 (No) - 删除现有目录\n"
+                "• 取消 (Cancel) - 中止导出"
             )
         )
 
-        msg_box.addButton(self.tr("Yes"), QtWidgets.QMessageBox.YesRole)
+        msg_box.addButton(self.tr("是"), QtWidgets.QMessageBox.YesRole)
         no_button = msg_box.addButton(
-            self.tr("No"), QtWidgets.QMessageBox.NoRole
+            self.tr("否"), QtWidgets.QMessageBox.NoRole
         )
         cancel_button = msg_box.addButton(
-            self.tr("Cancel"), QtWidgets.QMessageBox.RejectRole
+            self.tr("取消"), QtWidgets.QMessageBox.RejectRole
         )
         msg_box.setStyleSheet(get_msg_box_style())
         msg_box.exec_()
@@ -275,8 +275,8 @@ def export_yolo_annotation(self, mode):
 
         progress_dialog.close()
         template = self.tr(
-            "Exporting annotations successfully!\n"
-            "Results have been saved to:\n"
+            "导出标注成功！\n"
+            "结果已保存到：\n"
             "%s"
         )
         message_text = template % save_path
@@ -304,7 +304,7 @@ def export_voc_annotation(self, mode):
         return
 
     dialog = QtWidgets.QDialog(self)
-    dialog.setWindowTitle(self.tr("Export options"))
+    dialog.setWindowTitle(self.tr("导出选项"))
     dialog.setMinimumWidth(500)
     dialog.setStyleSheet(get_export_option_style())
 
@@ -313,7 +313,7 @@ def export_voc_annotation(self, mode):
     layout.setSpacing(16)
 
     path_layout = QVBoxLayout()
-    path_label = QtWidgets.QLabel(self.tr("Export path"))
+    path_label = QtWidgets.QLabel(self.tr("导出路径"))
     path_layout.addWidget(path_label)
 
     path_input_layout = QHBoxLayout()
@@ -344,15 +344,15 @@ def export_voc_annotation(self, mode):
     path_layout.addLayout(path_input_layout)
     layout.addLayout(path_layout)
 
-    options_label = QtWidgets.QLabel(self.tr("Export Options"))
+    options_label = QtWidgets.QLabel(self.tr("导出选项"))
     layout.addWidget(options_label)
 
-    save_images_checkbox = QtWidgets.QCheckBox(self.tr("Save with images?"))
+    save_images_checkbox = QtWidgets.QCheckBox(self.tr("同时保存图片？"))
     save_images_checkbox.setChecked(False)
     layout.addWidget(save_images_checkbox)
 
     skip_empty_files_checkbox = QtWidgets.QCheckBox(
-        self.tr("Skip empty labels?")
+        self.tr("跳过没有标签的空文件？")
     )
     skip_empty_files_checkbox.setChecked(False)
     layout.addWidget(skip_empty_files_checkbox)
@@ -387,22 +387,22 @@ def export_voc_annotation(self, mode):
     if osp.exists(save_path):
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle(self.tr("Output Directory Exists!"))
-        msg_box.setText(self.tr("Directory already exists. Choose an action:"))
+        msg_box.setWindowTitle(self.tr("输出目录已存在！"))
+        msg_box.setText(self.tr("目录已存在，请选择一个操作："))
         msg_box.setInformativeText(
             self.tr(
-                "• Yes    - Merge with existing files\n"
-                "• No     - Delete existing directory\n"
-                "• Cancel - Abort export"
+                "• 是 (Yes) - 合并到现有文件\n"
+                "• 否 (No) - 删除现有目录\n"
+                "• 取消 (Cancel) - 中止导出"
             )
         )
 
-        msg_box.addButton(self.tr("Yes"), QtWidgets.QMessageBox.YesRole)
+        msg_box.addButton(self.tr("是"), QtWidgets.QMessageBox.YesRole)
         no_button = msg_box.addButton(
-            self.tr("No"), QtWidgets.QMessageBox.NoRole
+            self.tr("否"), QtWidgets.QMessageBox.NoRole
         )
         cancel_button = msg_box.addButton(
-            self.tr("Cancel"), QtWidgets.QMessageBox.RejectRole
+            self.tr("取消"), QtWidgets.QMessageBox.RejectRole
         )
         msg_box.setStyleSheet(get_msg_box_style())
         msg_box.exec_()
@@ -460,8 +460,8 @@ def export_voc_annotation(self, mode):
 
         progress_dialog.close()
         template = self.tr(
-            "Exporting annotations successfully!\n"
-            "Results have been saved to:\n"
+            "导出标注成功！\n"
+            "结果已保存到：\n"
             "%s"
         )
         message_text = template % save_path
@@ -512,7 +512,7 @@ def export_coco_annotation(self, mode):
         converter = LabelConverter(classes_file=self.classes_file)
 
     dialog = QtWidgets.QDialog(self)
-    dialog.setWindowTitle(self.tr("Export options"))
+    dialog.setWindowTitle(self.tr("导出选项"))
     dialog.setMinimumWidth(500)
     dialog.setStyleSheet(get_export_option_style())
 
@@ -521,7 +521,7 @@ def export_coco_annotation(self, mode):
     layout.setSpacing(16)
 
     path_layout = QVBoxLayout()
-    path_label = QtWidgets.QLabel(self.tr("Export path"))
+    path_label = QtWidgets.QLabel(self.tr("导出路径"))
     path_layout.addWidget(path_label)
 
     path_input_layout = QHBoxLayout()
@@ -583,18 +583,18 @@ def export_coco_annotation(self, mode):
     if osp.exists(save_path):
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle(self.tr("Output Directory Exists!"))
-        msg_box.setText(self.tr("Directory already exists. Choose an action:"))
+        msg_box.setWindowTitle(self.tr("输出目录已存在！"))
+        msg_box.setText(self.tr("目录已存在，请选择一个操作："))
         msg_box.setInformativeText(
             self.tr(
-                "• Overwrite - Overwrite existing directory\n"
-                "• Cancel - Abort export"
+                "• 覆盖 - 覆盖现有目录\n"
+                "• 取消 - 中止导出"
             )
         )
 
-        msg_box.addButton(self.tr("Overwrite"), QtWidgets.QMessageBox.YesRole)
+        msg_box.addButton(self.tr("覆盖"), QtWidgets.QMessageBox.YesRole)
         cancel_button = msg_box.addButton(
-            self.tr("Cancel"), QtWidgets.QMessageBox.RejectRole
+            self.tr("取消"), QtWidgets.QMessageBox.RejectRole
         )
         msg_box.setStyleSheet(get_msg_box_style())
         msg_box.exec_()
@@ -627,8 +627,8 @@ def export_coco_annotation(self, mode):
         progress_dialog.close()
         if success:
             template = self.tr(
-                "Exporting annotations successfully!\n"
-                "Results have been saved to:\n"
+                "导出标注成功！\n"
+                "结果已保存到：\n"
                 "%s"
             )
             message_text = template % save_path
@@ -673,7 +673,7 @@ def export_dota_annotation(self):
         return
 
     dialog = QtWidgets.QDialog(self)
-    dialog.setWindowTitle(self.tr("Export options"))
+    dialog.setWindowTitle(self.tr("导出选项"))
     dialog.setMinimumWidth(500)
     dialog.setStyleSheet(get_export_option_style())
 
@@ -682,7 +682,7 @@ def export_dota_annotation(self):
     layout.setSpacing(16)
 
     path_layout = QVBoxLayout()
-    path_label = QtWidgets.QLabel(self.tr("Export path"))
+    path_label = QtWidgets.QLabel(self.tr("导出路径"))
     path_layout.addWidget(path_label)
 
     path_input_layout = QHBoxLayout()
@@ -741,22 +741,22 @@ def export_dota_annotation(self):
     if osp.exists(save_path):
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle(self.tr("Output Directory Exists!"))
-        msg_box.setText(self.tr("Directory already exists. Choose an action:"))
+        msg_box.setWindowTitle(self.tr("输出目录已存在！"))
+        msg_box.setText(self.tr("目录已存在，请选择一个操作："))
         msg_box.setInformativeText(
             self.tr(
-                "• Yes    - Merge with existing files\n"
-                "• No     - Delete existing directory\n"
-                "• Cancel - Abort export"
+                "• 是 (Yes) - 合并到现有文件\n"
+                "• 否 (No) - 删除现有目录\n"
+                "• 取消 (Cancel) - 中止导出"
             )
         )
 
-        msg_box.addButton(self.tr("Yes"), QtWidgets.QMessageBox.YesRole)
+        msg_box.addButton(self.tr("是"), QtWidgets.QMessageBox.YesRole)
         no_button = msg_box.addButton(
-            self.tr("No"), QtWidgets.QMessageBox.NoRole
+            self.tr("否"), QtWidgets.QMessageBox.NoRole
         )
         cancel_button = msg_box.addButton(
-            self.tr("Cancel"), QtWidgets.QMessageBox.RejectRole
+            self.tr("取消"), QtWidgets.QMessageBox.RejectRole
         )
         msg_box.setStyleSheet(get_msg_box_style())
         msg_box.exec_()
@@ -808,8 +808,8 @@ def export_dota_annotation(self):
 
         progress_dialog.close()
         template = self.tr(
-            "Exporting annotations successfully!\n"
-            "Results have been saved to:\n"
+            "导出标注成功！\n"
+            "结果已保存到：\n"
             "%s"
         )
         message_text = template % save_path
@@ -850,7 +850,7 @@ def export_mask_annotation(self):
         mapping_table = json.load(f)
 
     dialog = QtWidgets.QDialog(self)
-    dialog.setWindowTitle(self.tr("Export options"))
+    dialog.setWindowTitle(self.tr("导出选项"))
     dialog.setMinimumWidth(500)
     dialog.setStyleSheet(get_export_option_style())
 
@@ -859,7 +859,7 @@ def export_mask_annotation(self):
     layout.setSpacing(16)
 
     path_layout = QVBoxLayout()
-    path_label = QtWidgets.QLabel(self.tr("Export path"))
+    path_label = QtWidgets.QLabel(self.tr("导出路径"))
     path_layout.addWidget(path_label)
 
     path_input_layout = QHBoxLayout()
@@ -919,18 +919,18 @@ def export_mask_annotation(self):
     if osp.exists(save_path):
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle(self.tr("Output Directory Exists!"))
-        msg_box.setText(self.tr("Directory already exists. Choose an action:"))
+        msg_box.setWindowTitle(self.tr("输出目录已存在！"))
+        msg_box.setText(self.tr("目录已存在，请选择一个操作："))
         msg_box.setInformativeText(
             self.tr(
-                "• Overwrite - Overwrite existing directory\n"
-                "• Cancel - Abort export"
+                "• 覆盖 - 覆盖现有目录\n"
+                "• 取消 - 中止导出"
             )
         )
 
-        msg_box.addButton(self.tr("Overwrite"), QtWidgets.QMessageBox.YesRole)
+        msg_box.addButton(self.tr("覆盖"), QtWidgets.QMessageBox.YesRole)
         cancel_button = msg_box.addButton(
-            self.tr("Cancel"), QtWidgets.QMessageBox.RejectRole
+            self.tr("取消"), QtWidgets.QMessageBox.RejectRole
         )
         msg_box.setStyleSheet(get_msg_box_style())
         msg_box.exec_()
@@ -979,8 +979,8 @@ def export_mask_annotation(self):
 
         progress_dialog.close()
         template = self.tr(
-            "Exporting annotations successfully!\n"
-            "Results have been saved to:\n"
+            "导出标注成功！\n"
+            "结果已保存到：\n"
             "%s"
         )
         message_text = template % save_path
@@ -1019,7 +1019,7 @@ def export_mot_annotation(self, mode):
     converter = LabelConverter(classes_file=self.classes_file)
 
     dialog = QtWidgets.QDialog(self)
-    dialog.setWindowTitle(self.tr("Export options"))
+    dialog.setWindowTitle(self.tr("导出选项"))
     dialog.setMinimumWidth(500)
     dialog.setStyleSheet(get_export_option_style())
 
@@ -1028,7 +1028,7 @@ def export_mot_annotation(self, mode):
     layout.setSpacing(16)
 
     path_layout = QVBoxLayout()
-    path_label = QtWidgets.QLabel(self.tr("Export path"))
+    path_label = QtWidgets.QLabel(self.tr("导出路径"))
     path_layout.addWidget(path_label)
 
     path_input_layout = QHBoxLayout()
@@ -1088,18 +1088,18 @@ def export_mot_annotation(self, mode):
     if osp.exists(save_path):
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle(self.tr("Output Directory Exists!"))
-        msg_box.setText(self.tr("Directory already exists. Choose an action:"))
+        msg_box.setWindowTitle(self.tr("输出目录已存在！"))
+        msg_box.setText(self.tr("目录已存在，请选择一个操作："))
         msg_box.setInformativeText(
             self.tr(
-                "• Overwrite - Overwrite existing directory\n"
-                "• Cancel - Abort export"
+                "• 覆盖 - 覆盖现有目录\n"
+                "• 取消 - 中止导出"
             )
         )
 
-        msg_box.addButton(self.tr("Overwrite"), QtWidgets.QMessageBox.YesRole)
+        msg_box.addButton(self.tr("覆盖"), QtWidgets.QMessageBox.YesRole)
         cancel_button = msg_box.addButton(
-            self.tr("Cancel"), QtWidgets.QMessageBox.RejectRole
+            self.tr("取消"), QtWidgets.QMessageBox.RejectRole
         )
         msg_box.setStyleSheet(get_msg_box_style())
         msg_box.exec_()
@@ -1132,8 +1132,8 @@ def export_mot_annotation(self, mode):
         progress_dialog.close()
         if success:
             template = self.tr(
-                "Exporting annotations successfully!\n"
-                "Results have been saved to:\n"
+                "导出标注成功！\n"
+                "结果已保存到：\n"
                 "%s"
             )
             message_text = template % save_path
@@ -1172,7 +1172,7 @@ def export_pporc_annotation(self, mode):
         return
 
     dialog = QtWidgets.QDialog(self)
-    dialog.setWindowTitle(self.tr("Export options"))
+    dialog.setWindowTitle(self.tr("导出选项"))
     dialog.setMinimumWidth(500)
     dialog.setStyleSheet(get_export_option_style())
 
@@ -1181,7 +1181,7 @@ def export_pporc_annotation(self, mode):
     layout.setSpacing(16)
 
     path_layout = QVBoxLayout()
-    path_label = QtWidgets.QLabel(self.tr("Export path"))
+    path_label = QtWidgets.QLabel(self.tr("导出路径"))
     path_layout.addWidget(path_label)
 
     path_input_layout = QHBoxLayout()
@@ -1243,18 +1243,18 @@ def export_pporc_annotation(self, mode):
     if osp.exists(save_path):
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle(self.tr("Output Directory Exists!"))
-        msg_box.setText(self.tr("Directory already exists. Choose an action:"))
+        msg_box.setWindowTitle(self.tr("输出目录已存在！"))
+        msg_box.setText(self.tr("目录已存在，请选择一个操作："))
         msg_box.setInformativeText(
             self.tr(
-                "• Overwrite - Overwrite existing directory\n"
-                "• Cancel - Abort export"
+                "• 覆盖 - 覆盖现有目录\n"
+                "• 取消 - 中止导出"
             )
         )
 
-        msg_box.addButton(self.tr("Overwrite"), QtWidgets.QMessageBox.YesRole)
+        msg_box.addButton(self.tr("覆盖"), QtWidgets.QMessageBox.YesRole)
         cancel_button = msg_box.addButton(
-            self.tr("Cancel"), QtWidgets.QMessageBox.RejectRole
+            self.tr("取消"), QtWidgets.QMessageBox.RejectRole
         )
         msg_box.setStyleSheet(get_msg_box_style())
         msg_box.exec_()
@@ -1318,8 +1318,8 @@ def export_pporc_annotation(self, mode):
         progress_dialog.close()
 
         template = self.tr(
-            "Exporting annotations successfully!\n"
-            "Results have been saved to:\n"
+            "导出标注成功！\n"
+            "结果已保存到：\n"
             "%s"
         )
         message_text = template % save_path
@@ -1515,19 +1515,19 @@ def export_vlm_r1_ovd_annotation(self):
     if osp.exists(save_path):
         msg_box = QtWidgets.QMessageBox(self)
         msg_box.setIcon(QtWidgets.QMessageBox.Warning)
-        msg_box.setWindowTitle(self.tr("File Exists!"))
-        msg_box.setText(self.tr("File already exists. Choose an action:"))
+        msg_box.setWindowTitle(self.tr("文件已存在！"))
+        msg_box.setText(self.tr("文件已存在，请选择一个操作："))
         msg_box.setInformativeText(
             self.tr(
-                "• Overwrite - Replace existing file\n"  # Escaped newline for informative text
-                "• Cancel - Abort export"
+                "• 覆盖 - 替换现有文件\n"
+                "• 取消 - 中止导出"
             )
         )
         _ = msg_box.addButton(
-            self.tr("Overwrite"), QtWidgets.QMessageBox.YesRole
+            self.tr("覆盖"), QtWidgets.QMessageBox.YesRole
         )
         cancel_msg_button = msg_box.addButton(
-            self.tr("Cancel"), QtWidgets.QMessageBox.RejectRole
+            self.tr("取消"), QtWidgets.QMessageBox.RejectRole
         )
         msg_box.setDefaultButton(cancel_msg_button)
 
@@ -1582,8 +1582,8 @@ def export_vlm_r1_ovd_annotation(self):
             progress_dialog.close()
             if success:
                 template = self.tr(
-                    "Exporting annotations successfully!\n"
-                    "Results have been saved to:\n"
+                    "导出标注成功！\n"
+                    "结果已保存到：\n"
                     "%s"
                 )
                 message_text = template % save_path

@@ -201,7 +201,7 @@ def upload_vlm_r1_ovd_annotation(self):
         progress_dialog.close()
         template = self.tr(
             "Uploading annotations successfully!\n"
-            "Results have been saved to:\n"
+            "结果已保存到：\n"
             "%s"
         )
         message_text = template % output_dir_path
@@ -622,7 +622,7 @@ def upload_mmgd_annotation(self, LABEL_OPACITY):
         progress_dialog.close()
         template = self.tr(
             "Uploading annotations successfully!\n"
-            "Results have been saved to:\n"
+            "结果已保存到：\n"
             "%s"
         )
         message_text = template % output_dir_path
@@ -924,7 +924,7 @@ def upload_mask_annotation(self, LABEL_OPACITY):
         progress_dialog.close()
         template = self.tr(
             "Uploading annotations successfully!\n"
-            "Results have been saved to:\n"
+            "结果已保存到：\n"
             "%s"
         )
         message_text = template % output_dir_path
@@ -1080,7 +1080,7 @@ def upload_dota_annotation(self):
         progress_dialog.close()
         template = self.tr(
             "Uploading annotations successfully!\n"
-            "Results have been saved to:\n"
+            "结果已保存到：\n"
             "%s"
         )
         message_text = template % output_dir_path
@@ -1316,7 +1316,7 @@ def upload_voc_annotation(self, mode):
         progress_dialog.close()
         template = self.tr(
             "Uploading annotations successfully!\n"
-            "Results have been saved to:\n"
+            "结果已保存到：\n"
             "%s"
         )
         message_text = template % output_dir_path
@@ -1450,21 +1450,28 @@ def upload_yolo_annotation(self, mode, LABEL_OPACITY):
     label_file_list = os.listdir(label_dir_path)
     output_dir_path = self.output_dir if self.output_dir else image_dir_path
 
-    response = QtWidgets.QMessageBox()
-    response.setIcon(QtWidgets.QMessageBox.Warning)
-    response.setWindowTitle(self.tr("Warning"))
-    response.setText(self.tr("Current annotation will be lost"))
-    response.setInformativeText(
-        self.tr(
-            "You are going to upload new annotations to this task. Continue?"
-        )
-    )
-    response.setStandardButtons(
-        QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Ok
-    )
-    response.setStyleSheet(get_msg_box_style())
+    # Create a custom message box
+    msg_box = QtWidgets.QMessageBox(self)
+    msg_box.setWindowTitle(self.tr("导入选项"))
+    msg_box.setText(self.tr("部分图片可能已存在标签。"))
+    msg_box.setInformativeText(self.tr("您希望合并现有标签还是覆盖它们？"))
+    msg_box.setIcon(QtWidgets.QMessageBox.Question)
 
-    if response.exec_() != QtWidgets.QMessageBox.Ok:
+    # Add custom buttons
+    merge_button = msg_box.addButton(self.tr("合并"), QtWidgets.QMessageBox.AcceptRole)
+    overwrite_button = msg_box.addButton(self.tr("覆盖"), QtWidgets.QMessageBox.DestructiveRole)
+    cancel_button = msg_box.addButton(self.tr("取消"), QtWidgets.QMessageBox.RejectRole)
+    
+    msg_box.setDefaultButton(merge_button)
+    
+    reply = msg_box.exec_()
+
+    merge = False
+    if msg_box.clickedButton() == merge_button:
+        merge = True
+    elif msg_box.clickedButton() == overwrite_button:
+        merge = False
+    else: # cancel_button
         return
 
     progress_dialog = QProgressDialog(
@@ -1500,18 +1507,21 @@ def upload_yolo_annotation(self, mode, LABEL_OPACITY):
                     output_file=output_file,
                     image_file=image_file,
                     mode=mode,
+                    merge=merge,
                 )
             elif mode == "obb":
                 converter.yolo_obb_to_custom(
                     input_file=input_file,
                     output_file=output_file,
                     image_file=image_file,
+                    merge=merge,
                 )
             elif mode == "pose":
                 converter.yolo_pose_to_custom(
                     input_file=input_file,
                     output_file=output_file,
                     image_file=image_file,
+                    merge=merge,
                 )
 
             progress_dialog.setValue(i)
