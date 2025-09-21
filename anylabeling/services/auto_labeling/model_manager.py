@@ -8,7 +8,6 @@ from threading import Lock
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 import anylabeling.configs as auto_labeling_configs
-from anylabeling.utils import GenericWorker
 from anylabeling.views.labeling.logger import logger
 from anylabeling.config import get_config, save_config
 from anylabeling.services.auto_labeling.types import AutoLabelingResult
@@ -25,6 +24,24 @@ from anylabeling.services.auto_labeling import (
     _AUTO_LABELING_PROMPT_MODELS,
     _ON_NEXT_FILES_CHANGED_MODELS,
 )
+
+
+class GenericWorker(QObject):
+    """Generic worker thread"""
+
+    finished = pyqtSignal()
+
+    def __init__(self, target, *args, **kwargs):
+        super().__init__()
+        self.target = target
+        self.args = args
+        self.kwargs = kwargs
+
+    @pyqtSlot()
+    def run(self):
+        """Run the worker"""
+        self.target(*self.args, **self.kwargs)
+        self.finished.emit()
 
 
 class ModelManager(QObject):
