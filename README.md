@@ -6,11 +6,29 @@
 
 
 X-AnyLabeling 魔改版 基于250903更新的源码进行魔改
-增加了一些我自己在使用中认为很有用的功能 
+
+由淫书馆TG频道 https://t.me/yinshuguan 
+
+专门为
+
+开源
+
+https://github.com/dmMaze/BallonsTranslator
+
+和付费
+
+https://www.basiccat.org/zh/imagetrans/
+
+漫画翻译工具 的前置检测而魔改的版本
+
+漫画翻译的所有的前置检测任务都交给魔改版X-AnyLabeling
+
+真正的漫画工具只负责OCR 翻译 嵌字 
 
 因为使用AI编写代码 故 无法与主分支合并
 
-本魔改服务于仅服务于项目
+本魔改服务于仅服务于 自训练模型 使用
+
 https://github.com/lhj5426/YSG
 
 魔改内容如下
