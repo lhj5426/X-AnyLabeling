@@ -204,4 +204,30 @@ https://github.com/user-attachments/assets/c1643ea5-97a8-4bdf-b094-8d9b1f581fd7
 
 https://github.com/user-attachments/assets/4712607c-8ffc-45a4-b540-facddd7caee1
 
+27.支持付费图片翻译工具ImageTrans  https://www.basiccat.org/zh/imagetrans/ 项目文件的导入导出
+
+https://github.com/user-attachments/assets/ec2a4ce5-4fe3-4777-849a-c082c9a51f2e
+
+https://github.com/user-attachments/assets/65b05cf7-d7ec-405b-86c3-1453893d6488
+
+28.增加区域合并可合并文本
+
+https://github.com/user-attachments/assets/642f3694-0797-4c86-afdd-37a8c96908c3
+
+29.增加双色标签工具
+
+https://github.com/user-attachments/assets/54d9e645-58c7-49ea-807c-b41972f4c93f
+
+30.增加漫画排序工具可视化以及排序线
+
+https://github.com/user-attachments/assets/2b258c55-8d39-45fb-b3d4-24ec6613303e
+
+
+
+
+
+
+
+
+
 
