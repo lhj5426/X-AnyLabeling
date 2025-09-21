@@ -25,6 +25,8 @@ https://www.basiccat.org/zh/imagetrans/
 
 真正的漫画工具只负责OCR 翻译 嵌字 
 
+(原版 https://github.com/CVHub520/X-AnyLabeling 已支持使用PPV5ocr 懒得移植过来 魔改版 原版双持也不是不可以)
+
 因为使用AI编写代码 故 无法与主分支合并
 
 本魔改服务于仅服务于 自训练模型 使用
