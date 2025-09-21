@@ -1,4 +1,4 @@
-# flake8: noqa
+﻿# flake8: noqa
 
 from .about_dialog import AboutDialog
 from .auto_labeling import AutoLabelingWidget
@@ -28,6 +28,9 @@ from .zoom_widget import ZoomWidget
 from .navigator_widget import NavigatorWidget, NavigatorDialog
 from .expand_margins_dialog import ExpandMarginsDialog
 from .label_category_widget import LabelCategoryWidget
+from .merge_dialog import MergeDialog
+from .label_tool_dialog import LabelToolDialog
+from .tag_sort_dialog import TagSortDialog
 
 
 __all__ = [
@@ -60,4 +63,7 @@ __all__ = [
     "NavigatorDialog",
     "ExpandMarginsDialog",
     "LabelCategoryWidget",
+    "MergeDialog",
+    "LabelToolDialog",
+    "TagSortDialog",
 ]

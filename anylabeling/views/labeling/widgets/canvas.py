@@ -1362,7 +1362,7 @@ class Canvas(
             (new_shape.points[0].y() + new_shape.points[2].y()) / 2,
         )
         for j, p in enumerate(new_shape.points):
-            pos = self.rotate_point(p, center, theta)
+            pos = self.rotate_point(p, center, -theta)
             # TODO: Reserved for now
             # if self.out_off_pixmap(pos):
             #     return False  # No need to rotate
