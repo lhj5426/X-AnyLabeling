@@ -7,7 +7,7 @@ import os
 import os.path as osp
 import re
 import shutil
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Tuple
 
 import cv2
 import numpy as np
@@ -62,6 +62,7 @@ from .widgets import (
     ObjectManagerDialog,
     GroupIDModifyDialog,
     OverviewDialog,
+    Popup,
     SearchBar,
     ToolBar,
     UniqueLabelQListWidget,
@@ -70,10 +71,74 @@ from .widgets import (
     NavigatorDialog,
     ExpandMarginsDialog,
     LabelCategoryWidget,
+    MergeDialog,
+    LabelToolDialog,
+    TagSortDialog,
 )
+from ...services import merger, tag_sorting
 
 LABEL_COLORMAP = utils.label_colormap()
 LABEL_OPACITY = 128
+
+class MergeThread(QtCore.QThread):
+    progress = QtCore.pyqtSignal(int, str)
+    finished = QtCore.pyqtSignal(str)
+
+    def __init__(self, files, config, parent=None):
+        super().__init__(parent)
+        self.files = files
+        self.config = config
+
+    def run(self):
+        success_count = 0
+        fail_count = 0
+        total_files = len(self.files)
+        
+        for i, file_path in enumerate(self.files):
+            if self.isInterruptionRequested():
+                break
+            
+            label_file = os.path.splitext(file_path)[0] + ".json"
+            
+            self.progress.emit(i, f"正在处理: {os.path.basename(label_file)}")
+            
+            success, message = merger.process_file(label_file, self.config)
+            if success:
+                success_count += 1
+            else:
+                fail_count += 1
+        
+        if self.isInterruptionRequested():
+            final_message = "操作被用户取消。"
+        else:
+            final_message = f"处理完成！\n成功修改 {success_count} 个文件。"
+            if fail_count > 0:
+                final_message += f"\n{fail_count} 个文件处理失败或无需处理。"
+        
+        self.finished.emit(final_message)
+
+
+class TagSortThread(QtCore.QThread):
+    progress = QtCore.pyqtSignal(int, int, object)
+    finished = QtCore.pyqtSignal(list, bool)
+
+    def __init__(self, files, options, parent=None):
+        super().__init__(parent)
+        self.files = list(files)
+        self.options = options
+        self._cancelled = False
+
+    def run(self):
+        outcomes = []
+        total = len(self.files)
+        for index, file_path in enumerate(self.files, start=1):
+            if self.isInterruptionRequested():
+                self._cancelled = True
+                break
+            outcome = tag_sorting.sort_json_file(file_path, self.options)
+            outcomes.append(outcome)
+            self.progress.emit(index, total, outcome)
+        self.finished.emit(outcomes, self._cancelled)
 
 
 class LabelingWidget(LabelDialog):
@@ -117,6 +182,15 @@ class LabelingWidget(LabelDialog):
         self.cache_auto_label_group_id = None
         self.object_manager_dialog = None
         self.expand_margins_dialog = None
+        self.merge_tool_dialog = None
+        self.merge_progress_dialog = None
+        self.label_tool_dialog = None
+        self.tag_sort_dialog = None
+        self.tag_sort_thread = None
+        self.tag_sort_scope = None
+        self.tag_sort_files = []
+        self.tag_sort_total = 0
+        self.tag_sort_last_payload = None
 
         # see configs/anylabeling_config.yaml for valid configuration
         if config is None:
@@ -918,8 +992,27 @@ class LabelingWidget(LabelDialog):
             self.tr("标注框边距扩展工具"),
             self.open_expand_margins_dialog,
             icon="edit",
-            tip=self.tr("批量扩展或收缩标注框的边界"),
+            tip=self.tr("批量扩展或收缩标注框的边距"),
         )
+        tag_sort_tool = action(
+            self.tr("标签排序工具"),
+            self.open_tag_sort_dialog,
+            icon="edit",
+            tip=self.tr("根据排序规则批量调整标注标签顺序"),
+        )
+        merge_shapes = action(
+            self.tr("区域合并工具"),
+            self.open_merge_tool,
+            icon="union",
+            tip=self.tr("根据规则合并标注对象"),
+        )
+        dual_color_label_tool = action(
+            self.tr("双色标签工具"),
+            self.open_label_tool,
+            icon="edit",
+            tip=self.tr("转换或还原双色标签"),
+        )
+
         open_chatbot = action(
             self.tr("ChatBot"),
             self.open_chatbot,
@@ -1322,6 +1415,21 @@ class LabelingWidget(LabelDialog):
             icon="format_vlm_r1_ovd",
             tip=self.tr("Upload Custom VLM-R1 OVD Annotations"),
         )
+        upload_ballontranslator_annotation = action(
+            self.tr("导入 Ballontranslator JSON"),
+            lambda: utils.upload_ballontranslator_annotation(self),
+            None,
+            icon="format_coco",
+            tip=self.tr("导入 Ballontranslator JSON 项目文件"),
+        )
+
+        upload_imagetrans_annotation = action(
+            self.tr("导入 ImageTrans ipt"),
+            lambda: utils.upload_imagetrans_annotation(self),
+            None,
+            icon="format_coco",
+            tip=self.tr("导入 ImageTrans ipt 项目文件"),
+        )
 
         # Export
         export_yolo_hbb_annotation = action(
@@ -1455,6 +1563,20 @@ class LabelingWidget(LabelDialog):
             icon="format_vlm_r1_ovd",
             tip=self.tr("Export Custom VLM-R1 OVD Annotations"),
         )
+        export_ballontranslator_annotation = action(
+            "导出 Ballontranslator JSON",
+            lambda: utils.export_ballontranslator_annotation(self),
+            None,
+            icon="format_coco",
+            tip="导出为 Ballontranslator JSON 格式",
+        )
+        export_imagetrans_annotation = action(
+            "导出 ImageTrans ipt",
+            lambda: utils.export_imagetrans_annotation(self),
+            None,
+            icon="format_coco",
+            tip="导出 ImageTrans ipt 项目文件",
+        )
 
         # Group zoom controls into a list for easier toggling.
         zoom_actions = (
@@ -1586,6 +1708,8 @@ class LabelingWidget(LabelDialog):
             upload_ppocr_rec_annotation=upload_ppocr_rec_annotation,
             upload_ppocr_kie_annotation=upload_ppocr_kie_annotation,
             upload_vlm_r1_ovd_annotation=upload_vlm_r1_ovd_annotation,
+            upload_ballontranslator_annotation=upload_ballontranslator_annotation,
+            upload_imagetrans_annotation=upload_imagetrans_annotation,
             export_yolo_hbb_annotation=export_yolo_hbb_annotation,
             export_yolo_obb_annotation=export_yolo_obb_annotation,
             export_yolo_seg_annotation=export_yolo_seg_annotation,
@@ -1603,6 +1727,8 @@ class LabelingWidget(LabelDialog):
             export_pporc_rec_annotation=export_pporc_rec_annotation,
             export_pporc_kie_annotation=export_pporc_kie_annotation,
             export_vlm_r1_ovd_annotation=export_vlm_r1_ovd_annotation,
+            export_ballontranslator_annotation=export_ballontranslator_annotation,
+            export_imagetrans_annotation=export_imagetrans_annotation,
             zoom=zoom,
             zoom_in=zoom_in,
             zoom_out=zoom_out,
@@ -1767,6 +1893,10 @@ class LabelingWidget(LabelDialog):
                 polygon_to_obb,
                 None,
                 expand_margins,
+                tag_sort_tool,
+                merge_shapes,
+                None,
+                dual_color_label_tool,
             ),
         )
         utils.add_actions(
@@ -1814,6 +1944,9 @@ class LabelingWidget(LabelDialog):
                 upload_ppocr_kie_annotation,
                 None,
                 upload_vlm_r1_ovd_annotation,
+                None,
+                upload_ballontranslator_annotation,
+                upload_imagetrans_annotation,
             ),
         )
         utils.add_actions(
@@ -1842,6 +1975,9 @@ class LabelingWidget(LabelDialog):
                 export_pporc_kie_annotation,
                 None,
                 export_vlm_r1_ovd_annotation,
+                None,
+                export_ballontranslator_annotation,
+                export_imagetrans_annotation,
             ),
         )
         utils.add_actions(
@@ -2565,6 +2701,62 @@ class LabelingWidget(LabelDialog):
                 label_file_list.append(osp.join(self.output_dir, file_name))
         return label_file_list
 
+    def _tag_sort_label_path_for_image(self, image_path: Optional[str]) -> Optional[str]:
+        if not image_path:
+            return None
+        label_path = osp.splitext(image_path)[0] + LabelFile.suffix
+        if self.output_dir:
+            label_path = osp.join(self.output_dir, osp.basename(label_path))
+        return label_path
+
+    def _tag_sort_current_label_file(self) -> Optional[str]:
+        if self.label_file and getattr(self.label_file, "filename", None):
+            return self.label_file.filename
+        return self._tag_sort_label_path_for_image(self.filename)
+
+    def _tag_sort_collect_from_images(self, image_paths: List[str]) -> Tuple[List[str], List[str]]:
+        existing: List[str] = []
+        missing: List[str] = []
+        for image_path in image_paths:
+            label_path = self._tag_sort_label_path_for_image(image_path)
+            if not label_path:
+                continue
+            if osp.exists(label_path):
+                existing.append(label_path)
+            else:
+                missing.append(label_path)
+        return existing, missing
+
+    def _tag_sort_collect_from_directory(self, directory: str) -> List[str]:
+        if not directory:
+            return []
+        file_paths: List[str] = []
+        try:
+            for entry in os.listdir(directory):
+                if entry.lower().endswith(LabelFile.suffix):
+                    full_path = osp.join(directory, entry)
+                    if osp.isfile(full_path):
+                        file_paths.append(full_path)
+        except Exception as exc:  # pragma: no cover - surface to UI
+            logger.error(f"Failed to read directory {directory}: {exc}")
+            return []
+        return sorted(file_paths)
+
+    @staticmethod
+    def _tag_sort_normalize_paths(paths: List[str]) -> List[str]:
+        unique: List[str] = []
+        seen = set()
+        for path in paths:
+            if not path:
+                continue
+            resolved = osp.abspath(path)
+            if not osp.exists(resolved):
+                continue
+            if resolved not in seen:
+                seen.add(resolved)
+                unique.append(resolved)
+        return unique
+
     def union_selection(self):
         """
         Merges selected shapes into one shape.
@@ -2856,6 +3048,215 @@ class LabelingWidget(LabelDialog):
             ).format(processed_files=processed_files, modified_shapes_total=modified_shapes_total)
         )
 
+    def on_tag_sort_run_requested(self, payload):
+        if self.tag_sort_thread and self.tag_sort_thread.isRunning():
+            QtWidgets.QMessageBox.information(
+                self,
+                self.tr("排序进行中"),
+                self.tr("请等待当前排序任务完成。"),
+            )
+            return
+
+        options = payload.get("options")
+        scope = payload.get("scope")
+
+        if not options:
+            QtWidgets.QMessageBox.information(
+                self,
+                self.tr("排序配置错误"),
+                self.tr("排序配置信息缺失。"),
+            )
+            return
+
+        # 只有在使用自定义排序线模式时才检查排序线
+        if getattr(options, "spatial_mode", None) == "LINE_GUIDES" and not getattr(options, "line_guides", None):
+            QtWidgets.QMessageBox.information(
+                self,
+                self.tr("缺少排序线"),
+                self.tr("请先在工具窗口中绘制排序线后再执行。"),
+            )
+            return
+
+        files: List[str] = []
+        missing: List[str] = []
+
+        if scope == "current":
+            label_path = self._tag_sort_current_label_file()
+            if label_path and osp.exists(label_path):
+                files = [label_path]
+            elif label_path:
+                missing.append(label_path)
+        elif scope == "opened":
+            files, missing = self._tag_sort_collect_from_images(self.image_list)
+        elif scope == "opened":
+            files, missing = self._tag_sort_collect_from_images(self.image_list)
+        else:
+            files = []
+
+        files = self._tag_sort_normalize_paths(files)
+        total = len(files)
+
+        if scope == "current" and total == 0:
+            QtWidgets.QMessageBox.information(
+                self,
+                self.tr("未找到标签文件"),
+                self.tr("当前页面尚未保存标注或标签文件不存在。"),
+            )
+            if self.tag_sort_dialog:
+                self.tag_sort_dialog.append_log(
+                    self.tr("已取消：没有找到当前页面的标签文件。")
+                )
+            return
+
+        if scope == "opened" and total == 0:
+            QtWidgets.QMessageBox.information(
+                self,
+                self.tr("未找到标签文件"),
+                self.tr("当前项目中没有可排序的标签文件。"),
+            )
+            if self.tag_sort_dialog:
+                self.tag_sort_dialog.append_log(
+                    self.tr("已取消：项目中没有可排序的标签文件。")
+                )
+            return
+
+        if not files:
+            QtWidgets.QMessageBox.information(
+                self,
+                self.tr("未找到标签文件"),
+                self.tr("所选范围内没有可排序的标签文件。"),
+            )
+            if self.tag_sort_dialog:
+                self.tag_sort_dialog.append_log(
+                    self.tr("已取消：没有可排序的标签文件。")
+                )
+            return
+
+        current_label = self._tag_sort_current_label_file()
+        if self.dirty and current_label:
+            normalized_current = osp.abspath(current_label)
+            if normalized_current in files:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    self.tr("存在未保存的修改"),
+                    self.tr("请先保存当前标注后再执行排序。"),
+                )
+                if self.tag_sort_dialog:
+                    self.tag_sort_dialog.append_log(
+                        self.tr("已取消：当前标注未保存。")
+                    )
+                return
+
+        self.tag_sort_files = files
+        self.tag_sort_scope = scope
+        self.tag_sort_total = total
+        self.tag_sort_last_payload = {
+            "options": options,
+            "scope": scope,
+        }
+
+        if self.tag_sort_dialog:
+            self.tag_sort_dialog.set_busy(True)
+            self.tag_sort_dialog.set_progress(0, total)
+            start_msg = self.tr("开始排序，共 {count} 个文件。").format(count=total)
+            self.tag_sort_dialog.append_log(start_msg)
+            if missing:
+                skip_msg = self.tr("跳过 {count} 个缺失的标签文件。").format(
+                    count=len(missing)
+                )
+                self.tag_sort_dialog.append_log(skip_msg)
+
+        self.tag_sort_thread = TagSortThread(files, options, self)
+        self.tag_sort_thread.progress.connect(self.on_tag_sort_progress)
+        self.tag_sort_thread.finished.connect(self.on_tag_sort_finished)
+        self.tag_sort_thread.start()
+    def on_tag_sort_progress(self, processed: int, total: int, outcome):
+        filename = osp.basename(outcome.file_path) if outcome.file_path else ""
+        if self.tag_sort_dialog:
+            self.tag_sort_dialog.set_progress(processed, total)
+            if outcome.success:
+                if outcome.changed:
+                    msg = self.tr("[{current}/{total}] {name} - 已重新排序").format(
+                        current=processed, total=total, name=filename
+                    )
+                else:
+                    msg = self.tr("[{current}/{total}] {name} - 无需调整").format(
+                        current=processed, total=total, name=filename
+                    )
+            else:
+                msg = self.tr("[{current}/{total}] {name} - 失败：{reason}").format(
+                    current=processed,
+                    total=total,
+                    name=filename,
+                    reason=outcome.message,
+                )
+            self.tag_sort_dialog.append_log(msg)
+        status_msg = self.tr("正在排序 {name} ({current}/{total})").format(
+            name=filename or "-",
+            current=processed,
+            total=total,
+        )
+        self.status(status_msg, 4000)
+
+    def on_tag_sort_finished(
+        self,
+        outcomes: List[tag_sorting.SortOutcome],
+        cancelled: bool,
+    ):
+        if self.tag_sort_dialog:
+            self.tag_sort_dialog.set_busy(False)
+            if self.tag_sort_total:
+                self.tag_sort_dialog.set_progress(
+                    self.tag_sort_total,
+                    self.tag_sort_total,
+                )
+
+        self.status(self.tr("标签排序完成"), 4000)
+
+        if self.tag_sort_thread:
+            self.tag_sort_thread.deleteLater()
+        self.tag_sort_thread = None
+
+        if not outcomes:
+            if cancelled and self.tag_sort_dialog:
+                self.tag_sort_dialog.append_log(self.tr("排序已取消。"))
+            return
+
+        sorted_count = sum(1 for o in outcomes if o.success and o.changed)
+        unchanged_count = sum(1 for o in outcomes if o.success and not o.changed)
+        failed_count = sum(1 for o in outcomes if not o.success)
+
+        if self.tag_sort_dialog:
+            if cancelled:
+                self.tag_sort_dialog.append_log(
+                    self.tr("排序已取消，以下为已处理的统计。")
+                )
+            summary = self.tr(
+                "排序完成：成功 {sorted_count} 个，保持不变 {unchanged} 个，失败 {failed} 个。"
+            ).format(
+                sorted_count=sorted_count,
+                unchanged=unchanged_count,
+                failed=failed_count,
+            )
+            self.tag_sort_dialog.append_log(summary)
+
+        current_label = self._tag_sort_current_label_file()
+        if current_label and self.filename:
+            normalized_current = osp.abspath(current_label)
+            changed_paths = {
+                osp.abspath(outcome.file_path)
+                for outcome in outcomes
+                if outcome.success and outcome.changed and outcome.file_path
+            }
+            if normalized_current in changed_paths:
+                self.queue_event(
+                    functools.partial(self.load_file, self.filename)
+                )
+
+        self.tag_sort_files = []
+        self.tag_sort_scope = None
+        self.tag_sort_total = 0
+
     def gid_manager(self):
         modify_gid_dialog = GroupIDModifyDialog(parent=self)
         result = modify_gid_dialog.exec_()
@@ -2900,6 +3301,29 @@ class LabelingWidget(LabelDialog):
             self.expand_margins_dialog.activateWindow()
         else:
             self.expand_margins_dialog.show()
+
+    def open_tag_sort_dialog(self):
+        """Open the tag sorting dialog window."""
+        if self.tag_sort_dialog is None:
+            self.tag_sort_dialog = TagSortDialog(self)
+            self.tag_sort_dialog.run_requested.connect(self.on_tag_sort_run_requested)
+
+        pixmap = None
+        if hasattr(self.canvas, "pixmap") and self.canvas.pixmap is not None:
+            pixmap = self.canvas.pixmap.copy()
+        shapes_data = []
+        try:
+            shapes_data = [shape.to_dict() for shape in getattr(self.canvas, "shapes", [])]
+        except Exception:  # noqa: BLE001
+            shapes_data = []
+        self.tag_sort_dialog.set_context(pixmap, shapes_data)
+
+        if self.tag_sort_dialog.isVisible():
+            self.tag_sort_dialog.raise_()
+            self.tag_sort_dialog.activateWindow()
+        else:
+            self.tag_sort_dialog.show()
+
 
     def open_vqa(self):
         if not self.image_list:
@@ -4236,6 +4660,7 @@ class LabelingWidget(LabelDialog):
         description = ""
         difficult = False
         kie_linking = []
+        new_direction = None
 
         if self.canvas.shapes[-1].label in [
             AutoLabelingMode.ADD,
@@ -4263,10 +4688,13 @@ class LabelingWidget(LabelDialog):
                     difficult,
                     kie_linking,
                     _,  # new_order is not used here
+                    new_direction,
                 ) = self.label_dialog.pop_up(
                     text,
                     move_mode=self._config.get("move_mode", "auto"),
                     order=None,
+                    direction=self.canvas.shapes[-1].direction if self.canvas.shapes[-1].shape_type == "rotation" else 0,
+                    shape_type=self.canvas.shapes[-1].shape_type,
                 )
                 if not text:
                     self.label_dialog.edit.setText(previous_text)
@@ -4292,6 +4720,8 @@ class LabelingWidget(LabelDialog):
             shape.label = text
             shape.difficult = difficult
             shape.kie_linking = kie_linking
+            if shape.shape_type == "rotation" and new_direction is not None:
+                shape.direction = new_direction
             self.add_label(shape)
             self.actions.edit_mode.setEnabled(True)
             self.actions.undo_last_point.setEnabled(False)
@@ -4961,6 +5391,16 @@ class LabelingWidget(LabelDialog):
         else:
             self.set_clean()
         self.canvas.setEnabled(True)
+
+        if self.tag_sort_dialog:
+            pixmap_obj = getattr(self.canvas, "pixmap", None)
+            pixmap_copy = pixmap_obj.copy() if pixmap_obj is not None else None
+            try:
+                shapes_data = [shape.to_dict() for shape in self.canvas.shapes]
+            except Exception:  # noqa: BLE001
+                shapes_data = []
+            self.tag_sort_dialog.set_context(pixmap_copy, shapes_data)
+
         # set zoom values
         is_initial_load = not self.zoom_values
         if self.filename in self.zoom_values:
@@ -5775,6 +6215,8 @@ class LabelingWidget(LabelDialog):
                 description,
                 difficult,
                 kie_linking,
+                _,
+                _,
             ) = self.label_dialog.pop_up(
                 text=self.find_last_label(),
                 flags={},
@@ -6222,3 +6664,78 @@ class LabelingWidget(LabelDialog):
                 f"处理完成！总共修改了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框。"
             )
         )
+
+    def open_merge_tool(self):
+        if not self.image_list:
+            self.error_message("无图像", "请先打开一个包含图像的文件夹。")
+            return
+
+        if self.merge_tool_dialog is None:
+            self.merge_tool_dialog = MergeDialog(self)
+            self.merge_tool_dialog.run_current_button.clicked.connect(
+                lambda: self.run_merge_task(self.merge_tool_dialog.get_config(), on_current_file=True)
+            )
+            self.merge_tool_dialog.run_all_button.clicked.connect(
+                lambda: self.run_merge_task(self.merge_tool_dialog.get_config(), on_current_file=False)
+            )
+        
+        self.merge_tool_dialog.show()
+        self.merge_tool_dialog.raise_()
+        self.merge_tool_dialog.activateWindow()
+
+    def run_merge_task(self, config, on_current_file=False):
+        if on_current_file:
+            if not self.filename:
+                self.error_message("无当前文件", "没有打开任何文件。")
+                return
+            files_to_process = [self.filename]
+        else:
+            files_to_process = self.image_list
+
+        if not files_to_process:
+            self.error_message("无文件", "没有文件可供处理。")
+            return
+
+        self.merge_thread = MergeThread(files_to_process, config)
+        self.merge_thread.finished.connect(self.on_merge_finished)
+
+        if len(files_to_process) > 1:
+            self.merge_progress_dialog = QtWidgets.QProgressDialog(
+                "正在合并区域...", "取消", 0, len(files_to_process), self
+            )
+            self.merge_progress_dialog.setWindowModality(QtCore.Qt.NonModal)
+            self.merge_thread.progress.connect(self.merge_progress_dialog.setValue)
+            self.merge_thread.progress.connect(lambda _, msg: self.merge_progress_dialog.setLabelText(msg))
+            self.merge_thread.finished.connect(self.merge_progress_dialog.close)
+            self.merge_progress_dialog.canceled.connect(self.merge_thread.requestInterruption)
+            self.merge_progress_dialog.show()
+        
+        self.merge_thread.start()
+
+    def on_merge_finished(self, message):
+        self.load_file(self.filename)
+        if self.merge_thread.files and len(self.merge_thread.files) > 1:
+            popup = Popup(
+                message,
+                self,
+                icon=utils.new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self, popup_height=65, position="center")
+
+    def open_label_tool(self):
+        if not self.last_open_dir:
+            self.error_message("错误", "请先打开一个包含图像的文件夹。")
+            return
+
+        if self.label_tool_dialog is None:
+            self.label_tool_dialog = LabelToolDialog(self.last_open_dir, self)
+        
+        # 如果对话框已存在但文件夹已更改，则重新创建
+        if self.label_tool_dialog.folder_path != self.last_open_dir:
+            self.label_tool_dialog.close()
+            self.label_tool_dialog = LabelToolDialog(self.last_open_dir, self)
+
+        self.label_tool_dialog.show()
+        self.label_tool_dialog.raise_()
+        self.label_tool_dialog.activateWindow()
+
