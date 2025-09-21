@@ -51,6 +51,7 @@ class MergeDialog(QtWidgets.QDialog):
         label_layout.addRow("标签合并策略:", self.label_merge_strategy)
 
         self.exclude_labels = QtWidgets.QLineEdit()
+        self.exclude_labels.setText("other")  # 默认填入other
         self.exclude_labels.setPlaceholderText("例如: label1,label2")
         label_layout.addRow("排除合并的标签 (黑名单):", self.exclude_labels)
         
@@ -80,7 +81,7 @@ class MergeDialog(QtWidgets.QDialog):
         self.max_vertical_gap.setValue(3)
         self.min_width_overlap_ratio = QtWidgets.QSpinBox()
         self.min_width_overlap_ratio.setRange(0, 100)
-        self.min_width_overlap_ratio.setValue(95)
+        self.min_width_overlap_ratio.setValue(5)
         self.min_width_overlap_ratio.setSuffix(" %")
         vertical_layout.addRow("最大垂直间隙 (像素):", self.max_vertical_gap)
         vertical_layout.addRow("最小水平重叠比例:", self.min_width_overlap_ratio)
