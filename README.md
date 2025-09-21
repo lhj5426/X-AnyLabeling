@@ -33,7 +33,7 @@ https://www.basiccat.org/zh/imagetrans/
 
 https://github.com/lhj5426/YSG
 
-我的矩形是可以分不同颜色的,你行吗
+不同类型可以分不同颜色的,你行吗
 
 看不清是可以加深颜色的,你可以吗
 
