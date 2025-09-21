@@ -53,14 +53,20 @@ def merge_labels(label1, label2, strategy):
         return label1
 
 def create_shape_from_box(box, shape1, shape2, config):
+    # 检查输入参数是否为None
+    if shape1 is None or shape2 is None:
+        raise ValueError("shape1 and shape2 cannot be None")
+
     new_shape = copy.deepcopy(shape1)
     x_min, y_min, x_max, y_max = box
     new_shape['points'] = [[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]]
     new_shape['label'] = merge_labels(shape1.get('label', ''), shape2.get('label', ''), config.get("LABEL_MERGE_STRATEGY", "FIRST"))
 
     # 合并文本内容 - 根据阅读方向决定合并顺序
-    desc1 = shape1.get('description', '').strip()
-    desc2 = shape2.get('description', '').strip()
+    desc1 = shape1.get('description', '') or ''
+    desc2 = shape2.get('description', '') or ''
+    desc1 = desc1.strip() if desc1 else ''
+    desc2 = desc2.strip() if desc2 else ''
     if desc1 and desc2:
         # 根据阅读方向合并文本
         reading_direction = config.get("READING_DIRECTION", "LTR")
@@ -146,6 +152,9 @@ def can_merge_shapes(shape1, shape2, mode, config):
     return False
 
 def perform_merge(shapes, mode, config):
+    # 过滤掉None值
+    shapes = [shape for shape in shapes if shape is not None]
+
     params = config.get("VERTICAL_MERGE_PARAMS", {}) if mode == "VERTICAL" else config.get("HORIZONTAL_MERGE_PARAMS", {})
     merge_count = 0
     while True:
