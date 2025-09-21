@@ -13,6 +13,8 @@ from .export import (
     export_odvg_annotation,
     export_pporc_annotation,
     export_vlm_r1_ovd_annotation,
+    export_ballontranslator_annotation,
+    export_imagetrans_annotation,
 )
 from .general import (
     gradient_text,
@@ -43,6 +45,7 @@ from .qt import (
     new_action,
     new_button,
     new_icon,
+    new_icon_path,
     on_thumbnail_click,
 )
 from .shape import (
@@ -68,5 +71,7 @@ from .upload import (
     upload_mmgd_annotation,
     upload_ppocr_annotation,
     upload_vlm_r1_ovd_annotation,
+    upload_ballontranslator_annotation,
+    upload_imagetrans_annotation,
 )
 from .video import open_video_file

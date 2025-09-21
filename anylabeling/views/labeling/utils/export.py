@@ -11,6 +11,11 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QProgressDialog,
+    QDialog,
+    QListWidget,
+    QListWidgetItem,
+    QDialogButtonBox,
+    QLabel,
 )
 
 from anylabeling.views.labeling.label_converter import LabelConverter
@@ -75,6 +80,77 @@ class ExportThread(QThread):
             self.finished.emit(False, str(e))
 
 
+class ExportImageTransThread(QThread):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(
+        self,
+        converter,
+        image_list,
+        label_dir_path,
+        template_path,
+        save_path,
+        excluded_labels,
+    ):
+        super().__init__()
+        self.converter = converter
+        self.image_list = image_list
+        self.label_dir_path = label_dir_path
+        self.template_path = template_path
+        self.save_path = save_path
+        self.excluded_labels = excluded_labels
+
+    def run(self):
+        try:
+            logger.info("ExportImageTransThread.run started")
+            time.sleep(1) # Keep this for better user experience with progress dialog
+
+            self.converter.custom_to_imagetrans(
+                self.image_list,
+                self.label_dir_path,
+                self.template_path,
+                self.save_path,
+                self.excluded_labels,
+            )
+            logger.info("ExportImageTransThread.run finished successfully")
+            self.finished.emit(True, "")
+        except Exception as e:
+            logger.error(f"ExportImageTransThread.run error: {e}")
+            self.finished.emit(False, str(e))
+
+
+class ExportBallonTranslatorThread(QThread):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(
+        self,
+        converter,
+        image_list,
+        label_dir_path,
+        save_path,
+        excluded_labels,
+    ):
+        super().__init__()
+        self.converter = converter
+        self.image_list = image_list
+        self.label_dir_path = label_dir_path
+        self.save_path = save_path
+        self.excluded_labels = excluded_labels
+
+    def run(self):
+        try:
+            time.sleep(1)
+            self.converter.custom_to_ballontranslator(
+                self.image_list,
+                self.label_dir_path,
+                self.save_path,
+                self.excluded_labels,
+            )
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
 def _check_filename_exist(self):
     if not self.may_continue():
         return False
@@ -89,6 +165,42 @@ def _check_filename_exist(self):
         return False
 
     return True
+
+
+class LabelExclusionDialog(QDialog):
+    def __init__(self, labels, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("排除标签")
+        self.setMinimumWidth(300)
+        layout = QVBoxLayout(self)
+        
+        description = QLabel("勾选要从导出中排除的标签：")
+        layout.addWidget(description)
+
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
+        for label in labels:
+            item = QListWidgetItem(label)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.list_widget.addItem(item)
+        
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            Qt.Horizontal,
+            self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def get_excluded_labels(self):
+        excluded = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                excluded.append(item.text())
+        return excluded
 
 
 def export_yolo_annotation(self, mode):
@@ -1620,3 +1732,216 @@ def export_vlm_r1_ovd_annotation(self):
             icon=new_icon_path("error", "svg"),
         )
         popup.show_popup(self, position="center")
+
+def export_imagetrans_annotation(self):
+    logger.info("Starting export_imagetrans_annotation")
+    if not _check_filename_exist(self):
+        return
+
+    # 1. Ask user for the template .itp file
+    template_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+        self,
+        "选择 ImageTrans 模板文件 (.itp)",
+        self.current_path(),
+        "ImageTrans Project (*.itp);;All Files (*)",
+    )
+    if not template_path:
+        return
+
+    # 2. Get unique labels and show exclusion dialog
+    unique_labels = []
+    for i in range(self.unique_label_list.count()):
+        item = self.unique_label_list.item(i)
+        label_text = item.data(Qt.UserRole)
+        unique_labels.append(label_text)
+
+    if not unique_labels:
+        excluded_labels = []
+    else:
+        exclusion_dialog = LabelExclusionDialog(unique_labels, self)
+        if exclusion_dialog.exec_() == QtWidgets.QDialog.Accepted:
+            excluded_labels = exclusion_dialog.get_excluded_labels()
+        else:
+            return  # User cancelled
+
+    # 3. Ask for save path
+    default_path = osp.join(
+        osp.dirname(self.filename), "project_converted.itp"
+    )
+    save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        self,
+        "导出 ImageTrans ipt",
+        default_path,
+        "ImageTrans Project (*.itp)",
+    )
+
+    if not save_path:
+        return
+
+    # 4. Proceed with export
+    image_list = self.image_list if self.image_list else [self.filename]
+    label_dir_path = osp.dirname(self.filename)
+    if self.output_dir:
+        label_dir_path = self.output_dir
+
+    converter = LabelConverter()
+
+    progress_dialog = QProgressDialog(
+        self.tr("正在导出为 ImageTrans 项目..."), self.tr("取消"), 0, 0, self
+    )
+    progress_dialog.setWindowModality(Qt.WindowModal)
+    progress_dialog.setWindowTitle(self.tr("导出进度"))
+    progress_dialog.setMinimumWidth(500)
+    progress_dialog.setMinimumHeight(150)
+    progress_dialog.setRange(0, 0) # Indeterminate
+    progress_dialog.setStyleSheet(
+        get_progress_dialog_style(color="#1d1d1f", height=20)
+    )
+
+    self.export_thread = ExportImageTransThread(
+        converter,
+        image_list,
+        label_dir_path,
+        template_path,
+        save_path,
+        excluded_labels,
+    )
+
+    def on_export_finished(success, error_msg):
+        logger.info(f"on_export_finished called with success={success}")
+        progress_dialog.close()
+        if success:
+            QtWidgets.QApplication.beep()
+            template = self.tr(
+                "ImageTrans 项目导出成功！\n"
+                "文件已保存到：\n"
+                "%s"
+            )
+            message_text = template % save_path
+            popup = Popup(
+                message_text,
+                self,
+                icon=new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self, popup_height=65, position="center")
+        else:
+            message = f"导出时发生错误: {str(error_msg)}"
+            logger.error(message)
+            popup = Popup(
+                message,
+                self,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self, position="center")
+
+    self.export_thread.finished.connect(on_export_finished)
+
+    logger.info("Starting ExportImageTransThread")
+    progress_dialog.show()
+    self.export_thread.start()
+
+    progress_dialog.canceled.connect(self.export_thread.terminate)
+
+
+def export_ballontranslator_annotation(self):
+    if not _check_filename_exist(self):
+        return
+
+    # 1. Ask user for a classes file
+    filter = "Label Files (*.txt);;All Files (*)"
+    classes_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+        self,
+        "选择标签文件",
+        "",
+        filter,
+    )
+    if not classes_file:
+        return
+
+    # 2. Read labels from the file
+    with open(classes_file, 'r', encoding='utf-8') as f:
+        unique_labels = [line.strip() for line in f.readlines() if line.strip()]
+
+    # 3. Show exclusion dialog
+    if not unique_labels:
+        excluded_labels = []
+    else:
+        exclusion_dialog = LabelExclusionDialog(unique_labels, self)
+        if exclusion_dialog.exec_() == QtWidgets.QDialog.Accepted:
+            excluded_labels = exclusion_dialog.get_excluded_labels()
+        else:
+            return # User cancelled
+
+    # 4. Ask for save path
+    default_path = osp.join(
+        osp.dirname(self.filename), "output_ballons.json"
+    )
+    save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        self,
+        "导出 Ballontranslator JSON",
+        default_path,
+        "JSON Files (*.json)",
+    )
+
+    if not save_path:
+        return
+
+    # 5. Proceed with export
+    image_list = self.image_list if self.image_list else [self.filename]
+    label_dir_path = osp.dirname(self.filename)
+    if self.output_dir:
+        label_dir_path = self.output_dir
+
+    converter = LabelConverter()
+
+    progress_dialog = QProgressDialog(
+        self.tr("正在导出为 Ballontranslator 项目..."), self.tr("取消"), 0, 0, self
+    )
+    progress_dialog.setWindowModality(Qt.WindowModal)
+    progress_dialog.setWindowTitle(self.tr("导出进度"))
+    progress_dialog.setMinimumWidth(500)
+    progress_dialog.setMinimumHeight(150)
+    progress_dialog.setRange(0, 0)  # Indeterminate
+    progress_dialog.setStyleSheet(
+        get_progress_dialog_style(color="#1d1d1f", height=20)
+    )
+
+    self.export_thread = ExportBallonTranslatorThread(
+        converter,
+        image_list,
+        label_dir_path,
+        save_path,
+        excluded_labels,
+    )
+
+    def on_export_finished(success, error_msg):
+        progress_dialog.close()
+        if success:
+            template = self.tr(
+                "导出标注成功！\n"
+                "结果已保存到：\n"
+                "%s"
+            )
+            message_text = template % save_path
+            popup = Popup(
+                message_text,
+                self,
+                icon=new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self, popup_height=65, position="center")
+        else:
+            message = f"Error occurred while exporting annotations: {str(error_msg)}"
+            logger.error(message)
+            popup = Popup(
+                message,
+                self,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self, position="center")
+
+    self.export_thread.finished.connect(on_export_finished)
+
+    progress_dialog.show()
+    self.export_thread.start()
+
+    progress_dialog.canceled.connect(self.export_thread.terminate)

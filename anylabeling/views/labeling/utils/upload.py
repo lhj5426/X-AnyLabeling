@@ -2,6 +2,7 @@ import json
 import jsonlines
 import os
 import os.path as osp
+from anylabeling.services.importers import convert_itp_to_anylabel
 import time
 import yaml
 
@@ -121,6 +122,23 @@ class UploadCocoThread(QThread):
 
             self.finished.emit(True, "")
 
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
+class UploadBallonTranslatorThread(QThread):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, input_file):
+        super().__init__()
+        self.input_file = input_file
+
+    def run(self):
+        try:
+            from .converter_scripts import convert_ballons_to_anylabel
+            time.sleep(1)
+            convert_ballons_to_anylabel(self.input_file)
+            self.finished.emit(True, "")
         except Exception as e:
             self.finished.emit(False, str(e))
 
@@ -1758,6 +1776,105 @@ def upload_image_flags_file(self):
 
     except Exception as e:
         message = f"Error occurred while uploading flags file: {str(e)}"
+        logger.error(message)
+        popup = Popup(
+            message,
+            self,
+            icon=new_icon_path("error", "svg"),
+        )
+        popup.show_popup(self, position="center")
+
+
+def upload_ballontranslator_annotation(self):
+    if not _check_filename_exist(self):
+        return
+
+    filter = "BallonsTranslator JSON (*.json);;All Files (*)"
+    input_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+        self,
+        self.tr("选择一个 BallonsTranslator 项目文件"),
+        "",
+        filter,
+    )
+
+    if not input_file:
+        return
+
+    progress_dialog = QProgressDialog(
+        self.tr("正在导入 BallonsTranslator 项目..."), self.tr("取消"), 0, 0, self
+    )
+    progress_dialog.setWindowModality(Qt.WindowModal)
+    progress_dialog.setWindowTitle(self.tr("导入进度"))
+    progress_dialog.setMinimumWidth(500)
+    progress_dialog.setMinimumHeight(150)
+    progress_dialog.setRange(0, 0)  # Indeterminate
+    progress_dialog.setStyleSheet(
+        get_progress_dialog_style(color="#1d1d1f", height=20)
+    )
+
+    self.upload_thread = UploadBallonTranslatorThread(input_file)
+
+    def on_upload_finished(success, error_msg):
+        progress_dialog.close()
+        if success:
+            # 刷新文件列表和UI
+            current_dir = osp.dirname(self.filename)
+            self.import_image_folder(current_dir, load=True)
+
+            popup = Popup(
+                self.tr("成功导入 BallonsTranslator 标注！\n文件已保存至原始图片目录。"),
+                self,
+                icon=new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self, popup_height=65, position="center")
+        else:
+            message = f"导入标注时发生错误: {str(error_msg)}"
+            logger.error(message)
+            popup = Popup(
+                message,
+                self,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self, position="center")
+
+    self.upload_thread.finished.connect(on_upload_finished)
+
+    progress_dialog.show()
+    self.upload_thread.start()
+
+    progress_dialog.canceled.connect(self.upload_thread.terminate)
+
+def upload_imagetrans_annotation(self):
+    if not _check_filename_exist(self):
+        return
+
+    filter = "ImageTrans Project (*.itp *.json);;All Files (*)"
+    input_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+        self,
+        self.tr("选择一个 ImageTrans 项目文件"),
+        "",
+        filter,
+    )
+
+    if not input_file:
+        return
+
+    try:
+        convert_itp_to_anylabel(input_file)
+        
+        # 刷新文件列表和UI
+        current_dir = osp.dirname(self.filename)
+        self.import_image_folder(current_dir, load=True)
+
+        popup = Popup(
+            self.tr("成功导入 ImageTrans 标注！\n文件已保存至原始图片目录。"),
+            self,
+            icon=new_icon_path("copy-green", "svg"),
+        )
+        popup.show_popup(self, popup_height=65, position="center")
+
+    except Exception as e:
+        message = f"导入标注时发生错误: {str(e)}"
         logger.error(message)
         popup = Popup(
             message,
