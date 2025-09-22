@@ -2799,27 +2799,48 @@ class LabelingWidget(LabelDialog):
             all_points = []
             for rot_shape in rotation_shapes:
                 all_points.extend(rot_shape['points'])
-            
+
             # 找到包围所有点的最小外接矩形
             min_x = min([p[0] for p in all_points])
             min_y = min([p[1] for p in all_points])
             max_x = max([p[0] for p in all_points])
             max_y = max([p[1] for p in all_points])
-            
-            # 创建包围矩形
-            union_shape.shape_type = "rotation"  # 保持为旋转矩形类型
-            union_shape.points[0].setX(min_x)
-            union_shape.points[0].setY(min_y)
-            union_shape.points[1].setX(max_x)
-            union_shape.points[1].setY(min_y)
-            union_shape.points[2].setX(max_x)
-            union_shape.points[2].setY(max_y)
-            union_shape.points[3].setX(min_x)
-            union_shape.points[3].setY(max_y)
-            
-            # 保持第一个旋转矩形的方向，或设置为0度
-            if hasattr(union_shape, 'direction'):
-                union_shape.direction = rotation_shapes[0]['direction']
+
+            # 保持为旋转矩形类型
+            union_shape.shape_type = "rotation"
+
+            # 获取第一个旋转矩形的角度
+            first_angle = rotation_shapes[0]['direction']
+            union_shape.direction = first_angle
+
+            # 根据角度计算旋转矩形的四个点
+            center_x = (min_x + max_x) / 2
+            center_y = (min_y + max_y) / 2
+            width = max_x - min_x
+            height = max_y - min_y
+
+            # 计算旋转矩形的四个角点
+            import math
+            cos_angle = math.cos(first_angle)
+            sin_angle = math.sin(first_angle)
+            half_w = width / 2
+            half_h = height / 2
+
+            # 未旋转的四个角点（相对于中心）
+            corners = [
+                [-half_w, -half_h],  # 左上
+                [half_w, -half_h],   # 右上
+                [half_w, half_h],    # 右下
+                [-half_w, half_h]    # 左下
+            ]
+
+            # 旋转并设置到union_shape的points
+            for i, (dx, dy) in enumerate(corners):
+                # 旋转变换
+                rotated_x = dx * cos_angle - dy * sin_angle + center_x
+                rotated_y = dx * sin_angle + dy * cos_angle + center_y
+                union_shape.points[i].setX(rotated_x)
+                union_shape.points[i].setY(rotated_y)
         else:
             # Create a blank mask
             min_x = min([min(p[0] for p in poly) for poly in polygon_shapes])
