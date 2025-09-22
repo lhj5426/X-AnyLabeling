@@ -273,6 +273,9 @@ https://github.com/user-attachments/assets/4e4451ad-3535-4f45-8636-497b068c2db8
 
 https://github.com/user-attachments/assets/63833dce-9989-4ed6-beb8-fd28f90c3496
 
+33.给相同矩形的重叠部分高亮添加了开关按钮
+
+https://github.com/user-attachments/assets/00f801c1-9ad3-4dd5-9271-ae3be35332bc
 
 
 
