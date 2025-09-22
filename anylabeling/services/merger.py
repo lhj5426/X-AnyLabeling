@@ -1,6 +1,7 @@
 import os
 import json
 import copy
+import math
 
 def get_bounding_box(shape):
     """
@@ -59,7 +60,43 @@ def create_shape_from_box(box, shape1, shape2, config):
 
     new_shape = copy.deepcopy(shape1)
     x_min, y_min, x_max, y_max = box
-    new_shape['points'] = [[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]]
+
+    # 检查是否为旋转矩形，如果是则保持旋转状态
+    if shape1.get('shape_type') == 'rotation':
+        # 保持旋转矩形的角度和类型
+        original_angle = shape1.get('direction', 0)
+        center_x = (x_min + x_max) / 2
+        center_y = (y_min + y_max) / 2
+        width = x_max - x_min
+        height = y_max - y_min
+
+        # 根据原始角度计算旋转矩形的四个角点
+        cos_angle = math.cos(original_angle)
+        sin_angle = math.sin(original_angle)
+        half_w = width / 2
+        half_h = height / 2
+
+        # 计算旋转后的四个角点
+        corners = [
+            [-half_w, -half_h],  # 左上
+            [half_w, -half_h],   # 右上
+            [half_w, half_h],    # 右下
+            [-half_w, half_h]    # 左下
+        ]
+
+        rotated_points = []
+        for dx, dy in corners:
+            rotated_x = dx * cos_angle - dy * sin_angle + center_x
+            rotated_y = dx * sin_angle + dy * cos_angle + center_y
+            rotated_points.append([rotated_x, rotated_y])
+
+        new_shape['points'] = rotated_points
+        new_shape['shape_type'] = 'rotation'
+        new_shape['direction'] = original_angle
+    else:
+        # 普通矩形保持轴对齐
+        new_shape['points'] = [[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]]
+
     new_shape['label'] = merge_labels(shape1.get('label', ''), shape2.get('label', ''), config.get("LABEL_MERGE_STRATEGY", "FIRST"))
 
     # 合并文本内容 - 根据阅读方向决定合并顺序
