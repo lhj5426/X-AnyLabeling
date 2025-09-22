@@ -157,6 +157,8 @@ class Canvas(
         
         # Initialize overlap color from configuration
         self.overlap_color = get_overlap_color(self._config)
+        # Initialize overlap display toggle (default: enabled)
+        self.show_overlap = True
         
         super().__init__(*args, **kwargs)
         # Initialise local state.
@@ -546,6 +548,26 @@ class Canvas(
         """
         self.overlap_color = get_overlap_color(config)
         self.update()  # Trigger repaint with new color
+
+    def toggle_overlap_display(self) -> None:
+        """
+        Toggle the display of overlap regions on/off.
+
+        This method switches the visibility of shape overlap highlighting
+        and triggers a canvas repaint to apply the change immediately.
+
+        Returns:
+            None
+
+        Example:
+            >>> canvas.toggle_overlap_display()  # Toggles current state
+
+        Note:
+            The overlap display state is stored in self.show_overlap.
+            When disabled, overlap regions are not drawn during paintEvent.
+        """
+        self.show_overlap = not self.show_overlap
+        self.update()  # Trigger repaint
 
     def get_mode(self):
         """Get current mode"""
@@ -2059,7 +2081,7 @@ class Canvas(
                 shape.paint(p)
 
         # 绘制重叠区域
-        if overlap_regions:
+        if overlap_regions and self.show_overlap:
             for overlap_path in overlap_regions:
                 if not overlap_path.isEmpty():
                     p.fillPath(overlap_path, self.overlap_color)
