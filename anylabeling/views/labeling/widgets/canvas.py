@@ -169,6 +169,17 @@ class Canvas(
         self.current = None
         self.selected_shapes = []  # save the selected shapes here
         self.selected_shapes_copy = []
+
+        # Alt+drag selection box state
+        self.selection_box_mode = False
+        self.selection_box_start = QtCore.QPoint()
+        self.selection_box_end = QtCore.QPoint()
+        self.selection_box = None
+
+        # Shift+drag path selection state
+        self.path_selection_mode = False
+        self.path_selection_points = []
+        self.path_highlighted_shapes = set()  # Shapes highlighted during path selection
         # self.line represents:
         #   - create_mode == 'polygon': edge from last point to current
         #   - create_mode == 'rectangle': diagonal line of the rectangle
@@ -601,6 +612,20 @@ class Canvas(
         except AttributeError:
             return
 
+        # Handle Alt+drag selection box mode
+        if self.selection_box_mode:
+            self.selection_box_end = pos
+            self.repaint()
+            return
+
+        # Handle Shift+drag path selection mode
+        if self.path_selection_mode:
+            self.path_selection_points.append(pos)
+            # Check if path intersects any shapes and highlight them
+            self.update_path_highlights()
+            self.repaint()
+            return
+
         # 记录hover状态变化前的状态
         prev_hover_shape = self.h_hape
 
@@ -924,6 +949,25 @@ class Canvas(
         if self.is_loading:
             return
         pos = self.transform_pos(ev.localPos())
+
+        # Alt+drag selection box mode
+        if (ev.button() == QtCore.Qt.LeftButton and
+            ev.modifiers() & QtCore.Qt.AltModifier and
+            not self.drawing()):
+            self.selection_box_mode = True
+            self.selection_box_start = pos
+            self.selection_box_end = pos
+            return
+
+        # Shift+drag path selection mode
+        if (ev.button() == QtCore.Qt.LeftButton and
+            ev.modifiers() & QtCore.Qt.ShiftModifier and
+            not self.drawing()):
+            self.path_selection_mode = True
+            self.path_selection_points = [pos]
+            self.path_highlighted_shapes = set()
+            return
+
         if ev.button() == QtCore.Qt.LeftButton:
             if self.drawing():
                 if self.current:
@@ -1059,6 +1103,16 @@ class Canvas(
         """Mouse release event"""
         if self.is_loading:
             return
+
+        # Handle Alt+drag selection box completion
+        if self.selection_box_mode and ev.button() == QtCore.Qt.LeftButton:
+            self.complete_selection_box()
+            return
+
+        # Handle Shift+drag path selection completion
+        if self.path_selection_mode and ev.button() == QtCore.Qt.LeftButton:
+            self.complete_path_selection()
+            return
         if ev.button() == QtCore.Qt.RightButton:
             menu = self.menus[len(self.selected_shapes_copy) > 0]
             self.restore_cursor()
@@ -1081,6 +1135,362 @@ class Canvas(
                     )
 
         self.store_moving_shape()
+
+    def complete_selection_box(self):
+        """Complete Alt+drag selection box and select shapes within the box"""
+        if not self.selection_box_mode:
+            return
+
+        # Calculate selection rectangle
+        x1, y1 = self.selection_box_start.x(), self.selection_box_start.y()
+        x2, y2 = self.selection_box_end.x(), self.selection_box_end.y()
+
+        # Ensure proper rectangle bounds
+        min_x, max_x = min(x1, x2), max(x1, x2)
+        min_y, max_y = min(y1, y2), max(y1, y2)
+        selection_rect = QtCore.QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+
+        # Find shapes that intersect with the selection box AND are visible
+        selected_shapes = []
+        for shape in self.shapes:
+            # Only select visible shapes
+            if shape.visible and self.shape_intersects_rect(shape, selection_rect):
+                selected_shapes.append(shape)
+
+        # Update selected shapes
+        self.selected_shapes = selected_shapes
+        self.selection_changed.emit(self.selected_shapes)
+
+        # Reset selection box mode
+        self.selection_box_mode = False
+        self.repaint()
+
+    def shape_intersects_rect(self, shape, rect):
+        """Check if a shape intersects with the selection rectangle"""
+        if not shape.points:
+            return False
+
+        # Method 1: Check if any point of the shape is inside the selection rectangle
+        for point in shape.points:
+            if rect.contains(point):
+                return True
+
+        # Method 2: Check if any point of the selection rectangle is inside the shape
+        # This handles cases where the selection box is smaller than the shape
+        rect_points = [
+            QtCore.QPointF(rect.left(), rect.top()),
+            QtCore.QPointF(rect.right(), rect.top()),
+            QtCore.QPointF(rect.right(), rect.bottom()),
+            QtCore.QPointF(rect.left(), rect.bottom())
+        ]
+
+        for rect_point in rect_points:
+            if self.point_in_shape(rect_point, shape):
+                return True
+
+        # Method 3: Check bounding box intersection
+        xs = [p.x() for p in shape.points]
+        ys = [p.y() for p in shape.points]
+        shape_rect = QtCore.QRectF(
+            min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+        )
+
+        return rect.intersects(shape_rect)
+
+    def point_in_shape(self, point, shape):
+        """Check if a point is inside a shape using ray casting algorithm"""
+        if not shape.points or len(shape.points) < 3:
+            return False
+
+        x, y = point.x(), point.y()
+        n = len(shape.points)
+        inside = False
+
+        p1x, p1y = shape.points[0].x(), shape.points[0].y()
+        for i in range(1, n + 1):
+            p2x, p2y = shape.points[i % n].x(), shape.points[i % n].y()
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+
+        return inside
+
+    def update_path_highlights(self):
+        """Update highlighted shapes based on current path selection"""
+        if not self.path_selection_points or len(self.path_selection_points) < 2:
+            return
+
+        # Check each shape to see if the path intersects it
+        for shape in self.shapes:
+            if not shape.visible:
+                continue
+
+            # Check if the latest path segment intersects this shape
+            latest_start = self.path_selection_points[-2]
+            latest_end = self.path_selection_points[-1]
+
+            if self.path_intersects_shape(latest_start, latest_end, shape):
+                self.path_highlighted_shapes.add(shape)
+
+    def path_intersects_shape(self, start_point, end_point, shape):
+        """Check if a path segment intersects with a shape"""
+        if not shape.points or len(shape.points) < 2:
+            return False
+
+        # Check if path segment intersects any edge of the shape
+        for i in range(len(shape.points)):
+            shape_start = shape.points[i]
+            shape_end = shape.points[(i + 1) % len(shape.points)]
+
+            if self.line_segments_intersect(start_point, end_point, shape_start, shape_end):
+                return True
+
+        # Also check if the path passes through the shape
+        if self.point_in_shape(start_point, shape) or self.point_in_shape(end_point, shape):
+            return True
+
+        return False
+
+    def line_segments_intersect(self, p1, q1, p2, q2):
+        """Check if two line segments intersect"""
+        def orientation(p, q, r):
+            val = (q.y() - p.y()) * (r.x() - q.x()) - (q.x() - p.x()) * (r.y() - q.y())
+            if val == 0:
+                return 0  # colinear
+            return 1 if val > 0 else 2  # clockwise or counterclockwise
+
+        def on_segment(p, q, r):
+            return (q.x() <= max(p.x(), r.x()) and q.x() >= min(p.x(), r.x()) and
+                    q.y() <= max(p.y(), r.y()) and q.y() >= min(p.y(), r.y()))
+
+        o1 = orientation(p1, q1, p2)
+        o2 = orientation(p1, q1, q2)
+        o3 = orientation(p2, q2, p1)
+        o4 = orientation(p2, q2, q1)
+
+        # General case
+        if o1 != o2 and o3 != o4:
+            return True
+
+        # Special cases
+        if (o1 == 0 and on_segment(p1, p2, q1)) or \
+           (o2 == 0 and on_segment(p1, q2, q1)) or \
+           (o3 == 0 and on_segment(p2, p1, q2)) or \
+           (o4 == 0 and on_segment(p2, q1, q2)):
+            return True
+
+        return False
+
+    def complete_path_selection(self):
+        """Complete Shift+drag path selection and select highlighted shapes"""
+        if not self.path_selection_mode:
+            return
+
+        # Select all highlighted shapes
+        selected_shapes = []
+        for shape in self.path_highlighted_shapes:
+            if shape.visible:
+                selected_shapes.append(shape)
+
+        # Update selected shapes
+        self.selected_shapes = selected_shapes
+        self.selection_changed.emit(self.selected_shapes)
+
+        # Reset path selection mode
+        self.path_selection_mode = False
+        self.path_selection_points = []
+        self.path_highlighted_shapes.clear()
+        self.repaint()
+
+    def update_path_highlights(self):
+        """Update highlighted shapes based on current path"""
+        if not self.path_selection_mode or len(self.path_selection_points) < 2:
+            return
+
+        # Clear previous highlights
+        self.path_highlighted_shapes.clear()
+
+        # Check each shape for intersection with the path
+        for shape in self.shapes:
+            if not shape.visible:
+                continue
+
+            if self.shape_intersects_path(shape, self.path_selection_points):
+                self.path_highlighted_shapes.add(shape)
+
+    def shape_intersects_path(self, shape, path_points):
+        """Check if a shape intersects with the given path"""
+        if len(path_points) < 2:
+            return False
+
+        # For each path segment, check if it intersects the shape
+        for i in range(len(path_points) - 1):
+            start = path_points[i]
+            end = path_points[i + 1]
+
+            if self.shape_intersects_line_segment(shape, start, end):
+                return True
+
+        return False
+
+    def shape_intersects_line_segment(self, shape, line_start, line_end):
+        """Check if a shape intersects with a line segment - only true intersection, not containment"""
+        if shape.shape_type in ["rectangle", "rotation"]:
+            # Only check if line intersects any edge of the rectangle - no containment check
+            shape_points = shape.points
+            for i in range(len(shape_points)):
+                p1 = shape_points[i]
+                p2 = shape_points[(i + 1) % len(shape_points)]
+                if self.line_segments_intersect(line_start, line_end, p1, p2):
+                    return True
+            return False  # Remove the containment check
+
+        elif shape.shape_type == "polygon":
+            # Only check intersection with polygon edges - no containment check
+            shape_points = shape.points
+            for i in range(len(shape_points)):
+                p1 = shape_points[i]
+                p2 = shape_points[(i + 1) % len(shape_points)]
+                if self.line_segments_intersect(line_start, line_end, p1, p2):
+                    return True
+            return False  # Remove the containment check
+
+        elif shape.shape_type == "circle":
+            # Check intersection with circle
+            center = shape.points[0]
+            edge_point = shape.points[1]
+            radius = ((edge_point.x() - center.x()) ** 2 + (edge_point.y() - center.y()) ** 2) ** 0.5
+            return self.line_intersects_circle(line_start, line_end, center, radius)
+
+        elif shape.shape_type in ["line", "linestrip"]:
+            # Check intersection with line/linestrip
+            for i in range(len(shape.points) - 1):
+                p1 = shape.points[i]
+                p2 = shape.points[i + 1]
+                if self.line_segments_intersect(line_start, line_end, p1, p2):
+                    return True
+
+        elif shape.shape_type == "point":
+            # Check if line passes close to the point
+            point = shape.points[0]
+            return self.point_near_line(point, line_start, line_end, threshold=5.0)
+
+        return False
+
+    def line_segments_intersect(self, p1, q1, p2, q2):
+        """Check if two line segments intersect"""
+        def orientation(p, q, r):
+            """Find orientation of ordered triplet (p, q, r)"""
+            val = (q.y() - p.y()) * (r.x() - q.x()) - (q.x() - p.x()) * (r.y() - q.y())
+            if val == 0:
+                return 0  # collinear
+            return 1 if val > 0 else 2  # clockwise or counterclockwise
+
+        def on_segment(p, q, r):
+            """Check if point q lies on segment pr"""
+            return (q.x() <= max(p.x(), r.x()) and q.x() >= min(p.x(), r.x()) and
+                    q.y() <= max(p.y(), r.y()) and q.y() >= min(p.y(), r.y()))
+
+        o1 = orientation(p1, q1, p2)
+        o2 = orientation(p1, q1, q2)
+        o3 = orientation(p2, q2, p1)
+        o4 = orientation(p2, q2, q1)
+
+        # General case
+        if o1 != o2 and o3 != o4:
+            return True
+
+        # Special cases
+        if (o1 == 0 and on_segment(p1, p2, q1)) or \
+           (o2 == 0 and on_segment(p1, q2, q1)) or \
+           (o3 == 0 and on_segment(p2, p1, q2)) or \
+           (o4 == 0 and on_segment(p2, q1, q2)):
+            return True
+
+        return False
+
+    def line_intersects_circle(self, line_start, line_end, circle_center, radius):
+        """Check if line segment intersects with circle"""
+        # Vector from line start to end
+        dx = line_end.x() - line_start.x()
+        dy = line_end.y() - line_start.y()
+
+        # Vector from line start to circle center
+        fx = line_start.x() - circle_center.x()
+        fy = line_start.y() - circle_center.y()
+
+        # Quadratic equation coefficients
+        a = dx * dx + dy * dy
+        b = 2 * (fx * dx + fy * dy)
+        c = (fx * fx + fy * fy) - radius * radius
+
+        discriminant = b * b - 4 * a * c
+        if discriminant < 0:
+            return False
+
+        # Check if intersection points are within the line segment
+        discriminant = discriminant ** 0.5
+        t1 = (-b - discriminant) / (2 * a)
+        t2 = (-b + discriminant) / (2 * a)
+
+        return (0 <= t1 <= 1) or (0 <= t2 <= 1) or (t1 < 0 and t2 > 1)
+
+    def point_near_line(self, point, line_start, line_end, threshold=5.0):
+        """Check if point is near a line segment within threshold distance"""
+        # Calculate distance from point to line segment
+        A = point.x() - line_start.x()
+        B = point.y() - line_start.y()
+        C = line_end.x() - line_start.x()
+        D = line_end.y() - line_start.y()
+
+        dot = A * C + B * D
+        len_sq = C * C + D * D
+
+        if len_sq == 0:
+            # Line start and end are the same point
+            distance = (A * A + B * B) ** 0.5
+        else:
+            param = dot / len_sq
+            if param < 0:
+                xx = line_start.x()
+                yy = line_start.y()
+            elif param > 1:
+                xx = line_end.x()
+                yy = line_end.y()
+            else:
+                xx = line_start.x() + param * C
+                yy = line_start.y() + param * D
+
+            dx = point.x() - xx
+            dy = point.y() - yy
+            distance = (dx * dx + dy * dy) ** 0.5
+
+        return distance <= threshold
+
+    def point_in_polygon(self, point, polygon_points):
+        """Check if point is inside polygon using ray casting algorithm"""
+        x, y = point.x(), point.y()
+        n = len(polygon_points)
+        inside = False
+
+        p1x, p1y = polygon_points[0].x(), polygon_points[0].y()
+        for i in range(1, n + 1):
+            p2x, p2y = polygon_points[i % n].x(), polygon_points[i % n].y()
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+
+        return inside
 
     def end_move(self, copy):
         """End of move"""
@@ -2030,7 +2440,124 @@ class Canvas(
                 ):
                     p.drawText(text_pos, line_text)
 
+        # Draw Alt+drag selection box
+        if self.selection_box_mode:
+            self.draw_selection_box(p)
+
+        # Draw Shift+drag path selection
+        if self.path_selection_mode:
+            self.draw_path_selection(p)
+
         p.end()
+
+    def draw_selection_box(self, p):
+        """Draw the Alt+drag selection box"""
+        if not self.selection_box_mode:
+            return
+
+        # Calculate rectangle bounds
+        x1, y1 = self.selection_box_start.x(), self.selection_box_start.y()
+        x2, y2 = self.selection_box_end.x(), self.selection_box_end.y()
+
+        min_x, max_x = min(x1, x2), max(x1, x2)
+        min_y, max_y = min(y1, y2), max(y1, y2)
+
+        # Create selection rectangle
+        rect = QtCore.QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+
+        # Draw selection box with dashed blue border and semi-transparent fill
+        p.save()
+
+        # Draw semi-transparent fill
+        fill_color = QtGui.QColor(0, 120, 215, 30)  # Light blue with transparency
+        p.setBrush(QtGui.QBrush(fill_color))
+        p.setPen(Qt.NoPen)
+        p.drawRect(rect)
+
+        # Draw dashed border
+        pen = QtGui.QPen(QtGui.QColor(0, 120, 215), 2, Qt.SolidLine)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(rect)
+
+        p.restore()
+
+    def draw_path_selection(self, p):
+        """Draw the Shift+drag path selection and highlight intersected shapes"""
+        if not self.path_selection_mode or len(self.path_selection_points) < 2:
+            return
+
+        p.save()
+
+        # Draw the path with a different color
+        pen = QtGui.QPen(QtGui.QColor(0, 191, 255), 3, Qt.SolidLine)  # Deep sky blue path
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+
+        # Draw path segments
+        for i in range(len(self.path_selection_points) - 1):
+            start = self.path_selection_points[i]
+            end = self.path_selection_points[i + 1]
+            p.drawLine(start, end)
+
+        # Draw start point with a circle (head indicator)
+        if len(self.path_selection_points) > 0:
+            start_point = self.path_selection_points[0]
+            p.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))  # Same blue color
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # White border
+            circle_radius = 6
+            p.drawEllipse(start_point, circle_radius, circle_radius)
+
+        # Draw current end point with same size circle
+        if len(self.path_selection_points) > 1:
+            end_point = self.path_selection_points[-1]
+            p.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # White end point
+            p.setPen(QtGui.QPen(QtGui.QColor(0, 191, 255), 2))  # Blue border
+            circle_radius = 6  # Same size as start point
+            p.drawEllipse(end_point, circle_radius, circle_radius)
+
+        # Highlight shapes that intersect with the path - use hover effect settings
+        for shape in self.path_highlighted_shapes:
+            if shape.visible:
+                # Use the same hover line color and width from Shape class configuration
+                hover_color = Shape.canvas_hover_line_color
+                hover_width = (
+                    Shape.canvas_hover_line_width
+                    if Shape.canvas_hover_line_width is not None
+                    else 3  # fallback width
+                )
+
+                # Apply scale adjustment like Shape class does
+                scaled_width = max(1, int(round(hover_width / self.scale)))
+
+                pen = QtGui.QPen(hover_color, scaled_width, Qt.SolidLine)
+                p.setPen(pen)
+                p.setBrush(Qt.NoBrush)  # No fill, just border
+
+                if shape.shape_type in ["rectangle", "rotation"]:
+                    # Draw rectangle outline
+                    path = QtGui.QPainterPath()
+                    path.moveTo(shape.points[0])
+                    for point in shape.points[1:]:
+                        path.lineTo(point)
+                    path.closeSubpath()
+                    p.drawPath(path)
+                elif shape.shape_type == "polygon":
+                    # Draw polygon outline
+                    path = QtGui.QPainterPath()
+                    path.moveTo(shape.points[0])
+                    for point in shape.points[1:]:
+                        path.lineTo(point)
+                    path.closeSubpath()
+                    p.drawPath(path)
+                elif shape.shape_type == "circle":
+                    # Draw circle outline
+                    center = shape.points[0]
+                    edge = shape.points[1]
+                    radius = ((edge.x() - center.x()) ** 2 + (edge.y() - center.y()) ** 2) ** 0.5
+                    p.drawEllipse(center, radius, radius)
+
+        p.restore()
 
     def transform_pos(self, point):
         """Convert from widget-logical coordinates to painter-logical ones."""
@@ -2649,6 +3176,19 @@ class Canvas(
     # QT Overload
     def keyReleaseEvent(self, ev):
         """Key release event"""
+        # Cancel selection box mode if Alt key is released
+        if ev.key() == QtCore.Qt.Key_Alt and self.selection_box_mode:
+            self.selection_box_mode = False
+            self.repaint()
+            return
+
+        # Cancel path selection mode if Shift key is released
+        if ev.key() == QtCore.Qt.Key_Shift and self.path_selection_mode:
+            self.path_selection_mode = False
+            self.path_highlighted_shapes.clear()
+            self.repaint()
+            return
+
         modifiers = ev.modifiers()
         if self.drawing():
             if int(modifiers) == 0:
