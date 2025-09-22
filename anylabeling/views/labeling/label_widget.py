@@ -4288,10 +4288,22 @@ class LabelingWidget(LabelDialog):
                 item.setCheckState(Qt.Unchecked)
         self.btn_deselect_all.clicked.connect(deselect_all_labels)
 
+        # 重叠显示按钮
+        self.btn_overlap = QtWidgets.QPushButton(self.tr("重叠"))
+        self.btn_overlap.setCheckable(True)
+        self.btn_overlap.setChecked(True)  # 默认启用
+        self.btn_overlap.setToolTip(self.tr("切换重叠区域显示"))
+        def toggle_overlap():
+            self.canvas.toggle_overlap_display()
+            # 更新按钮状态以反映当前显示状态
+            self.btn_overlap.setChecked(self.canvas.show_overlap)
+        self.btn_overlap.clicked.connect(toggle_overlap)
+
         # 添加按钮到布局
         control_layout.addWidget(self.btn_select_all)
         control_layout.addWidget(self.btn_invert_selection)
         control_layout.addWidget(self.btn_deselect_all)
+        control_layout.addWidget(self.btn_overlap)
         control_layout.addStretch()
 
         self.label_control_widget.setLayout(control_layout)
