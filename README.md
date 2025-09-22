@@ -253,9 +253,23 @@ https://github.com/user-attachments/assets/54d9e645-58c7-49ea-807c-b41972f4c93f
 
 https://github.com/user-attachments/assets/2b258c55-8d39-45fb-b3d4-24ec6613303e
 
+31.标签框扩展窗口优化 增加动态颜色显示 防止填写错标签 用的时候发现没颜色视觉交互很容易填错位置 然后增加全部清零 和单独标签清零的功能
 
+https://github.com/user-attachments/assets/0668abdc-e630-4ec3-8e53-ec4cb5840690
 
+32.增加多选功能 按住ALT+鼠标左键拖拽可以画框 按住SHIFT+鼠标左键可以路径模式
 
+路径模式可以更精确选择在矩形内的矩形 路之间模式只有当线条穿过了图形的线条才会被选中
+
+而画框多选模式和WIN的画框多选一样 无法精确操作 进入范围内的全部被选中
+
+画框多选模式
+
+https://github.com/user-attachments/assets/4e4451ad-3535-4f45-8636-497b068c2db8
+
+路径多选模式
+
+https://github.com/user-attachments/assets/63833dce-9989-4ed6-beb8-fd28f90c3496
 
 
 
