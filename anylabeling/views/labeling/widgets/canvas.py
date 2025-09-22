@@ -839,10 +839,10 @@ class Canvas(
                 self.h_edge = None
                 shape.highlight_vertex(index, shape.MOVE_VERTEX)
                 self.override_cursor(CURSOR_POINT)
-# #                 self.setToolTip(
-# #                     self.tr("Click & drag to move point of shape '%s'")
-# #                     % shape.label
-# #                 )
+# # #                 self.setToolTip(
+# # #                     self.tr("Click & drag to move point of shape '%s'")
+# # #                     % shape.label
+# # #                 )
                 self.setStatusTip(self.toolTip())
                 self.update()
                 break
@@ -854,10 +854,10 @@ class Canvas(
                 self.prev_h_shape = self.h_hape = shape
                 self.prev_h_edge = self.h_edge = index_edge
                 self.override_cursor(CURSOR_POINT)
-# #                 self.setToolTip(
-# #                     self.tr("Click to create point of shape '%s'")
-# #                     % shape.label
-# #                 )
+# # #                 self.setToolTip(
+# # #                     self.tr("Click to create point of shape '%s'")
+# # #                     % shape.label
+# # #                 )
                 self.setStatusTip(self.toolTip())
                 self.update()
                 break
@@ -1707,10 +1707,7 @@ class Canvas(
             shape[lindex] = p2
             shape[rindex] = p4
             shape.close()
-            # Recalculate direction after moving a vertex
-            p0, p1 = shape.points[0], shape.points[1]
-            vec = p1 - p0
-            shape.direction = math.atan2(vec.y(), vec.x())
+            # Don't recalculate direction when resizing - only adjust size, keep original angle
         elif shape.shape_type == "rectangle":
             shift_pos = pos - point
             shape.move_vertex_by(index, shift_pos)
