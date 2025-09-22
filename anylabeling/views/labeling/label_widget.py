@@ -2862,6 +2862,8 @@ class LabelingWidget(LabelDialog):
         self.add_label(union_shape)
         self.remove_labels(self.canvas.delete_selected())
         self.set_dirty()
+        # Update expand margins dialog colors after union operation
+        self._update_expand_margins_colors()
 
         # Update UI state
         if self.no_shape():
@@ -3295,6 +3297,8 @@ class LabelingWidget(LabelDialog):
         else:
             # Update the labels in the dialog every time it's opened
             self.expand_margins_dialog.update_labels(labels)
+            # Refresh colors when reopening
+            self.expand_margins_dialog.refresh_colors()
 
         if self.expand_margins_dialog.isVisible():
             self.expand_margins_dialog.raise_()
@@ -3826,6 +3830,8 @@ class LabelingWidget(LabelDialog):
             )
 
         self.set_dirty()
+        # Update expand margins dialog colors after batch label modification
+        self._update_expand_margins_colors()
         self._update_all_item_orders()
         self.update_combo_box()
         self.update_gid_box()
@@ -3931,8 +3937,11 @@ class LabelingWidget(LabelDialog):
         self._update_shape_color(shape)
         color = shape.fill_color.getRgb()[:3]
         item.setBackground(QtGui.QColor(*color, LABEL_OPACITY))
-        
+
         self.set_dirty()
+
+        # Update expand margins dialog colors after label modification
+        self._update_expand_margins_colors()
 
         # Handle reordering if the order was changed
         if (
@@ -4232,6 +4241,8 @@ class LabelingWidget(LabelDialog):
         self.update_gid_box()
         self.update_label_counts()
         self.shape_list_changed.emit()
+        # Update expand margins dialog colors after adding new label
+        self._update_expand_margins_colors()
 
     def create_label_control_buttons(self):
         """创建标签控制按钮"""
@@ -4727,6 +4738,8 @@ class LabelingWidget(LabelDialog):
             self.actions.undo_last_point.setEnabled(False)
             self.actions.undo.setEnabled(True)
             self.set_dirty()
+            # Update expand margins dialog colors after adding new shape
+            self._update_expand_margins_colors()
         else:
             self.canvas.undo_last_line()
             self.canvas.shapes_backups.pop()
@@ -5447,6 +5460,10 @@ class LabelingWidget(LabelDialog):
         msg = str(self.tr("Loaded %s")) % osp.basename(str(filename))
         self.status(msg)
         self.update_thumbnail_display()
+
+        # Update expand margins dialog colors if open
+        self._update_expand_margins_colors()
+
         return True
 
     # QT Overload
@@ -5946,6 +5963,8 @@ class LabelingWidget(LabelDialog):
     def delete_selected_shape(self):
         self.remove_labels(self.canvas.delete_selected())
         self.set_dirty()
+        # Update expand margins dialog colors after shape deletion
+        self._update_expand_margins_colors()
         if self.no_shape():
             for action in self.actions.on_shapes_present:
                 action.setEnabled(False)
@@ -5956,6 +5975,8 @@ class LabelingWidget(LabelDialog):
             self.add_label(shape)
         self.label_list.clearSelection()
         self.set_dirty()
+        # Update expand margins dialog colors after shape copy
+        self._update_expand_margins_colors()
 
     def move_shape(self):
         self.canvas.end_move(copy=False)
@@ -6448,12 +6469,12 @@ class LabelingWidget(LabelDialog):
 
         elif shape.shape_type == "rotation":
             points = np.array([[p.x(), p.y()] for p in shape.points])
-            
+
             # Calculate center, width, height, and angle
             center = np.mean(points, axis=0)
             width = np.linalg.norm(points[0] - points[1])
             height = np.linalg.norm(points[0] - points[3])
-            
+
             vec = points[1] - points[0]
             angle = np.arctan2(vec[1], vec[0])
 
@@ -6664,6 +6685,13 @@ class LabelingWidget(LabelDialog):
                 f"处理完成！总共修改了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框。"
             )
         )
+
+    def _update_expand_margins_colors(self):
+        """Update colors in expand margins dialog if it's open and visible."""
+        if (hasattr(self, 'expand_margins_dialog') and
+            self.expand_margins_dialog is not None and
+            self.expand_margins_dialog.isVisible()):
+            self.expand_margins_dialog.refresh_colors()
 
     def open_merge_tool(self):
         if not self.image_list:
