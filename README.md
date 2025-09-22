@@ -253,7 +253,9 @@ https://github.com/user-attachments/assets/54d9e645-58c7-49ea-807c-b41972f4c93f
 
 https://github.com/user-attachments/assets/2b258c55-8d39-45fb-b3d4-24ec6613303e
 
-31.标签框扩展窗口优化 增加动态颜色显示 防止填写错标签 用的时候发现没颜色视觉交互很容易填错位置 然后增加全部清零 和单独标签清零的功能
+31.标签框扩展窗口优化 增加动态颜色显示 防止填写错标签 用的时候发现没颜色视觉交互很容易填错位置
+
+然后增加全部清零 和单独标签清零的功能 并且可以最小化了
 
 https://github.com/user-attachments/assets/0668abdc-e630-4ec3-8e53-ec4cb5840690
 
