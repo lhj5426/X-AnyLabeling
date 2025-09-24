@@ -938,6 +938,7 @@ class LabelingWidget(LabelDialog):
         object_manager = action(
             self.tr("标签页管理器"),
             self.object_manager,
+            shortcuts["object_manager"],
             icon="objects",
             tip=self.tr("在新窗口中管理和重排序当前页的对象"),
         )
@@ -991,6 +992,7 @@ class LabelingWidget(LabelDialog):
         expand_margins = action(
             self.tr("标注框边距扩展工具"),
             self.open_expand_margins_dialog,
+            shortcuts["expand_margins"],
             icon="edit",
             tip=self.tr("批量扩展或收缩标注框的边距"),
         )
@@ -2926,7 +2928,7 @@ class LabelingWidget(LabelDialog):
             self.load_file(self.filename)
 
     def object_manager(self):
-        """Open the object manager dialog."""
+        """Toggle the object manager dialog."""
         if self.object_manager_dialog is None:
             self.object_manager_dialog = ObjectManagerDialog(
                 [item for item in self.label_list], self
@@ -2959,10 +2961,13 @@ class LabelingWidget(LabelDialog):
         self.object_manager_dialog.update_items([item for item in self.label_list])
 
         if self.object_manager_dialog.isVisible():
+            # If visible, hide it (toggle off)
+            self.object_manager_dialog.hide()
+        else:
+            # If not visible, show it (toggle on)
+            self.object_manager_dialog.show()
             self.object_manager_dialog.raise_()
             self.object_manager_dialog.activateWindow()
-        else:
-            self.object_manager_dialog.show()
 
     def on_object_order_changed(self, ordered_shapes):
         """Callback for when the object order is changed in the dialog."""
@@ -3291,7 +3296,7 @@ class LabelingWidget(LabelDialog):
         _ = dialog.exec_()
 
     def open_expand_margins_dialog(self):
-        """Open the expand margins dialog."""
+        """Toggle the expand margins dialog."""
         # Extract labels from the unique_label_list widget
         labels = []
         for i in range(self.unique_label_list.count()):
@@ -3322,10 +3327,13 @@ class LabelingWidget(LabelDialog):
             self.expand_margins_dialog.refresh_colors()
 
         if self.expand_margins_dialog.isVisible():
+            # If visible, hide it (toggle off)
+            self.expand_margins_dialog.hide()
+        else:
+            # If not visible, show it (toggle on)
+            self.expand_margins_dialog.show()
             self.expand_margins_dialog.raise_()
             self.expand_margins_dialog.activateWindow()
-        else:
-            self.expand_margins_dialog.show()
 
     def open_tag_sort_dialog(self):
         """Open the tag sorting dialog window."""
