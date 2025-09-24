@@ -96,6 +96,10 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.btn_apply_all.clicked.connect(self.on_apply_all)
         self.btn_clear_all.clicked.connect(self.on_clear_all)
 
+        # Add shortcut for closing the dialog
+        self.close_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+Shift+M"), self)
+        self.close_shortcut.activated.connect(self.close)
+
     def populate_table(self, labels):
         self.table_widget.setRowCount(len(labels))
         for i, label in enumerate(labels):
@@ -121,10 +125,18 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                 self.table_widget.setCellWidget(i, j, spinbox)
         
     def update_labels(self, labels):
-        """Clears and repopulates the table with a new list of labels."""
+        """Clears and repopulates the table with a new list of labels, preserving existing values."""
+        # Save current margin values before clearing
+        current_values = {}
+        if self.table_widget.rowCount() > 0:
+            current_values = self.get_margin_values()
+
         # Clear the table and repopulate with colors
         self.table_widget.setRowCount(0)
         self.populate_table(labels)
+
+        # Restore saved values for labels that still exist
+        self.restore_margin_values(current_values)
 
     def get_margin_values(self):
         """Extracts the margin values from the table into a dictionary."""
@@ -137,6 +149,21 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             right = self.table_widget.cellWidget(i, 4).value()
             margins[label] = (top, bottom, left, right)
         return margins
+
+    def restore_margin_values(self, saved_values):
+        """Restores margin values from a saved dictionary."""
+        if not saved_values:
+            return
+
+        for i in range(self.table_widget.rowCount()):
+            label = self.table_widget.item(i, 0).text()
+            if label in saved_values:
+                top, bottom, left, right = saved_values[label]
+                # Set the values in the spinboxes
+                self.table_widget.cellWidget(i, 1).setValue(top)      # Top
+                self.table_widget.cellWidget(i, 2).setValue(bottom)   # Bottom
+                self.table_widget.cellWidget(i, 3).setValue(left)     # Left
+                self.table_widget.cellWidget(i, 4).setValue(right)    # Right
 
     def on_apply_current(self):
         margins = self.get_margin_values()

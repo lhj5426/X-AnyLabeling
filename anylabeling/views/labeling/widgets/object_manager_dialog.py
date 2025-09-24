@@ -96,6 +96,10 @@ class ObjectManagerDialog(QtWidgets.QDialog):
 
         self.update_button_states()
 
+        # Add shortcut for closing the dialog
+        self.close_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+T"), self)
+        self.close_shortcut.activated.connect(self.close)
+
     def eventFilter(self, source, event):
         if (source is self.list_widget and
             event.type() == QtCore.QEvent.KeyPress and
