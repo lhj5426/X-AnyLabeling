@@ -17,6 +17,9 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.setMinimumWidth(550)
         self.resize(565, 404)
 
+        # 恢复上次保存的窗口位置
+        self.restore_window_position()
+
         # Remove the help/question mark button and add minimize functionality
         self.setWindowFlags(
             QtCore.Qt.Window |
@@ -279,3 +282,35 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                 spinbox = self.table_widget.cellWidget(row, j)
                 if spinbox:
                     spinbox.setValue(0.0)
+
+    def restore_window_position(self):
+        """恢复上次保存的窗口位置"""
+        settings = QtCore.QSettings()
+        geometry = settings.value("expand_margins_dialog/geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+            # 确保窗口不是最小化状态
+            if self.isMinimized():
+                self.showNormal()
+        else:
+            # 如果没有保存的位置，设置默认位置（相对于父窗口居中）
+            if self.parent():
+                parent_geometry = self.parent().geometry()
+                x = parent_geometry.x() + (parent_geometry.width() - self.width()) // 2
+                y = parent_geometry.y() + (parent_geometry.height() - self.height()) // 2
+                self.move(x, y)
+
+    def save_window_position(self):
+        """保存当前窗口位置"""
+        settings = QtCore.QSettings()
+        settings.setValue("expand_margins_dialog/geometry", self.saveGeometry())
+
+    def closeEvent(self, event):
+        """窗口关闭事件，保存位置"""
+        self.save_window_position()
+        super(ExpandMarginsDialog, self).closeEvent(event)
+
+    def hideEvent(self, event):
+        """窗口隐藏事件，保存位置"""
+        self.save_window_position()
+        super(ExpandMarginsDialog, self).hideEvent(event)
