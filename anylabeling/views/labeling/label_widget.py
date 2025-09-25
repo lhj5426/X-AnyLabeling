@@ -3327,8 +3327,15 @@ class LabelingWidget(LabelDialog):
             self.expand_margins_dialog.refresh_colors()
 
         if self.expand_margins_dialog.isVisible():
-            # If visible, hide it (toggle off)
-            self.expand_margins_dialog.hide()
+            # If visible, check if it's minimized
+            if self.expand_margins_dialog.isMinimized():
+                # If minimized, restore to normal state
+                self.expand_margins_dialog.showNormal()
+                self.expand_margins_dialog.raise_()
+                self.expand_margins_dialog.activateWindow()
+            else:
+                # If visible and not minimized, hide it (toggle off)
+                self.expand_margins_dialog.hide()
         else:
             # If not visible, show it (toggle on)
             self.expand_margins_dialog.show()
