@@ -277,6 +277,11 @@ https://github.com/user-attachments/assets/63833dce-9989-4ed6-beb8-fd28f90c3496
 
 https://github.com/user-attachments/assets/00f801c1-9ad3-4dd5-9271-ae3be35332bc
 
+34.修改 创建图形时隐藏标签自动显示的问题 在没按快捷键或者 界面按钮的时候 就是应该一直隐藏 
+
+https://github.com/user-attachments/assets/2d2e0c1a-13e7-4d77-8005-01889ad6debb
+
+
 
 
 
