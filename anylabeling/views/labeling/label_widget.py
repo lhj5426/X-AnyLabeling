@@ -4630,29 +4630,17 @@ class LabelingWidget(LabelDialog):
                 item.setCheckState(Qt.Checked if is_visible else Qt.Unchecked)
                 shape.visible = is_visible
                 self.canvas.set_shape_visible(shape, is_visible)
-        
+
         # 更新导航器显示
         self.update_navigator_shapes()
 
     def text_selection_changed(self, index):
-        label = self.label_filter_combobox.text_box.itemText(index)
-        for item in self.label_list:
-            if label in ["", item.shape().label]:
-                item.setCheckState(Qt.Checked)
-            else:
-                item.setCheckState(Qt.Unchecked)
+        # 禁用这个函数，避免在创建新图形时重置复选框
+        return
 
     def gid_selection_changed(self, index):
-        gid = self.gid_filter_combobox.gid_box.itemText(index)
-        for item in self.label_list:
-            if item.shape().group_id is not None:
-                checked_gid = ["-1", str(item.shape().group_id)]
-            else:
-                checked_gid = ["-1"]
-            if str(gid) in checked_gid:
-                item.setCheckState(Qt.Checked)
-            else:
-                item.setCheckState(Qt.Unchecked)
+        # 禁用这个函数，避免在创建新图形时重置复选框
+        return
 
     def label_selection_changed(self):
         if self._no_selection_slot:
@@ -4772,6 +4760,9 @@ class LabelingWidget(LabelDialog):
             text = self.reset_attribute(text)
 
         if text:
+            # 暂时断开标签可见性信号，避免新图形被自动隐藏
+            self.unique_label_list.label_visibility_changed.disconnect(self.update_label_visibility)
+
             self.label_list.clearSelection()
             shape = self.canvas.set_last_label(text, flags)
             shape.group_id = group_id
@@ -4782,6 +4773,10 @@ class LabelingWidget(LabelDialog):
             if shape.shape_type == "rotation" and new_direction is not None:
                 shape.direction = new_direction
             self.add_label(shape)
+
+            # 重新连接信号
+            self.unique_label_list.label_visibility_changed.connect(self.update_label_visibility)
+
             self.actions.edit_mode.setEnabled(True)
             self.actions.undo_last_point.setEnabled(False)
             self.actions.undo.setEnabled(True)
