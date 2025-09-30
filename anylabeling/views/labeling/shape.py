@@ -257,6 +257,7 @@ class Shape:
             "polygon",
             "rectangle",
             "rotation",
+            "rotation3",
             "point",
             "line",
             "circle",
@@ -265,7 +266,7 @@ class Shape:
 
     def close(self):
         """Close the shape"""
-        if self.shape_type == "rotation" and len(self.points) == 4:
+        if self.shape_type in ["rotation", "rotation3"] and len(self.points) == 4:
             cx = (self.points[0].x() + self.points[2].x()) / 2
             cy = (self.points[0].y() + self.points[2].y()) / 2
             self.center = QtCore.QPointF(cx, cy)
@@ -417,11 +418,42 @@ class Shape:
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
             elif self.shape_type == "rotation":
-                assert len(self.points) in [1, 2, 4]
-                if len(self.points) == 2:
+                # Allow 1, 2, or 4 points; if invalid, treat as polygon
+                if len(self.points) not in [1, 2, 4]:
+                    # Fallback to polygon rendering for invalid rotation shapes
+                    line_path.moveTo(self.points[0])
+                    for i, p in enumerate(self.points):
+                        line_path.lineTo(p)
+                        if self.selected:
+                            self.draw_vertex(vrtx_path, i)
+                    if self.is_closed() or self.label is not None:
+                        line_path.lineTo(self.points[0])
+                elif len(self.points) == 2:
                     rectangle = self.get_rect_from_line(*self.points)
                     line_path.addRect(rectangle)
-                if len(self.points) == 4:
+                elif len(self.points) == 4:
+                    line_path.moveTo(self.points[0])
+                    for i, p in enumerate(self.points):
+                        line_path.lineTo(p)
+                        if self.selected:
+                            self.draw_vertex(vrtx_path, i)
+                    if self.is_closed() or self.label is not None:
+                        line_path.lineTo(self.points[0])
+            elif self.shape_type == "rotation3":
+                # Same as rotation for rendering
+                if len(self.points) not in [1, 2, 4]:
+                    # Fallback to polygon rendering for invalid rotation3 shapes
+                    line_path.moveTo(self.points[0])
+                    for i, p in enumerate(self.points):
+                        line_path.lineTo(p)
+                        if self.selected:
+                            self.draw_vertex(vrtx_path, i)
+                    if self.is_closed() or self.label is not None:
+                        line_path.lineTo(self.points[0])
+                elif len(self.points) == 2:
+                    rectangle = self.get_rect_from_line(*self.points)
+                    line_path.addRect(rectangle)
+                elif len(self.points) == 4:
                     line_path.moveTo(self.points[0])
                     for i, p in enumerate(self.points):
                         line_path.lineTo(p)

@@ -3506,7 +3506,6 @@ class LabelingWidget(LabelDialog):
             "polygon",
             "rectangle",
             "rotation",
-            "rotation3",
             "circle",
             "line",
             "point",
@@ -3558,7 +3557,7 @@ class LabelingWidget(LabelDialog):
                 self.actions.create_mode.setEnabled(False)
                 self.actions.create_rectangle_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
-                self.actions.create_rotation3_mode.setEnabled(True)
+            self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
                 self.actions.create_line_mode.setEnabled(True)
                 self.actions.create_point_mode.setEnabled(True)
@@ -3567,7 +3566,7 @@ class LabelingWidget(LabelDialog):
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(False)
                 self.actions.create_rotation_mode.setEnabled(True)
-                self.actions.create_rotation3_mode.setEnabled(True)
+            self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
                 self.actions.create_line_mode.setEnabled(True)
                 self.actions.create_point_mode.setEnabled(True)
@@ -3576,7 +3575,7 @@ class LabelingWidget(LabelDialog):
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
-                self.actions.create_rotation3_mode.setEnabled(True)
+            self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
                 self.actions.create_line_mode.setEnabled(False)
                 self.actions.create_point_mode.setEnabled(True)
@@ -3585,7 +3584,7 @@ class LabelingWidget(LabelDialog):
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
-                self.actions.create_rotation3_mode.setEnabled(True)
+            self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
                 self.actions.create_line_mode.setEnabled(True)
                 self.actions.create_point_mode.setEnabled(False)
@@ -3594,7 +3593,7 @@ class LabelingWidget(LabelDialog):
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
-                self.actions.create_rotation3_mode.setEnabled(True)
+            self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(False)
                 self.actions.create_line_mode.setEnabled(True)
                 self.actions.create_point_mode.setEnabled(True)
@@ -3603,7 +3602,7 @@ class LabelingWidget(LabelDialog):
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
-                self.actions.create_rotation3_mode.setEnabled(True)
+            self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
                 self.actions.create_line_mode.setEnabled(True)
                 self.actions.create_point_mode.setEnabled(True)
@@ -3612,16 +3611,6 @@ class LabelingWidget(LabelDialog):
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(False)
-                self.actions.create_rotation3_mode.setEnabled(True)
-                self.actions.create_circle_mode.setEnabled(True)
-                self.actions.create_line_mode.setEnabled(True)
-                self.actions.create_point_mode.setEnabled(True)
-                self.actions.create_line_strip_mode.setEnabled(True)
-            elif create_mode == "rotation3":
-                self.actions.create_mode.setEnabled(True)
-                self.actions.create_rectangle_mode.setEnabled(True)
-                self.actions.create_rotation_mode.setEnabled(True)
-                self.actions.create_rotation3_mode.setEnabled(False)
                 self.actions.create_circle_mode.setEnabled(True)
                 self.actions.create_line_mode.setEnabled(True)
                 self.actions.create_point_mode.setEnabled(True)
