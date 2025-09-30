@@ -281,6 +281,10 @@ https://github.com/user-attachments/assets/00f801c1-9ad3-4dd5-9271-ae3be35332bc
 
 https://github.com/user-attachments/assets/2d2e0c1a-13e7-4d77-8005-01889ad6debb
 
+35.新的旋转矩形标注模式
+
+https://github.com/user-attachments/assets/94d99143-0a7e-4a54-a720-40f6bc642bb8
+
 
 
 
