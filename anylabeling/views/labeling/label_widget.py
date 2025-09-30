@@ -707,7 +707,7 @@ class LabelingWidget(LabelDialog):
         create_rotation3_mode = action(
             "创建旋转框（三次点击）",
             lambda: self.toggle_draw_mode(False, create_mode="rotation3"),
-            shortcuts.get("create_rotation3", "Shift+O"),  # 默认快捷键 Shift+O
+            shortcuts.get("create_rotation3", "H"),  # 默认快捷键 H（象形"工"字）
             "rotation",  # 使用 rotation 图标
             "三次点击绘制旋转框（绿点 → 红色箭头 → 宽度）",
             enabled=False,
