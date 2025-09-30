@@ -39,6 +39,7 @@ class ColoredComboBox(QtWidgets.QComboBox):
             "polygon": QtGui.QColor("#D81B60"),  # Magenta
             "rectangle": QtGui.QColor("#1E88E5"),  # Bright Blue
             "rotation": QtGui.QColor("#8E24AA"),  # Purple
+            "rotation3": QtGui.QColor("#AB47BC"),  # Light Purple (for rotation3)
             "circle": QtGui.QColor("#00C853"),  # Bright Green
             "line": QtGui.QColor("#FF6D00"),  # Bright Orange
             "point": QtGui.QColor("#00ACC1"),  # Teal
@@ -102,6 +103,7 @@ class DigitShortcutDialog(QtWidgets.QDialog):
             "polygon",
             "rectangle",
             "rotation",
+            "rotation3",
             "circle",
             "line",
             "point",
