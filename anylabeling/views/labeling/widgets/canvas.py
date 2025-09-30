@@ -188,6 +188,8 @@ class Canvas(
         #   - create_mode == 'line': the line
         #   - create_mode == 'point': the point
         self.line = Shape()
+        # For rotation3 mode: store the center line (from green dot to red arrow)
+        self.center_line = Shape()
         self.prev_point = QtCore.QPoint()
         self.prev_pan_point = QtCore.QPoint()
         self.prev_move_point = QtCore.QPoint()
@@ -356,6 +358,7 @@ class Canvas(
             "polygon",
             "rectangle",
             "rotation",
+            "rotation3",
             "circle",
             "line",
             "point",
@@ -669,7 +672,11 @@ class Canvas(
         if self.drawing():
             line_color = utils.hex_to_rgb(self.cross_line_color)
             self.line.line_color = QtGui.QColor(*line_color)
-            self.line.shape_type = self.create_mode
+            # For rotation3, keep line as line type, not rotation3
+            if self.create_mode == "rotation3":
+                self.line.shape_type = "line"
+            else:
+                self.line.shape_type = self.create_mode
 
             if not self.current:
                 self.override_cursor(CURSOR_DRAW)
@@ -718,6 +725,56 @@ class Canvas(
                 self.line.close()
             elif self.create_mode == "rotation":
                 self.line[1] = pos
+                self.line.line_color = color
+            elif self.create_mode == "rotation3":
+                # For rotation3 mode with three clicks
+                if len(self.current.points) == 1:
+                    # After first click: draw center line from start to cursor
+                    self.line[0] = self.current[0]
+                    self.line[1] = pos
+                elif len(self.current.points) == 2:
+                    # After second click: keep center line and draw width line
+                    # The width line MUST be perpendicular to the center line
+
+                    # Store center line (from green dot to red arrow)
+                    self.center_line.points = [self.current[0], self.current[1]]
+                    self.center_line.shape_type = "line"
+                    self.center_line.line_color = color
+
+                    # Calculate perpendicular direction
+                    p0 = self.current[0]
+                    p1 = self.current[1]
+
+                    # Direction vector of center line
+                    dx = p1.x() - p0.x()
+                    dy = p1.y() - p0.y()
+
+                    # Perpendicular vector (rotate 90 degrees)
+                    perp_x = -dy
+                    perp_y = dx
+
+                    # Normalize perpendicular vector
+                    perp_length = math.sqrt(perp_x**2 + perp_y**2)
+                    if perp_length > 0:
+                        perp_x /= perp_length
+                        perp_y /= perp_length
+
+                    # Project mouse position onto perpendicular line
+                    # Vector from p1 to mouse
+                    mouse_vec_x = pos.x() - p1.x()
+                    mouse_vec_y = pos.y() - p1.y()
+
+                    # Project onto perpendicular direction
+                    projection = mouse_vec_x * perp_x + mouse_vec_y * perp_y
+
+                    # Calculate constrained position (perpendicular to center line)
+                    constrained_x = p1.x() + projection * perp_x
+                    constrained_y = p1.y() + projection * perp_y
+                    constrained_pos = QtCore.QPointF(constrained_x, constrained_y)
+
+                    # Draw width line from arrow to constrained position
+                    self.line[0] = self.current[1]  # Start from arrow position
+                    self.line[1] = constrained_pos  # End at perpendicular point
                 self.line.line_color = color
             elif self.create_mode == "circle":
                 self.line.points = [self.current[0], pos]
@@ -1020,6 +1077,7 @@ class Canvas(
                             )
                             self.finalise()
                     elif self.create_mode == "rotation":
+                        # Original two-click rotation rectangle
                         initPos = self.current[0]
                         minX = initPos.x()
                         minY = initPos.y()
@@ -1033,6 +1091,50 @@ class Canvas(
                         self.line[0] = self.current[-1]
                         if self.current.is_closed():
                             self.finalise()
+                    elif self.create_mode == "rotation3":
+                        # Three-click rotation rectangle creation
+                        # Click 1: Start point (green dot)
+                        # Click 2: End point of center line (arrow)
+                        # Click 3: Width line from arrow position
+
+                        if len(self.current.points) == 1:
+                            # Second click: add end point of center line
+                            self.current.add_point(self.line[1])
+                            # Update line to start from the arrow (end point)
+                            self.line[0] = self.current[-1]
+                            self.line[1] = self.current[-1]
+                        elif len(self.current.points) == 2:
+                            # Third click: create width line and complete rectangle
+                            # User clicks 3 points to define 3 corners, we auto-calculate the 4th
+                            # p0 = point 1 (green dot) - first corner
+                            # p1 = point 2 (red arrow) - second corner
+                            # p2 = point 3 (third click) - third corner
+                            # p3 = point 4 (auto-calculated) - fourth corner
+
+                            p0 = self.current[0]  # Point 1
+                            p1 = self.current[1]  # Point 2
+                            p2 = self.line[1]     # Point 3
+
+                            # The fourth point completes the parallelogram:
+                            # point4 = point1 + (point3 - point2)
+                            # This creates: p0 -> p1 -> p2 -> p3 -> back to p0
+                            p3 = p0 + (p2 - p1)
+
+                            # Set corners in order: p0 -> p1 -> p2 -> p3
+                            self.current.points = [p0, p1, p2, p3]
+                            self.current.shape_type = "rotation"
+
+                            # Calculate rotation angle (direction from p0 to p1)
+                            dx = p1.x() - p0.x()
+                            dy = p1.y() - p0.y()
+                            angle = math.atan2(dy, dx)
+                            # Normalize angle to 0-2π range (atan2 returns -π to π)
+                            if angle < 0:
+                                angle += 2 * math.pi
+                            self.current.direction = angle
+
+                            self.current.close()
+                            self.finalise()
                     elif self.create_mode == "linestrip":
                         self.current.add_point(self.line[1])
                         self.line[0] = self.current[-1]
@@ -1042,7 +1144,7 @@ class Canvas(
                     # when the cursor moves over an object
                     if (
                         self.create_mode
-                        in ["rectangle", "rotation", "circle", "line", "point"]
+                        in ["rectangle", "rotation", "rotation3", "circle", "line", "point"]
                         and not self.is_auto_labeling
                         and not self.current
                     ):
@@ -2137,8 +2239,204 @@ class Canvas(
                     p.fillPath(cp, QtGui.QColor(255, 153, 0, 255))
 
         if self.current:
-            self.current.paint(p)
+            # Don't paint the shape itself in rotation3 mode (only paint line with arrow)
+            if self.create_mode != "rotation3":
+                self.current.paint(p)
+
             self.line.paint(p)
+
+            # For rotation3 mode, also paint the center line when drawing the second line
+            if (self.create_mode == "rotation3" and len(self.current.points) == 2
+                and len(self.center_line.points) == 2):
+                self.center_line.paint(p)
+
+            # Draw arrow for rotation3 rectangle
+            if (self.create_mode == "rotation3"
+                and len(self.current.points) >= 1
+                and len(self.line.points) == 2):
+
+                p.save()
+
+                # Arrow and dot sizes should be constant in screen pixels (divide by scale)
+                arrow_size = 12 / self.scale
+                circle_radius = 6 / self.scale
+                pen_width = 2 / self.scale
+
+                # First step: draw green dot and red arrow for center line
+                if len(self.current.points) == 1:
+                    start_point = self.line.points[0]
+                    end_point = self.line.points[1]
+
+                    # Calculate direction
+                    dx = end_point.x() - start_point.x()
+                    dy = end_point.y() - start_point.y()
+                    length = (dx**2 + dy**2) ** 0.5
+
+                    if length > 0:
+                        # Normalize
+                        dx /= length
+                        dy /= length
+
+                        # Draw vertical reference line at start point (perpendicular to center line)
+                        # This helps user see if the start point aligns with text
+                        perp_x = -dy
+                        perp_y = dx
+
+                        # Reference line length (adjust as needed)
+                        ref_line_length = 50 / self.scale
+
+                        # Reference line at start point (green dot)
+                        ref_start_begin = QtCore.QPointF(
+                            start_point.x() - perp_x * ref_line_length,
+                            start_point.y() - perp_y * ref_line_length
+                        )
+                        ref_start_end = QtCore.QPointF(
+                            start_point.x() + perp_x * ref_line_length,
+                            start_point.y() + perp_y * ref_line_length
+                        )
+
+                        # Draw dashed reference line at start point (red for visibility)
+                        dashed_pen = QtGui.QPen(QtGui.QColor(255, 0, 0), pen_width, QtCore.Qt.DashLine)
+                        p.setPen(dashed_pen)
+                        p.drawLine(ref_start_begin, ref_start_end)
+
+                        # Reference line at end point (arrow tip)
+                        ref_end_begin = QtCore.QPointF(
+                            end_point.x() - perp_x * ref_line_length,
+                            end_point.y() - perp_y * ref_line_length
+                        )
+                        ref_end_end = QtCore.QPointF(
+                            end_point.x() + perp_x * ref_line_length,
+                            end_point.y() + perp_y * ref_line_length
+                        )
+
+                        # Draw dashed reference line at end point (red for visibility)
+                        p.drawLine(ref_end_begin, ref_end_end)
+
+                        # Arrow parameters
+                        arrow_angle = 30  # degrees
+                        angle_rad = math.radians(arrow_angle)
+
+                        # Calculate arrow wings
+                        left_x = end_point.x() - arrow_size * (dx * math.cos(angle_rad) + dy * math.sin(angle_rad))
+                        left_y = end_point.y() - arrow_size * (dy * math.cos(angle_rad) - dx * math.sin(angle_rad))
+
+                        right_x = end_point.x() - arrow_size * (dx * math.cos(angle_rad) - dy * math.sin(angle_rad))
+                        right_y = end_point.y() - arrow_size * (dy * math.cos(angle_rad) + dx * math.sin(angle_rad))
+
+                        # Draw arrow
+                        arrow_polygon = QtGui.QPolygonF([
+                            end_point,
+                            QtCore.QPointF(left_x, left_y),
+                            QtCore.QPointF(right_x, right_y)
+                        ])
+
+                        p.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0)))  # Red arrow
+                        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), pen_width))  # White border
+                        p.drawPolygon(arrow_polygon)
+
+                        # Draw green dot at start
+                        p.setBrush(QtGui.QBrush(QtGui.QColor(0, 255, 0)))  # Green dot
+                        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), pen_width))
+                        p.drawEllipse(start_point, circle_radius, circle_radius)
+
+                # Second step: draw green dot, red arrow on center line, blue arrow on width line, and dashed preview
+                elif len(self.current.points) == 2:
+                    # Draw green dot at start of center line
+                    green_point = self.current[0]
+                    p.setBrush(QtGui.QBrush(QtGui.QColor(0, 255, 0)))  # Green dot
+                    p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), pen_width))
+                    p.drawEllipse(green_point, circle_radius, circle_radius)
+
+                    # Draw red dot at end of center line (arrow point)
+                    arrow_point = self.current[1]
+                    p.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0)))  # Red dot
+                    p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), pen_width))
+                    p.drawEllipse(arrow_point, circle_radius, circle_radius)
+
+                    # Draw red arrow at end of center line
+                    dx_center = arrow_point.x() - green_point.x()
+                    dy_center = arrow_point.y() - green_point.y()
+                    length_center = (dx_center**2 + dy_center**2) ** 0.5
+
+                    if length_center > 0:
+                        # Normalize
+                        dx_center /= length_center
+                        dy_center /= length_center
+
+                        # Arrow parameters (already defined above)
+                        arrow_angle = 30  # degrees
+                        angle_rad = math.radians(arrow_angle)
+
+                        # Calculate arrow wings for center line
+                        left_x = arrow_point.x() - arrow_size * (dx_center * math.cos(angle_rad) + dy_center * math.sin(angle_rad))
+                        left_y = arrow_point.y() - arrow_size * (dy_center * math.cos(angle_rad) - dx_center * math.sin(angle_rad))
+
+                        right_x = arrow_point.x() - arrow_size * (dx_center * math.cos(angle_rad) - dy_center * math.sin(angle_rad))
+                        right_y = arrow_point.y() - arrow_size * (dy_center * math.cos(angle_rad) + dx_center * math.sin(angle_rad))
+
+                        # Draw arrow for center line
+                        arrow_polygon = QtGui.QPolygonF([
+                            arrow_point,
+                            QtCore.QPointF(left_x, left_y),
+                            QtCore.QPointF(right_x, right_y)
+                        ])
+
+                        p.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0)))  # Red arrow
+                        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), pen_width))  # White border
+                        p.drawPolygon(arrow_polygon)
+
+                    # Draw blue arrow at end of width line (second line)
+                    if len(self.line.points) == 2:
+                        width_start = self.line.points[0]
+                        width_end = self.line.points[1]
+
+                        dx_width = width_end.x() - width_start.x()
+                        dy_width = width_end.y() - width_start.y()
+                        length_width = (dx_width**2 + dy_width**2) ** 0.5
+
+                        if length_width > 0:
+                            # Normalize
+                            dx_width /= length_width
+                            dy_width /= length_width
+
+                            # Arrow parameters (use same angle_rad)
+                            # Calculate arrow wings for width line
+                            left_x = width_end.x() - arrow_size * (dx_width * math.cos(angle_rad) + dy_width * math.sin(angle_rad))
+                            left_y = width_end.y() - arrow_size * (dy_width * math.cos(angle_rad) - dx_width * math.sin(angle_rad))
+
+                            right_x = width_end.x() - arrow_size * (dx_width * math.cos(angle_rad) - dy_width * math.sin(angle_rad))
+                            right_y = width_end.y() - arrow_size * (dy_width * math.cos(angle_rad) + dx_width * math.sin(angle_rad))
+
+                            # Draw arrow for width line
+                            arrow_polygon2 = QtGui.QPolygonF([
+                                width_end,
+                                QtCore.QPointF(left_x, left_y),
+                                QtCore.QPointF(right_x, right_y)
+                            ])
+
+                            p.setBrush(QtGui.QBrush(QtGui.QColor(0, 100, 255)))  # Blue arrow
+                            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), pen_width))  # White border
+                            p.drawPolygon(arrow_polygon2)
+
+                    # Draw dashed preview lines for the other two sides of rectangle
+                    if len(self.line.points) == 2:
+                        p0 = self.current[0]
+                        p1 = self.current[1]
+                        p2 = self.line[1]
+                        p3 = p0 + (p2 - p1)  # Fourth corner
+
+                        # Draw dashed lines (with scale-independent width)
+                        dashed_pen = QtGui.QPen(QtGui.QColor(100, 100, 100), pen_width, QtCore.Qt.DashLine)
+                        p.setPen(dashed_pen)
+
+                        # Line from p0 to p3
+                        p.drawLine(p0, p3)
+
+                        # Line from p2 to p3
+                        p.drawLine(p2, p3)
+
+                p.restore()
         if self.selected_shapes_copy:
             for s in self.selected_shapes_copy:
                 s.paint(p)
@@ -3205,6 +3503,32 @@ class Canvas(
                 self.current = None
                 self.drawing_polygon.emit(False)
                 self.update()
+            elif key == QtCore.Qt.Key_Backspace and self.current:
+                # Backspace: undo last point (go back one step)
+                if self.create_mode == "rotation3":
+                    if len(self.current.points) == 2:
+                        # Step 2 -> Step 1: remove second point
+                        self.current.points.pop()
+                        # Reset line to start from first point
+                        self.line[0] = self.current[0]
+                        self.line[1] = self.current[0]
+                        self.update()
+                    elif len(self.current.points) == 1:
+                        # Step 1 -> Cancel: remove all and cancel
+                        self.current = None
+                        self.drawing_polygon.emit(False)
+                        self.update()
+                elif self.create_mode in ["polygon", "linestrip"]:
+                    # For polygon/linestrip, remove last point
+                    if len(self.current.points) > 1:
+                        self.current.points.pop()
+                        self.line[0] = self.current[-1]
+                        self.update()
+                    elif len(self.current.points) == 1:
+                        # Only one point left, cancel
+                        self.current = None
+                        self.drawing_polygon.emit(False)
+                        self.update()
             elif key == QtCore.Qt.Key_Return and self.can_close_shape():
                 self.finalise()
             elif modifiers == QtCore.Qt.AltModifier:
