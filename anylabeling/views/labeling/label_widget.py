@@ -705,11 +705,11 @@ class LabelingWidget(LabelDialog):
             enabled=False,
         )
         create_rotation3_mode = action(
-            self.tr("Create Rotation (3-Click)"),
+            "创建旋转框（三次点击）",
             lambda: self.toggle_draw_mode(False, create_mode="rotation3"),
             shortcuts.get("create_rotation3", "Shift+O"),  # 默认快捷键 Shift+O
             "rotation",  # 使用 rotation 图标
-            self.tr("Start drawing rotations with 3 clicks (green dot → red arrow → width)"),
+            "三次点击绘制旋转框（绿点 → 红色箭头 → 宽度）",
             enabled=False,
         )
         create_circle_mode = action(
