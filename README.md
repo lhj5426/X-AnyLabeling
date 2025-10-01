@@ -285,7 +285,9 @@ https://github.com/user-attachments/assets/2d2e0c1a-13e7-4d77-8005-01889ad6debb
 
 https://github.com/user-attachments/assets/94d99143-0a7e-4a54-a720-40f6bc642bb8
 
+36.增强十字线 以适应新的旋转标注模式 同时对新标注模式应用独立鼠标样式可自定义
 
+https://github.com/user-attachments/assets/9834c8b2-05a3-4359-b932-9a542474ef16
 
 
 
