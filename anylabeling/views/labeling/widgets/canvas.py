@@ -2647,6 +2647,9 @@ class Canvas(
 
         # Draw mouse coordinates
         if self.cross_line_show:
+            # Save painter state to isolate opacity settings
+            p.save()
+
             # Determine line style (solid or dashed)
             line_style = Qt.SolidLine if self.cross_line_style == "solid" else Qt.DashLine
 
@@ -2738,6 +2741,9 @@ class Canvas(
                     QtCore.QPointF(0, self.prev_move_point.y()),
                     QtCore.QPointF(self.pixmap.width(), self.prev_move_point.y()),
                 )
+
+            # Restore painter state to prevent opacity from affecting other drawings
+            p.restore()
 
         # Draw attributes
         if self.show_attributes:
