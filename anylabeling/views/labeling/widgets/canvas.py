@@ -2352,6 +2352,41 @@ class Canvas(
                         p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), pen_width))
                         p.drawEllipse(start_point, circle_radius, circle_radius)
 
+                        # Draw angle text at start point (green dot)
+                        angle_deg = math.degrees(math.atan2(dy, dx))
+                        # Normalize to 0-360 range
+                        if angle_deg < 0:
+                            angle_deg += 360
+                        angle_text = f"{angle_deg:.1f}°"
+
+                        # Set font for angle text
+                        font = QtGui.QFont()
+                        font.setPointSize(int(12 / self.scale))
+                        font.setBold(True)
+                        p.setFont(font)
+
+                        # Calculate text bounding box for background
+                        metrics = QtGui.QFontMetrics(font)
+                        text_rect = metrics.boundingRect(angle_text)
+                        text_offset = 20 / self.scale
+                        text_pos = QtCore.QPointF(start_point.x() + text_offset, start_point.y() - text_offset)
+
+                        # Draw background rectangle (blue background)
+                        bg_padding = 4 / self.scale
+                        bg_rect = QtCore.QRectF(
+                            text_pos.x() - bg_padding,
+                            text_pos.y() - text_rect.height() - bg_padding,
+                            text_rect.width() + 2 * bg_padding,
+                            text_rect.height() + 2 * bg_padding
+                        )
+                        p.setBrush(QtGui.QBrush(QtGui.QColor(0, 100, 255)))  # Solid blue background
+                        p.setPen(QtCore.Qt.NoPen)  # No border
+                        p.drawRect(bg_rect)
+
+                        # Draw text (white)
+                        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255)))  # White text
+                        p.drawText(text_pos, angle_text)
+
                 # Second step: draw green dot, red arrow on center line, blue arrow on width line, and dashed preview
                 elif len(self.current.points) == 2:
                     # Draw green dot at start of center line
