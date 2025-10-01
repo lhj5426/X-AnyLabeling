@@ -289,7 +289,7 @@ https://github.com/user-attachments/assets/94d99143-0a7e-4a54-a720-40f6bc642bb8
 
 https://github.com/user-attachments/assets/9834c8b2-05a3-4359-b932-9a542474ef16
 
-37.新标志模式添加实时角度显示
+37.新旋转矩形标注模式添加实时角度显示
 
 https://github.com/user-attachments/assets/a43a4c71-5ec0-49dc-98d2-725835ce98aa
 
