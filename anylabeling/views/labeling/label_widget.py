@@ -5225,7 +5225,8 @@ class LabelingWidget(LabelDialog):
             width = crosshair_settings["width"]
             color = crosshair_settings["color"]
             opacity = crosshair_settings["opacity"]
-            self.canvas.set_cross_line(show, width, color, opacity)
+            style = crosshair_settings.get("style", "dash")  # Get style, default to "dash"
+            self.canvas.set_cross_line(show, width, color, opacity, style)
             self._config["canvas"]["crosshair"] = crosshair_settings
 
     def set_canvas_params(self, key, value):
