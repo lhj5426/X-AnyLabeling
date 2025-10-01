@@ -5,7 +5,7 @@ from anylabeling.views.labeling.utils.qt import new_icon_path
 
 class CrosshairSettingsDialog(QtWidgets.QDialog):
     def __init__(
-        self, show=True, width=2.0, color="#00FF00", opacity=0.5, parent=None
+        self, show=True, width=2.0, color="#00FF00", opacity=0.5, style="dash", parent=None
     ):
         super().__init__(parent)
 
@@ -13,10 +13,11 @@ class CrosshairSettingsDialog(QtWidgets.QDialog):
         self._width = width
         self._color = color
         self._opacity = opacity
+        self._style = style  # "solid" or "dash"
 
-        self.setWindowTitle(self.tr("Crosshair Settings"))
+        self.setWindowTitle(self.tr("十字线设置"))
         self.setModal(True)
-        self.setFixedSize(380, 280)
+        self.setFixedSize(380, 320)  # Increased height for new option
         self.setWindowFlags(
             self.windowFlags() & ~QtCore.Qt.WindowContextHelpButtonHint
         )
@@ -115,13 +116,53 @@ class CrosshairSettingsDialog(QtWidgets.QDialog):
 
         # Show Crosshair option
         show_layout = QtWidgets.QHBoxLayout()
-        self.show_label = QtWidgets.QLabel(self.tr("Show Crosshair:"))
+        self.show_label = QtWidgets.QLabel(self.tr("显示十字线:"))
         self.show_label.setMinimumWidth(100)
         self.show_checkbox = QtWidgets.QCheckBox()
         self.show_checkbox.setChecked(self._show)
         show_layout.addWidget(self.show_label)
         show_layout.addWidget(self.show_checkbox)
         show_layout.addStretch()
+
+        # Line style option (solid/dash)
+        style_layout = QtWidgets.QHBoxLayout()
+        self.style_label = QtWidgets.QLabel(self.tr("线条样式:"))
+        self.style_label.setMinimumWidth(100)
+        self.style_combo = QtWidgets.QComboBox()
+        self.style_combo.addItem(self.tr("虚线"), "dash")
+        self.style_combo.addItem(self.tr("实线"), "solid")
+        # Set current style
+        index = 0 if self._style == "dash" else 1
+        self.style_combo.setCurrentIndex(index)
+        self.style_combo.setFixedWidth(150)
+        self.style_combo.setStyleSheet(
+            """
+            QComboBox {
+                padding: 5px 8px;
+                background: white;
+                border: 1px solid #d2d2d7;
+                border-radius: 6px;
+                min-height: 24px;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+            }
+            QComboBox::down-arrow {
+                image: url(""" + new_icon_path("caret-down", "svg") + """);
+                width: 12px;
+                height: 12px;
+            }
+            QComboBox QAbstractItemView {
+                background: white;
+                border: 1px solid #d2d2d7;
+                selection-background-color: #0071e3;
+            }
+        """
+        )
+        style_layout.addWidget(self.style_label)
+        style_layout.addWidget(self.style_combo)
+        style_layout.addStretch()
 
         # Line width controls
         width_layout = QtWidgets.QHBoxLayout()
@@ -288,6 +329,7 @@ class CrosshairSettingsDialog(QtWidgets.QDialog):
 
         # Add all layouts to the main layout
         layout.addLayout(show_layout)
+        layout.addLayout(style_layout)
         layout.addLayout(width_layout)
         layout.addLayout(opacity_layout)
         layout.addLayout(color_layout)
@@ -330,6 +372,8 @@ class CrosshairSettingsDialog(QtWidgets.QDialog):
 
     def reset_settings(self):
         self.show_checkbox.setChecked(self._show)
+        index = 0 if self._style == "dash" else 1
+        self.style_combo.setCurrentIndex(index)
         self.width_slider.setValue(int(self._width * 100))
         self.width_spinbox.setValue(self._width)
         self.color_lineedit.setText(self._color)
@@ -339,6 +383,7 @@ class CrosshairSettingsDialog(QtWidgets.QDialog):
     def get_settings(self):
         return {
             "show": self.show_checkbox.isChecked(),
+            "style": self.style_combo.currentData(),
             "width": self.width_spinbox.value(),
             "color": self.color_lineedit.text(),
             "opacity": self.opacity_spinbox.value(),

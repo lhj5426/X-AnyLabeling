@@ -18,10 +18,12 @@ CURSOR_POINT = QtCore.Qt.PointingHandCursor  # 恢复为默认，用于顶点
 CURSOR_DRAW = QtCore.Qt.CrossCursor
 CURSOR_MOVE = None   # 将在Canvas初始化时创建 - 拖拽矩形本体时
 CURSOR_GRAB = None   # 将在Canvas初始化时创建 - 接触矩形本体时
+CURSOR_ROTATION3 = None  # 将在Canvas初始化时创建 - rotation3模式专用
 
 # 自定义鼠标指针路径
 CUSTOM_CURSOR_GRAB_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Arrow.cur"
 CUSTOM_CURSOR_MOVE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Link.cur"
+CUSTOM_CURSOR_ROTATION3_PATH = r"J:\Downloads\鼠标指针X个\Cyan Ring\Cross.cur"
 
 AUTO_DECODE_DELAY_MS = 100
 MAX_AUTO_DECODE_MARKS = 42
@@ -237,6 +239,7 @@ class Canvas(
         self.cross_line_width = 2.0
         self.cross_line_color = "#00FF00"
         self.cross_line_opacity = 0.5
+        self.cross_line_style = "dash"  # "solid" or "dash"
 
         self.is_loading = False
         self.loading_text = self.tr("Loading...")
@@ -366,6 +369,11 @@ class Canvas(
         ]:
             raise ValueError(f"Unsupported create_mode: {value}")
         self._create_mode = value
+
+        # Set custom cursor for rotation3 mode
+        if value == "rotation3":
+            self.un_highlight()
+            self.setCursor(CURSOR_ROTATION3)
 
     def store_shapes(self):
         """Store shapes for restoring later (Undo feature)"""
@@ -679,7 +687,9 @@ class Canvas(
                 self.line.shape_type = self.create_mode
 
             if not self.current:
-                self.override_cursor(CURSOR_DRAW)
+                # Use rotation3 custom cursor if in rotation3 mode
+                cursor = CURSOR_ROTATION3 if self.create_mode == "rotation3" else CURSOR_DRAW
+                self.override_cursor(cursor)
                 return
 
             if self.create_mode == "rectangle":
@@ -716,7 +726,9 @@ class Canvas(
                 self.override_cursor(CURSOR_POINT)
                 self.current.highlight_vertex(0, Shape.NEAR_VERTEX)
             else:
-                self.override_cursor(CURSOR_DRAW)
+                # Use rotation3 custom cursor if in rotation3 mode
+                cursor = CURSOR_ROTATION3 if self.create_mode == "rotation3" else CURSOR_DRAW
+                self.override_cursor(cursor)
             if self.create_mode in ["polygon", "linestrip"]:
                 self.line[0] = self.current[-1]
                 self.line[1] = pos
@@ -2600,21 +2612,97 @@ class Canvas(
 
         # Draw mouse coordinates
         if self.cross_line_show:
+            # Determine line style (solid or dashed)
+            line_style = Qt.SolidLine if self.cross_line_style == "solid" else Qt.DashLine
+
             pen = QtGui.QPen(
                 QtGui.QColor(self.cross_line_color),
                 max(1, int(round(self.cross_line_width / Shape.scale))),
-                Qt.DashLine,
+                line_style,
             )
             p.setPen(pen)
             p.setOpacity(self.cross_line_opacity)
-            p.drawLine(
-                QtCore.QPointF(self.prev_move_point.x(), 0),
-                QtCore.QPointF(self.prev_move_point.x(), self.pixmap.height()),
-            )
-            p.drawLine(
-                QtCore.QPointF(0, self.prev_move_point.y()),
-                QtCore.QPointF(self.pixmap.width(), self.prev_move_point.y()),
-            )
+
+            # rotation3 mode: rotated crosshair based on edge direction
+            if (self.create_mode == "rotation3" and self.current
+                and len(self.current.points) >= 1 and len(self.line.points) == 2):
+
+                # Determine which edge to follow and which position to use for crosshair center
+                if len(self.current.points) == 1:
+                    # First step: follow first edge direction, use actual mouse position
+                    p0 = self.current[0]
+                    p1 = self.line[1]  # Current mouse position
+                    crosshair_center = self.prev_move_point  # Use actual mouse position
+                elif len(self.current.points) == 2:
+                    # Second step: follow second edge direction, use constrained position
+                    p0 = self.current[1]  # First edge endpoint
+                    p1 = self.line[1]  # Constrained position (perpendicular)
+                    crosshair_center = self.line[1]  # Use constrained position, not mouse position
+                else:
+                    p0 = self.current[0]
+                    p1 = self.line[1]
+                    crosshair_center = self.prev_move_point
+
+                # Calculate angle of the edge
+                dx = p1.x() - p0.x()
+                dy = p1.y() - p0.y()
+                length = math.sqrt(dx**2 + dy**2)
+
+                if length > 1:  # Avoid division by zero
+                    # Normalize direction vector
+                    dx /= length
+                    dy /= length
+
+                    # Get perpendicular direction (90° rotation)
+                    perp_x = -dy
+                    perp_y = dx
+
+                    # Draw rotated crosshair at appropriate position
+                    crosshair_length = max(self.pixmap.width(), self.pixmap.height()) * 2
+
+                    # Line 1: along the edge direction
+                    p.drawLine(
+                        QtCore.QPointF(
+                            crosshair_center.x() - dx * crosshair_length,
+                            crosshair_center.y() - dy * crosshair_length
+                        ),
+                        QtCore.QPointF(
+                            crosshair_center.x() + dx * crosshair_length,
+                            crosshair_center.y() + dy * crosshair_length
+                        ),
+                    )
+
+                    # Line 2: perpendicular to edge
+                    p.drawLine(
+                        QtCore.QPointF(
+                            crosshair_center.x() - perp_x * crosshair_length,
+                            crosshair_center.y() - perp_y * crosshair_length
+                        ),
+                        QtCore.QPointF(
+                            crosshair_center.x() + perp_x * crosshair_length,
+                            crosshair_center.y() + perp_y * crosshair_length
+                        ),
+                    )
+                else:
+                    # If too close to start point, draw normal crosshair
+                    p.drawLine(
+                        QtCore.QPointF(self.prev_move_point.x(), 0),
+                        QtCore.QPointF(self.prev_move_point.x(), self.pixmap.height()),
+                    )
+                    p.drawLine(
+                        QtCore.QPointF(0, self.prev_move_point.y()),
+                        QtCore.QPointF(self.pixmap.width(), self.prev_move_point.y()),
+                    )
+            else:
+                # Normal crosshair for other modes or initial state
+                p.drawLine(
+                    QtCore.QPointF(self.prev_move_point.x(), 0),
+                    QtCore.QPointF(self.prev_move_point.x(), self.pixmap.height()),
+                )
+                p.drawLine(
+                    QtCore.QPointF(0, self.prev_move_point.y()),
+                    QtCore.QPointF(self.pixmap.width(), self.prev_move_point.y()),
+                )
 
         # Draw attributes
         if self.show_attributes:
@@ -3686,12 +3774,13 @@ class Canvas(
         self.is_move_editing = False
         self.update()
 
-    def set_cross_line(self, show, width, color, opacity):
+    def set_cross_line(self, show, width, color, opacity, style="dash"):
         """Set cross line options"""
         self.cross_line_show = show
         self.cross_line_width = width
         self.cross_line_color = color
         self.cross_line_opacity = opacity
+        self.cross_line_style = style
         self.update()
 
     def gen_new_group_id(self):
@@ -3763,18 +3852,25 @@ class Canvas(
 
     def _init_custom_cursors(self):
         """初始化自定义鼠标指针"""
-        global CURSOR_GRAB, CURSOR_MOVE
-        
+        global CURSOR_GRAB, CURSOR_MOVE, CURSOR_ROTATION3
+
         try:
             # 创建自定义接触矩形指针
             CURSOR_GRAB = QtGui.QCursor(QtGui.QPixmap(CUSTOM_CURSOR_GRAB_PATH))
         except Exception:
             # 如果自定义指针文件不存在，回退到默认指针
             CURSOR_GRAB = QtCore.Qt.OpenHandCursor
-        
+
         try:
-            # 创建自定义移动指针  
+            # 创建自定义移动指针
             CURSOR_MOVE = QtGui.QCursor(QtGui.QPixmap(CUSTOM_CURSOR_MOVE_PATH))
         except Exception:
             # 如果自定义指针文件不存在，回退到默认指针
             CURSOR_MOVE = QtCore.Qt.ClosedHandCursor
+
+        try:
+            # 创建自定义rotation3指针
+            CURSOR_ROTATION3 = QtGui.QCursor(QtGui.QPixmap(CUSTOM_CURSOR_ROTATION3_PATH))
+        except Exception:
+            # 如果自定义指针文件不存在，回退到十字指针
+            CURSOR_ROTATION3 = QtCore.Qt.CrossCursor
