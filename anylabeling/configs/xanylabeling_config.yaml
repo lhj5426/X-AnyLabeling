@@ -113,6 +113,7 @@ canvas:
     fast_adjust_step: 10.0
   crosshair:
     show: true
+    style: dash  # "dash" or "solid"
     width: 2.0
     color: "#00FF00"
     opacity: 0.5
