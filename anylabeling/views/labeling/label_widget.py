@@ -2033,7 +2033,9 @@ class LabelingWidget(LabelDialog):
             ),
         )
 
-        self.menus.file.aboutToShow.connect(self.update_file_menu)
+        # Connect aboutToShow to update menu RIGHT BEFORE showing
+        # This ensures menu is always fresh when displayed
+        self.menus.recent_files.aboutToShow.connect(self.update_file_menu)
 
         # Custom context menu for the canvas widget:
         utils.add_actions(self.canvas.menus[0], self.actions.menu)
@@ -2250,6 +2252,8 @@ class LabelingWidget(LabelDialog):
         self.image_path = None
         self.recent_files = []
         self.max_recent = 7
+        self.recent_folders = []  # Store recently opened folder paths
+        self.max_recent_folders = 50  # Maximum 50 recent folders
         self.other_data = {}
         self.zoom_level = 100
         self.fit_window = False
@@ -2273,6 +2277,7 @@ class LabelingWidget(LabelDialog):
         # Restore application settings.
         self.settings = QtCore.QSettings("anylabeling", "anylabeling")
         self.recent_files = self.settings.value("recent_files", []) or []
+        self.recent_folders = self.settings.value("recent_folders", []) or []
         size = self.settings.value("window/size", QtCore.QSize(600, 500))
         position = self.settings.value("window/position", QtCore.QPoint(0, 0))
         # state = self.settings.value("window/state", QtCore.QByteArray())
@@ -2280,9 +2285,6 @@ class LabelingWidget(LabelDialog):
         self.move(position)
         # or simply:
         # self.restoreGeometry(settings['window/geometry']
-
-        # Populate the File menu dynamically.
-        self.update_file_menu()
 
         # Since loading the file may take some time,
         # make sure it runs in the background.
@@ -2299,12 +2301,12 @@ class LabelingWidget(LabelDialog):
             QWhatsThis.enterWhatsThisMode()
 
         self.set_text_editing(False)
-        
+
         # 延迟恢复导航器状态，确保在界面完全初始化后执行
         QtCore.QTimer.singleShot(100, self.restore_navigator_state)
 
         self.shape_list_changed.connect(self._update_object_manager)
-        
+
     def restore_navigator_state(self) -> None:
         """
         Restore navigator dialog state, position, and size from config file.
@@ -2482,7 +2484,7 @@ class LabelingWidget(LabelDialog):
         )
         utils.add_actions(self.menus.edit, actions + self.actions.editMenu)
 
-    def set_dirty(self) -> None:
+    def set_dirty(self, mark_as_manually_edited: bool = True) -> None:
         """
         Mark the current document as modified (dirty) and handle auto-save.
 
@@ -2490,20 +2492,31 @@ class LabelingWidget(LabelDialog):
         handles automatic saving if enabled. It updates the UI to show unsaved
         changes and maintains navigator synchronization.
 
+        Args:
+            mark_as_manually_edited: If True, marks file as manually edited by user.
+                                    If False (e.g., from AI inference), keeps manual edit flag unchanged.
+                                    Defaults to True for user-initiated changes.
+
         Returns:
             None
 
         Examples:
             >>> # After user modifies shapes or labels
             >>> app.set_dirty()
+            >>> # After AI inference (should not mark as manually edited)
+            >>> app.set_dirty(mark_as_manually_edited=False)
             >>> # If auto-save enabled: automatically saves to file
             >>> # If auto-save disabled: shows "*" in window title
-            
+
         Note:
             When auto-save is enabled, immediately saves the file and updates navigator.
             When auto-save is disabled, marks document as dirty and enables save action.
             Always updates navigator shapes to maintain synchronization.
         """
+        # Mark as manually edited only if requested (user changes, not AI inference)
+        if mark_as_manually_edited:
+            self.other_data["manually_edited"] = True
+
         # Even if we autosave the file, we keep the ability to undo
         self.actions.undo.setEnabled(self.canvas.is_shape_restorable)
 
@@ -3641,21 +3654,57 @@ class LabelingWidget(LabelDialog):
         self.label_instruction.setText(self.get_labeling_instruction())
 
     def update_file_menu(self):
-        current = self.filename
+        """Update the 'Open Recent' menu with recent folders (not files)."""
+        def exists(path):
+            return osp.exists(str(path))
 
-        def exists(filename):
-            return osp.exists(str(filename))
+        def truncate_path(path, max_length=200):
+            """Truncate path to max_length characters if needed."""
+            if len(path) <= max_length:
+                return path
+            return path[:max_length] + "..."
+
+        def make_folder_opener(folder_path):
+            """Create a function that opens the given folder - avoids closure issues."""
+            def open_folder():
+                self.import_image_folder(folder_path)
+            return open_folder
 
         menu = self.menus.recent_files
         menu.clear()
-        files = [f for f in self.recent_files if f != current and exists(f)]
-        for i, f in enumerate(files):
-            icon = utils.new_icon("labels")
-            action = QtWidgets.QAction(
-                icon, "&%d %s" % (i + 1, QtCore.QFileInfo(f).fileName()), self
-            )
-            action.triggered.connect(functools.partial(self.load_recent, f))
-            menu.addAction(action)
+
+        # Filter out non-existent folders
+        folders = [f for f in self.recent_folders if exists(f)]
+
+        if folders:
+            # Add folder entries (max 50)
+            for i, folder_path in enumerate(folders):
+                icon = utils.new_icon("open")
+                # Truncate display text if path is too long
+                display_path = truncate_path(folder_path, 200)
+                menu_text = "&%d %s" % (i + 1, display_path)
+                action = QtWidgets.QAction(icon, menu_text, self)
+                # Connect each action's triggered signal directly
+                action.triggered.connect(make_folder_opener(folder_path))
+                menu.addAction(action)
+
+            # Add separator
+            menu.addSeparator()
+
+        # Add "Clear Recent History" option
+        clear_action = QtWidgets.QAction(
+            utils.new_icon("cancel"),
+            self.tr("清除最近打开的历史"),
+            self
+        )
+        clear_action.triggered.connect(self._clear_recent_folders)
+        menu.addAction(clear_action)
+
+    def _clear_recent_folders(self):
+        """Clear all recent folder history."""
+        self.recent_folders = []
+        self.settings.setValue("recent_folders", self.recent_folders)
+        self.update_file_menu()
 
     def pop_label_list_menu(self, point):
         self.menus.label_list.exec_(self.label_list.mapToGlobal(point))
@@ -4057,7 +4106,12 @@ class LabelingWidget(LabelDialog):
         if not self.may_continue():
             return
 
-        current_index = self.fn_to_index[str(item.text())]
+        # Get actual filename (use UserRole for reliability)
+        filename = item.data(Qt.UserRole)
+        if not filename:
+            filename = item.text()
+
+        current_index = self.fn_to_index[str(filename)]
         if current_index < len(self.image_list):
             filename = self.image_list[current_index]
             if filename:
@@ -4594,7 +4648,13 @@ class LabelingWidget(LabelDialog):
             if len(items) > 0:
                 if len(items) != 1:
                     raise RuntimeError("There are duplicate files.")
-                items[0].setCheckState(Qt.Checked)
+                item = items[0]
+                item.setCheckState(Qt.Checked)
+
+                # Update color to show manually edited status
+                if self.other_data.get("manually_edited", False):
+                    color = self._config.get("manually_edited_color", "#FFA500")
+                    item.setForeground(QtGui.QColor(color))
             # disable allows next and previous image to proceed
             # self.filename = filename
             return True
@@ -5600,6 +5660,7 @@ class LabelingWidget(LabelDialog):
         self.settings.setValue("window/position", self.pos())
         self.settings.setValue("window/state", self.parent.parent.saveState())
         self.settings.setValue("recent_files", self.recent_files)
+        self.settings.setValue("recent_folders", self.recent_folders)
         
         # 通知导航器应用正在关闭，避免导航器closeEvent覆盖visible状态
         if hasattr(self, 'navigator_dialog'):
@@ -6083,7 +6144,11 @@ class LabelingWidget(LabelDialog):
         lst = []
         for i in range(self.file_list_widget.count()):
             item = self.file_list_widget.item(i)
-            lst.append(item.text())
+            # Use UserRole data if available (to handle potential display modifications)
+            filename = item.data(Qt.UserRole)
+            if not filename:
+                filename = item.text()
+            lst.append(filename)
         return lst
 
     def import_dropped_image_files(self, image_files):
@@ -6125,6 +6190,16 @@ class LabelingWidget(LabelDialog):
         if not self.may_continue() or not dirpath:
             return
 
+        # Add to recent folders history
+        dirpath = str(dirpath)
+        if dirpath in self.recent_folders:
+            self.recent_folders.remove(dirpath)
+        elif len(self.recent_folders) >= self.max_recent_folders:
+            self.recent_folders.pop()
+        self.recent_folders.insert(0, dirpath)
+        self.settings.setValue("recent_folders", self.recent_folders)
+        # No need to refresh menu here - it will auto-refresh via aboutToShow
+
         self.last_open_dir = dirpath
         self.file_list_widget.clear()
         self.fn_to_index = {}
@@ -6135,7 +6210,20 @@ class LabelingWidget(LabelDialog):
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
                 label_file = self.output_dir + "/" + label_file_without_path
+
+            # Check if file was manually edited
+            manually_edited = False
+            if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(label_file):
+                try:
+                    with open(label_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        manually_edited = data.get("manually_edited", False)
+                except:
+                    pass
+
+            # Create list item with actual filename
             item = QtWidgets.QListWidgetItem(filename)
+            item.setData(Qt.UserRole, filename)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(
                 label_file
@@ -6143,6 +6231,12 @@ class LabelingWidget(LabelDialog):
                 item.setCheckState(Qt.Checked)
             else:
                 item.setCheckState(Qt.Unchecked)
+
+            # Set color for manually edited items
+            if manually_edited:
+                color = self._config.get("manually_edited_color", "#FFA500")
+                item.setForeground(QtGui.QColor(color))
+
             self.file_list_widget.addItem(item)
             self.fn_to_index[filename] = self.file_list_widget.count() - 1
             # utils.process_image_exif(filename)
@@ -6193,7 +6287,8 @@ class LabelingWidget(LabelDialog):
             self.other_data["description"] = description
             self.shape_text_edit.setDisabled(False)
 
-        self.set_dirty()
+        # Mark as dirty but not as manually edited (this is AI inference, not user edit)
+        self.set_dirty(mark_as_manually_edited=False)
 
     def clear_auto_labeling_marks(self):
         """Clear auto labeling marks from the current image."""

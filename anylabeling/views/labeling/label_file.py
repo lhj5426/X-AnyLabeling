@@ -112,6 +112,7 @@ class LabelFile:
 
         # Add new fields if not available
         other_data["description"] = other_data.get("description", "")
+        other_data["manually_edited"] = other_data.get("manually_edited", False)
 
         # Only replace data after everything is loaded.
         self.flags = flags
