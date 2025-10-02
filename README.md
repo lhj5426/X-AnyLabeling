@@ -293,6 +293,19 @@ https://github.com/user-attachments/assets/9834c8b2-05a3-4359-b932-9a542474ef16
 
 https://github.com/user-attachments/assets/a43a4c71-5ec0-49dc-98d2-725835ce98aa
 
+38.优化 最近打开的文件 原版 是只打开一张图 没啥用啊 好鸡肋 优化成 打开历史目录 并且 增加清除历史功能 历史限制在最多50个 路径长度200字符防止过长超出屏幕
+
+https://github.com/user-attachments/assets/d163be78-69e9-42be-ac09-f7af20c94d77
+
+39. 导出增强 增加只导出手动修改的项目 同时区分 是AI推理的 还是人手动修改的 手动修改后 路径变色代表是 人修改的和AI推理区分开 
+
+使用颜色区分 模型推理 和 人手动修改
+
+https://github.com/user-attachments/assets/62baee8a-4204-4a56-812e-8063898eb3bf
+
+这样区分之后 后可以 只导出 手动修改的 识别错误需要重点训练目标
+
+https://github.com/user-attachments/assets/3cad97b1-c42e-493f-a6cf-803019fcde7e
 
 
 
