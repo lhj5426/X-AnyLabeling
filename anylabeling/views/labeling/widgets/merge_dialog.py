@@ -5,6 +5,13 @@ class MergeDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("区域合并工具设置")
         self.setMinimumWidth(500)
+        # 设置窗口标志：移除帮助按钮,添加最小化按钮
+        self.setWindowFlags(
+            QtCore.Qt.Window |
+            QtCore.Qt.WindowMinimizeButtonHint |
+            QtCore.Qt.WindowMaximizeButtonHint |
+            QtCore.Qt.WindowCloseButtonHint
+        )
 
         self.layout = QtWidgets.QVBoxLayout(self)
 

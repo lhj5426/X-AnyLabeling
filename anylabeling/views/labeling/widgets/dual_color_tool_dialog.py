@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QGroupBox,
 )
+from PyQt5.QtCore import Qt
 
 
 class DualColorToolDialog(QDialog):
@@ -20,6 +21,13 @@ class DualColorToolDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("双色标签工具")
         self.setMinimumSize(500, 400)
+        # 设置窗口标志：移除帮助按钮,添加最小化按钮
+        self.setWindowFlags(
+            Qt.Window |
+            Qt.WindowMinimizeButtonHint |
+            Qt.WindowMaximizeButtonHint |
+            Qt.WindowCloseButtonHint
+        )
 
         # Layout
         main_layout = QVBoxLayout(self)

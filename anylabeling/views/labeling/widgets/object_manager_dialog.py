@@ -21,6 +21,13 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.main_window = parent
         self.setWindowTitle(self.tr("标签页管理器"))
         self.resize(520, 420)
+        # 设置窗口标志：移除帮助按钮，添加最小化按钮
+        self.setWindowFlags(
+            QtCore.Qt.Window |
+            QtCore.Qt.WindowMinimizeButtonHint |
+            QtCore.Qt.WindowMaximizeButtonHint |
+            QtCore.Qt.WindowCloseButtonHint
+        )
 
         # Left side: Category controls
         self.category_list = LabelCategoryWidget()
@@ -101,22 +108,29 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.close_shortcut.activated.connect(self.close)
 
     def eventFilter(self, source, event):
-        if (source is self.list_widget and
-            event.type() == QtCore.QEvent.KeyPress and
-            event.key() == QtCore.Qt.Key_E and
-            event.modifiers() == QtCore.Qt.ControlModifier):
-            if self.list_widget.selectedItems():
-                self.edit_requested.emit()
-            return True
+        if source is self.list_widget and event.type() == QtCore.QEvent.KeyPress:
+            # Ctrl+E: Edit label
+            if (event.key() == QtCore.Qt.Key_E and
+                event.modifiers() == QtCore.Qt.ControlModifier):
+                if self.list_widget.selectedItems():
+                    self.edit_requested.emit()
+                return True
+
+            # Delete or Backspace: Delete selected items
+            if event.key() in (QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace):
+                if self.list_widget.selectedItems():
+                    self.delete_requested.emit()
+                return True
+
         return super(ObjectManagerDialog, self).eventFilter(source, event)
 
     def _pop_list_menu(self, point):
         if not self.list_widget.selectedItems():
             return
-        
+
         menu = QtWidgets.QMenu()
         edit_action = menu.addAction(utils.new_icon('edit'), self.tr("编辑标签 (Ctrl+E)"))
-        delete_action = menu.addAction(utils.new_icon('cancel'), self.tr("删除标签"))
+        delete_action = menu.addAction(utils.new_icon('cancel'), self.tr("删除标签 (Delete)"))
         union_action = menu.addAction(utils.new_icon('union'), self.tr("合并选中"))
 
         union_action.setEnabled(len(self.list_widget.selectedItems()) > 1)

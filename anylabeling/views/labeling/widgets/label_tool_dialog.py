@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QPushButton, QFileDialog, QTextEdit,
     QLabel, QLineEdit, QRadioButton, QGroupBox, QHBoxLayout
 )
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import QThread, pyqtSignal, Qt
 
 class Worker(QThread):
     log_signal = pyqtSignal(str)
@@ -89,6 +89,13 @@ class LabelToolDialog(QDialog):
         self.folder_path = folder_path
         self.setWindowTitle("双色标签工具")
         self.setMinimumSize(500, 400)
+        # 设置窗口标志：移除帮助按钮,添加最小化按钮
+        self.setWindowFlags(
+            Qt.Window |
+            Qt.WindowMinimizeButtonHint |
+            Qt.WindowMaximizeButtonHint |
+            Qt.WindowCloseButtonHint
+        )
         self.layout = QVBoxLayout(self)
 
         # Label input
