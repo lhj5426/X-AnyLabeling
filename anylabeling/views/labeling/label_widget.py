@@ -4655,6 +4655,9 @@ class LabelingWidget(LabelDialog):
                 if self.other_data.get("manually_edited", False):
                     color = self._config.get("manually_edited_color", "#FFA500")
                     item.setForeground(QtGui.QColor(color))
+                else:
+                    # Reset to default color (black) when not manually edited
+                    item.setForeground(QtGui.QColor("#000000"))
             # disable allows next and previous image to proceed
             # self.filename = filename
             return True
@@ -6286,6 +6289,9 @@ class LabelingWidget(LabelDialog):
             self.shape_text_edit.setPlainText(description)
             self.other_data["description"] = description
             self.shape_text_edit.setDisabled(False)
+
+        # Clear manually_edited flag when AI re-inference
+        self.other_data["manually_edited"] = False
 
         # Mark as dirty but not as manually edited (this is AI inference, not user edit)
         self.set_dirty(mark_as_manually_edited=False)
