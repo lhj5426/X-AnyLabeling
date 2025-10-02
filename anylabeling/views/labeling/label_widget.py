@@ -6194,7 +6194,8 @@ class LabelingWidget(LabelDialog):
             return
 
         # Add to recent folders history
-        dirpath = str(dirpath)
+        # Normalize path to use forward slashes for consistency
+        dirpath = str(dirpath).replace('\\', '/')
         if dirpath in self.recent_folders:
             self.recent_folders.remove(dirpath)
         elif len(self.recent_folders) >= self.max_recent_folders:
