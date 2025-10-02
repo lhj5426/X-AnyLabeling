@@ -286,6 +286,12 @@ def export_yolo_annotation(self, mode):
     skip_empty_files_checkbox.setChecked(False)
     layout.addWidget(skip_empty_files_checkbox)
 
+    only_manually_edited_checkbox = QtWidgets.QCheckBox(
+        self.tr("仅导出手动调整的文件？")
+    )
+    only_manually_edited_checkbox.setChecked(False)
+    layout.addWidget(only_manually_edited_checkbox)
+
     button_layout = QHBoxLayout()
     button_layout.setContentsMargins(0, 16, 0, 0)
     button_layout.setSpacing(8)
@@ -311,6 +317,7 @@ def export_yolo_annotation(self, mode):
 
     save_images = save_images_checkbox.isChecked()
     skip_empty_files = skip_empty_files_checkbox.isChecked()
+    only_manually_edited = only_manually_edited_checkbox.isChecked()
     save_path = path_edit.text()
 
     if osp.exists(save_path):
@@ -349,6 +356,24 @@ def export_yolo_annotation(self, mode):
     label_dir_path = osp.dirname(self.filename)
     if self.output_dir:
         label_dir_path = self.output_dir
+
+    # Filter for manually edited files if option is checked
+    if only_manually_edited:
+        filtered_image_list = []
+        for image_file in image_list:
+            image_file_name = osp.basename(image_file)
+            label_file_name = osp.splitext(image_file_name)[0] + ".json"
+            src_file = osp.join(label_dir_path, label_file_name)
+
+            if osp.exists(src_file):
+                try:
+                    with open(src_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if data.get("manually_edited", False):
+                            filtered_image_list.append(image_file)
+                except:
+                    pass
+        image_list = filtered_image_list
 
     progress_dialog = QProgressDialog(
         self.tr("Exporting..."), self.tr("Cancel"), 0, len(image_list), self
