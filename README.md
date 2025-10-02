@@ -297,7 +297,7 @@ https://github.com/user-attachments/assets/a43a4c71-5ec0-49dc-98d2-725835ce98aa
 
 https://github.com/user-attachments/assets/d163be78-69e9-42be-ac09-f7af20c94d77
 
-39. 导出增强 增加只导出手动修改的项目 同时区分 是AI推理的 还是人手动修改的 手动修改后 路径变色代表是 人修改的和AI推理区分开 
+39.导出增强 增加只导出手动修改的项目 同时区分 是AI推理的 还是人手动修改的 手动修改后 路径变色代表是 人修改的和AI推理区分开 
 
 使用颜色区分 模型推理 和 人手动修改
 
