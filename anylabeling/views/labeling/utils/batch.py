@@ -201,12 +201,16 @@ def save_auto_labeling_result(self, image_file, auto_labeling_result):
             if replace:
                 data["shapes"] = new_shapes
                 data["description"] = new_description
+                # Clear manually_edited flag when AI batch inference
+                data["manually_edited"] = False
             else:
                 data["shapes"].extend(new_shapes)
                 if "description" in data:
                     data["description"] += new_description
                 else:
                     data["description"] = new_description
+                # Clear manually_edited flag when AI batch inference
+                data["manually_edited"] = False
         else:
             if self._config["store_data"]:
                 with open(image_file, "rb") as f:
@@ -227,6 +231,7 @@ def save_auto_labeling_result(self, image_file, auto_labeling_result):
                 "imageHeight": image_height,
                 "imageWidth": image_width,
                 "description": new_description,
+                "manually_edited": False,
             }
 
         with io_open(label_file, "w") as f:
