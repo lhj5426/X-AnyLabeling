@@ -34,6 +34,7 @@ default_shape_color: [0, 255, 0]
 shape_color: auto  # null, 'auto', 'manual'
 shift_auto_shape_color: 0
 label_colors: null
+manually_edited_color: '#FFA500'  # Color for manually edited files in file list (orange by default)
 
 shape:
   # drawing
