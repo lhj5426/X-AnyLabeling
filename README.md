@@ -28,6 +28,7 @@ https://www.basiccat.org/zh/imagetrans/
 (原版 https://github.com/CVHub520/X-AnyLabeling 已支持使用PPV5ocr 懒得移植过来 魔改版 原版双持也不是不可以)
 
 因为使用AI编写代码 故 无法与主分支合并
+![1759753741939](https://github.com/user-attachments/assets/611b27eb-1796-4b04-8e94-d17c081b3f69)
 
 本魔改服务于仅服务于 自训练模型 使用
 
