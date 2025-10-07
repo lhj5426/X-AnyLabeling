@@ -732,7 +732,7 @@ class GroupIDModifyDialog(QtWidgets.QDialog):
         # Try to modify group IDs
         if self.modify_group_id(updated_gid_info, start_index, end_index):
             popup = Popup(
-                self.tr("Group IDs modified successfully!"),
+                "组ID修改成功！",
                 self.parent,
                 icon=new_icon_path("copy-green", "svg"),
             )
@@ -1040,7 +1040,7 @@ class LabelModifyDialog(QtWidgets.QDialog):
         if self.modify_label(start_index, end_index):
             self.parent.label_info = updated_label_info
             popup = Popup(
-                self.tr("Labels modified successfully!"),
+                "标签修改成功！",
                 self.parent,
                 icon=new_icon_path("copy-green", "svg"),
             )
