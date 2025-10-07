@@ -1320,7 +1320,7 @@ class UltralyticsDialog(QDialog):
             self.update_training_progress()
             self.update_training_images()
             self.append_training_log(
-                self.tr("Training completed successfully!")
+                "训练成功！"
             )
         elif event_type == "training_error":
             self.training_status = "error"
@@ -1707,15 +1707,13 @@ class UltralyticsDialog(QDialog):
             exported_path = data.get("exported_path", "")
             export_format = data.get("format", "onnx")
             self.append_training_log(
-                self.tr(
-                    f"Export completed successfully! File saved to: {exported_path}"
-                )
+                f"导出成功！文件保存至：{exported_path}"
             )
             QMessageBox.information(
                 self,
                 self.tr("Export Successful"),
                 self.tr(
-                    f"Model successfully exported to {export_format.upper()} format:\n{exported_path}"
+                    f"模型已成功导出为 {export_format.upper()} 格式：\n{exported_path}"
                 ),
             )
             self.export_button.setEnabled(True)
