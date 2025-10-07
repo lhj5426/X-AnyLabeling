@@ -196,6 +196,11 @@ def main():
             output_dir = output
 
     language = config.get("language", QtCore.QLocale.system().name())
+
+    # Add a mapping for Chinese locales to ensure consistency
+    if language.startswith('zh'):
+        language = 'zh_CN'
+
     translator = QtCore.QTranslator()
     loaded_language = translator.load(
         ":/languages/translations/" + language + ".qm"
