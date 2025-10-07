@@ -25,14 +25,16 @@ def shape_conversion(self, mode):
 
     response = QtWidgets.QMessageBox()
     response.setIcon(QtWidgets.QMessageBox.Warning)
-    response.setWindowTitle(self.tr("Warning"))
-    response.setText(self.tr("Current annotation will be changed"))
+    response.setWindowTitle("警告")
+    response.setText("当前标注将会被改变")
     response.setInformativeText(
-        self.tr("Are you sure you want to perform this conversion?")
+        "您确定要执行此转换吗？"
     )
     response.setStandardButtons(
         QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Ok
     )
+    response.button(QtWidgets.QMessageBox.Ok).setText('确定')
+    response.button(QtWidgets.QMessageBox.Cancel).setText('取消')
     response.setStyleSheet(get_msg_box_style())
 
     if response.exec_() != QtWidgets.QMessageBox.Ok:
@@ -53,60 +55,71 @@ def shape_conversion(self, mode):
             with open(label_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
+            if not isinstance(data, dict):
+                logger.warning(
+                    f"Data in {label_file} is not a dictionary, skipping."
+                )
+                continue
+
+            if "shapes" not in data:
+                logger.warning(f"'shapes' key not found in {label_file}, skipping.")
+                continue
+
             for j in range(len(data["shapes"])):
+                shape = data["shapes"][j]
+                if not isinstance(shape, dict):
+                    logger.warning(
+                        f"Shape at index {j} in {label_file} is not a dictionary, skipping."
+                    )
+                    continue
 
-                if mode == "hbb_to_obb" and (
-                    data["shapes"][j]["shape_type"] == "rectangle"
-                ):
-                    data["shapes"][j]["shape_type"] = "rotation"
-                    data["shapes"][j]["direction"] = 0
+                shape_type = shape.get("shape_type")
 
-                elif mode == "obb_to_hbb" and (
-                    data["shapes"][j]["shape_type"] == "rotation"
-                ):
-                    del data["shapes"][j]["direction"]
-                    data["shapes"][j]["shape_type"] = "rectangle"
-                    points = np.array(data["shapes"][j]["points"])
+                if mode == "hbb_to_obb" and shape_type == "rectangle":
+                    shape["shape_type"] = "rotation"
+                    shape["direction"] = 0
+
+                elif mode == "obb_to_hbb" and shape_type == "rotation":
+                    if "direction" in shape:
+                        del shape["direction"]
+                    shape["shape_type"] = "rectangle"
+                    points = np.array(shape.get("points", []))
                     if len(points) != 4:
                         continue
                     xmin = int(np.min(points[:, 0]))
                     ymin = int(np.min(points[:, 1]))
                     xmax = int(np.max(points[:, 0]))
                     ymax = int(np.max(points[:, 1]))
-                    data["shapes"][j]["points"] = [
+                    shape["points"] = [
                         [xmin, ymin],
                         [xmax, ymin],
                         [xmax, ymax],
                         [xmin, ymax],
                     ]
 
-                elif mode == "polygon_to_hbb" and (
-                    data["shapes"][j]["shape_type"] == "polygon"
-                ):
-                    data["shapes"][j]["shape_type"] = "rectangle"
-                    points = np.array(data["shapes"][j]["points"])
+                elif mode == "polygon_to_hbb" and shape_type == "polygon":
+                    shape["shape_type"] = "rectangle"
+                    points = np.array(shape.get("points", []))
                     if len(points) < 3:
                         continue
                     xmin = int(np.min(points[:, 0]))
                     ymin = int(np.min(points[:, 1]))
                     xmax = int(np.max(points[:, 0]))
                     ymax = int(np.max(points[:, 1]))
-                    data["shapes"][j]["points"] = [
+                    shape["points"] = [
                         [xmin, ymin],
                         [xmax, ymin],
                         [xmax, ymax],
                         [xmin, ymax],
                     ]
 
-                elif mode == "polygon_to_obb" and (
-                    data["shapes"][j]["shape_type"] == "polygon"
-                ):
-                    points = np.array(data["shapes"][j]["points"])
+                elif mode == "polygon_to_obb" and shape_type == "polygon":
+                    points = np.array(shape.get("points", []))
                     contours = points.reshape((-1, 1, 2)).astype(np.float32)
                     _, rotation_box = get_bounding_boxes(contours)
-                    data["shapes"][j]["shape_type"] = "rotation"
-                    data["shapes"][j]["points"] = rotation_box.tolist()
-                    data["shapes"][j]["direction"] = calculate_rotation_theta(
+                    shape["shape_type"] = "rotation"
+                    shape["points"] = rotation_box.tolist()
+                    shape["direction"] = calculate_rotation_theta(
                         rotation_box
                     )
 
@@ -119,7 +132,7 @@ def shape_conversion(self, mode):
 
         progress_dialog.close()
         popup = Popup(
-            self.tr("Conversion completed successfully!"),
+            "转换成功！",
             self,
             msec=1000,
             icon=new_icon_path("copy-green", "svg"),

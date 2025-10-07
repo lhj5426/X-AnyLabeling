@@ -217,8 +217,8 @@ def upload_vlm_r1_ovd_annotation(self):
                 break
 
         progress_dialog.close()
-        template = self.tr(
-            "Uploading annotations successfully!\n"
+        template = (
+            "上传标注成功！\n"
             "结果已保存到：\n"
             "%s"
         )
@@ -317,7 +317,7 @@ def upload_ppocr_annotation(self, mode):
             self.load_file(self.filename)
 
             popup = Popup(
-                self.tr(f"Uploading annotations successfully!"),
+                "上传标注成功！",
                 self,
                 icon=new_icon_path("copy-green", "svg"),
             )
@@ -397,7 +397,7 @@ def upload_odvg_annotation(self):
             self.load_file(self.filename)
 
             popup = Popup(
-                self.tr(f"Uploading annotations successfully!"),
+                "上传标注成功！",
                 self,
                 icon=new_icon_path("copy-green", "svg"),
             )
@@ -625,21 +625,12 @@ def upload_mmgd_annotation(self, LABEL_OPACITY):
             ):
                 continue
 
-            converter.mmgd_to_custom(
-                input_file=osp.join(label_dir_path, label_filename),
-                output_file=osp.join(output_dir_path, label_filename),
-                image_file=osp.join(image_dir_path, image_filename),
-                labels=labels,
-                thresholds=thresholds,
-            )
-
-            progress_dialog.setValue(i)
             if progress_dialog.wasCanceled():
                 break
 
         progress_dialog.close()
-        template = self.tr(
-            "Uploading annotations successfully!\n"
+        template = (
+            "上传标注成功！\n"
             "结果已保存到：\n"
             "%s"
         )
@@ -762,7 +753,7 @@ def upload_mot_annotation(self, LABEL_OPACITY):
             self.load_file(self.filename)
 
             popup = Popup(
-                self.tr(f"Uploading annotations successfully!"),
+                "上传标注成功！",
                 self,
                 icon=new_icon_path("copy-green", "svg"),
             )
@@ -940,8 +931,8 @@ def upload_mask_annotation(self, LABEL_OPACITY):
                 break
 
         progress_dialog.close()
-        template = self.tr(
-            "Uploading annotations successfully!\n"
+        template = (
+            "上传标注成功！\n"
             "结果已保存到：\n"
             "%s"
         )
@@ -1096,8 +1087,8 @@ def upload_dota_annotation(self):
                 break
 
         progress_dialog.close()
-        template = self.tr(
-            "Uploading annotations successfully!\n"
+        template = (
+            "上传标注成功！\n"
             "结果已保存到：\n"
             "%s"
         )
@@ -1182,7 +1173,7 @@ def upload_coco_annotation(self, mode):
             self.load_file(self.filename)
 
             popup = Popup(
-                self.tr(f"Uploading annotations successfully!"),
+                "上传标注成功！",
                 self,
                 icon=new_icon_path("copy-green", "svg"),
             )
@@ -1332,8 +1323,8 @@ def upload_voc_annotation(self, mode):
                 break
 
         progress_dialog.close()
-        template = self.tr(
-            "Uploading annotations successfully!\n"
+        template = (
+            "上传标注成功！\n"
             "结果已保存到：\n"
             "%s"
         )
@@ -1549,7 +1540,7 @@ def upload_yolo_annotation(self, mode, LABEL_OPACITY):
         progress_dialog.close()
         self.load_file(self.filename)
         popup = Popup(
-            self.tr("Upload completed successfully!"),
+            "上传完成！",
             self,
             icon=new_icon_path("copy-green", "svg"),
         )
@@ -1680,7 +1671,7 @@ def upload_shape_attrs_file(self, LABEL_OPACITY):
         self.canvas.mode_changed.disconnect(self.set_edit_mode)
 
         popup = Popup(
-            self.tr(f"Uploading shape attributes file successfully!"),
+            "上传形状属性文件成功！",
             self,
             icon=new_icon_path("copy-green", "svg"),
         )
@@ -1728,7 +1719,7 @@ def upload_label_flags_file(self, LABEL_OPACITY):
         self.label_dialog.upload_flags(self.label_flags)
 
         popup = Popup(
-            self.tr(f"Uploading flags file successfully!"),
+            "上传标志文件成功！",
             self,
             icon=new_icon_path("copy-green", "svg"),
         )
@@ -1768,7 +1759,7 @@ def upload_image_flags_file(self):
         self.load_file(self.filename)
 
         popup = Popup(
-            self.tr(f"Uploading flags file successfully!"),
+            "上传标志文件成功！",
             self,
             icon=new_icon_path("copy-green", "svg"),
         )

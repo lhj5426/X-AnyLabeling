@@ -166,7 +166,7 @@ def finish_processing(self, progress_dialog):
     progress_dialog.close()
 
     popup = Popup(
-        self.tr("Processing completed successfully!"),
+        "处理成功！",
         self,
         icon=new_icon_path("copy-green", "svg"),
     )
