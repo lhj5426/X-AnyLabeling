@@ -29,6 +29,9 @@ class ObjectManagerDialog(QtWidgets.QDialog):
             QtCore.Qt.WindowCloseButtonHint
         )
 
+        # Restore window position and size
+        self.restore_window_position()
+
         # Left side: Category controls
         self.category_list = LabelCategoryWidget()
         categories = sorted(list(set(item.shape().label for item in items)))
@@ -37,6 +40,8 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         
         self.btn_move_category_top = QtWidgets.QPushButton(self.tr("置顶分类"))
         self.btn_move_category_bottom = QtWidgets.QPushButton(self.tr("置底分类"))
+        self.btn_delete_by_category = QtWidgets.QPushButton(self.tr("按分类删除"))
+        self.btn_delete_by_category.setStyleSheet("color: red;")
         self.apply_all_checkbox = QtWidgets.QCheckBox(self.tr("应用到全部"))
 
         # Right side: Full object list with drag-drop
@@ -63,6 +68,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         h_button_layout_left.addWidget(self.btn_move_category_top)
         h_button_layout_left.addWidget(self.btn_move_category_bottom)
         v_layout_left.addLayout(h_button_layout_left)
+        v_layout_left.addWidget(self.btn_delete_by_category)
         v_layout_left.addWidget(self.apply_all_checkbox, 0, QtCore.Qt.AlignRight)
         v_layout_left.addStretch()
 
@@ -72,12 +78,15 @@ class ObjectManagerDialog(QtWidgets.QDialog):
 
         self.btn_move_up = QtWidgets.QPushButton(self.tr("上移"))
         self.btn_move_down = QtWidgets.QPushButton(self.tr("下移"))
+        self.btn_delete_selected = QtWidgets.QPushButton(self.tr("删除选中"))
+        self.btn_delete_selected.setStyleSheet("color: red;")
         self.btn_move_top = QtWidgets.QPushButton(self.tr("置顶"))
         self.btn_move_bottom = QtWidgets.QPushButton(self.tr("置底"))
 
         h_button_layout_right = QtWidgets.QHBoxLayout()
         h_button_layout_right.addWidget(self.btn_move_up)
         h_button_layout_right.addWidget(self.btn_move_down)
+        h_button_layout_right.addWidget(self.btn_delete_selected)
         h_button_layout_right.addStretch()
         h_button_layout_right.addWidget(self.btn_move_top)
         h_button_layout_right.addWidget(self.btn_move_bottom)
@@ -93,11 +102,14 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.list_widget.itemSelectionChanged.connect(self._on_internal_selection_changed)
         self.list_widget.customContextMenuRequested.connect(self._pop_list_menu)
         
+        self.category_list.category_selection_changed.connect(self._on_category_selection_changed)
         self.btn_move_category_top.clicked.connect(lambda: self.reorder_by_category(move_to_top=True))
         self.btn_move_category_bottom.clicked.connect(lambda: self.reorder_by_category(move_to_top=False))
+        self.btn_delete_by_category.clicked.connect(self.delete_by_category)
 
         self.btn_move_up.clicked.connect(lambda: self.move_items(-1))
         self.btn_move_down.clicked.connect(lambda: self.move_items(1))
+        self.btn_delete_selected.clicked.connect(self.delete_requested.emit)
         self.btn_move_top.clicked.connect(self.move_to_top)
         self.btn_move_bottom.clicked.connect(self.move_to_bottom)
 
@@ -315,6 +327,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_down.setEnabled(has_selection)
         self.btn_move_top.setEnabled(has_selection)
         self.btn_move_bottom.setEnabled(has_selection)
+        self.btn_delete_selected.setEnabled(has_selection)
 
         if has_selection:
             selected_rows = [self.list_widget.row(item) for item in self.list_widget.selectedItems()]
@@ -342,3 +355,86 @@ class ObjectManagerDialog(QtWidgets.QDialog):
                         break
         self.list_widget.blockSignals(False)
         self.update_button_states()
+
+    def restore_window_position(self):
+        """Restore window position and size from settings."""
+        settings = QtCore.QSettings()
+        geometry = settings.value("object_manager_dialog/geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        else:
+            # Default position if no settings are found (center of parent)
+            if self.parent():
+                parent_geometry = self.parent().geometry()
+                x = parent_geometry.x() + (parent_geometry.width() - self.width()) // 2
+                y = parent_geometry.y() + (parent_geometry.height() - self.height()) // 2
+                self.move(x, y)
+
+    def save_window_position(self):
+        """Save current window position and size to settings."""
+        settings = QtCore.QSettings()
+        settings.setValue("object_manager_dialog/geometry", self.saveGeometry())
+
+    def show(self):
+        """Override show to restore from minimized state."""
+        if self.isMinimized():
+            self.showNormal()
+        super(ObjectManagerDialog, self).show()
+
+    def hide(self):
+        """Override hide to handle shortcut toggle on minimized window."""
+        if self.isMinimized():
+            self.showNormal()  # Restore instead of hiding
+        else:
+            super(ObjectManagerDialog, self).hide() # Hide normally
+
+    def closeEvent(self, event):
+        """Handle the window close event."""
+        self.save_window_position()
+        super(ObjectManagerDialog, self).closeEvent(event)
+
+    def hideEvent(self, event):
+        """Handle the window hide event."""
+        self.save_window_position()
+        super(ObjectManagerDialog, self).hideEvent(event)
+
+    def _on_category_selection_changed(self, category_name, is_checked):
+        """Select/deselect all shapes of a given category on the canvas."""
+        if not (self.main_window and hasattr(self.main_window, 'canvas')):
+            return
+
+        # Get current selection from canvas, not from the list widget
+        # Use a set for efficient add/remove operations
+        current_selection = set(self.main_window.canvas.selected_shapes)
+
+        # Find all shapes on canvas that match the category
+        for shape in self.main_window.canvas.shapes:
+            if shape.label == category_name:
+                if is_checked:
+                    current_selection.add(shape)
+                elif shape in current_selection:
+                    current_selection.remove(shape)
+        
+        # Emit the signal with the updated list of selected shapes
+        self.selection_changed.emit(list(current_selection))
+
+    def delete_by_category(self):
+        """Deletes all shapes that belong to the checked categories without confirmation."""
+        checked_categories = self.category_list.get_checked_categories()
+        if not checked_categories:
+            return
+
+        if not (self.main_window and hasattr(self.main_window, 'canvas')):
+            return
+        
+        shapes_to_delete = []
+        for shape in self.main_window.canvas.shapes:
+            if shape.label in checked_categories:
+                shapes_to_delete.append(shape)
+        
+        if shapes_to_delete:
+            # 1. Select the shapes to be deleted.
+            self.selection_changed.emit(shapes_to_delete)
+            # 2. Request the deletion of the selection.
+            # Use a QTimer to ensure the selection signal is processed before the deletion signal.
+            QtCore.QTimer.singleShot(0, self.delete_requested.emit)
