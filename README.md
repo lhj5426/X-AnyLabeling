@@ -308,5 +308,11 @@ https://github.com/user-attachments/assets/62baee8a-4204-4a56-812e-8063898eb3bf
 
 https://github.com/user-attachments/assets/3cad97b1-c42e-493f-a6cf-803019fcde7e
 
+40.标签页管理器优化 增强删除功能 这样无论删除当前页面一整个类型的标签 还是只删除几个标签 手都不需要离开鼠标去按DELETE了 舒服了
+
+https://github.com/user-attachments/assets/be40e17e-d18d-472a-9fa4-6d6061272b63
+
+
+
 
 
