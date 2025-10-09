@@ -42,6 +42,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_category_bottom = QtWidgets.QPushButton(self.tr("置底分类"))
         self.btn_delete_by_category = QtWidgets.QPushButton(self.tr("按分类删除"))
         self.btn_delete_by_category.setStyleSheet("color: red;")
+        self.btn_edit_label = QtWidgets.QPushButton(self.tr("修改标签"))
         self.apply_all_checkbox = QtWidgets.QCheckBox(self.tr("应用到全部"))
 
         # Right side: Full object list with drag-drop
@@ -69,6 +70,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         h_button_layout_left.addWidget(self.btn_move_category_bottom)
         v_layout_left.addLayout(h_button_layout_left)
         v_layout_left.addWidget(self.btn_delete_by_category)
+        v_layout_left.addWidget(self.btn_edit_label)
         v_layout_left.addWidget(self.apply_all_checkbox, 0, QtCore.Qt.AlignRight)
         v_layout_left.addStretch()
 
@@ -112,6 +114,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_delete_selected.clicked.connect(self.delete_requested.emit)
         self.btn_move_top.clicked.connect(self.move_to_top)
         self.btn_move_bottom.clicked.connect(self.move_to_bottom)
+        self.btn_edit_label.clicked.connect(self.edit_requested.emit)
 
         self.update_button_states()
 
@@ -328,6 +331,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_top.setEnabled(has_selection)
         self.btn_move_bottom.setEnabled(has_selection)
         self.btn_delete_selected.setEnabled(has_selection)
+        self.btn_edit_label.setEnabled(has_selection)
 
         if has_selection:
             selected_rows = [self.list_widget.row(item) for item in self.list_widget.selectedItems()]
@@ -399,24 +403,24 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         super(ObjectManagerDialog, self).hideEvent(event)
 
     def _on_category_selection_changed(self, category_name, is_checked):
-        """Select/deselect all shapes of a given category on the canvas."""
-        if not (self.main_window and hasattr(self.main_window, 'canvas')):
-            return
+        """Select/deselect all shapes of a given category in the list widget and on the canvas."""
+        # Block signals to prevent excessive updates while changing selection
+        self.list_widget.blockSignals(True)
 
-        # Get current selection from canvas, not from the list widget
-        # Use a set for efficient add/remove operations
-        current_selection = set(self.main_window.canvas.selected_shapes)
-
-        # Find all shapes on canvas that match the category
-        for shape in self.main_window.canvas.shapes:
+        # Add or remove items from the current selection based on the checkbox action
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            shape = item.data(QtCore.Qt.UserRole)
             if shape.label == category_name:
-                if is_checked:
-                    current_selection.add(shape)
-                elif shape in current_selection:
-                    current_selection.remove(shape)
-        
-        # Emit the signal with the updated list of selected shapes
-        self.selection_changed.emit(list(current_selection))
+                item.setSelected(is_checked)  # Select or deselect the item
+
+        self.list_widget.blockSignals(False)
+
+        # Manually trigger the internal selection changed logic to ensure all states are updated
+        self._on_internal_selection_changed()
+
+        # Explicitly set focus to the list widget to ensure it captures keyboard events.
+        self.list_widget.setFocus()
 
     def delete_by_category(self):
         """Deletes all shapes that belong to the checked categories without confirmation."""
