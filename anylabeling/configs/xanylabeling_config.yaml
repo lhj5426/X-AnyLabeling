@@ -178,6 +178,7 @@ shortcuts:
   union_selected_shapes: Ctrl+Shift+M
   toggle_auto_use_last_label: Ctrl+Y
   toggle_visibility_shapes: Ctrl+H
+  toggle_crosshair: Ctrl+Shift+H
 
   show_order: Ctrl+Shift+O
   auto_label: Ctrl+A
