@@ -191,7 +191,7 @@ class LabelingWidget(LabelDialog):
         self.tag_sort_files = []
         self.tag_sort_total = 0
         self.tag_sort_last_payload = None
-        self._crosshair_was_toggled_for_rotation3 = False
+        self._crosshair_was_toggled_for_drawing = False
 
         # see configs/anylabeling_config.yaml for valid configuration
         if config is None:
@@ -3550,10 +3550,13 @@ class LabelingWidget(LabelDialog):
     def toggle_draw_mode(
         self, edit=True, create_mode="rectangle", disable_auto_labeling=True
     ):
-        # Restore crosshair if we are leaving rotation3 mode for which it was auto-enabled.
-        if self.canvas.create_mode == 'rotation3' and self._crosshair_was_toggled_for_rotation3:
-            is_leaving_rotation3 = edit or create_mode != 'rotation3'
-            if is_leaving_rotation3:
+        # Define modes that should have the auto-crosshair feature.
+        auto_crosshair_modes = {"rotation", "rectangle", "rotation3"}
+
+        # Restore crosshair if we are leaving a mode for which it was auto-enabled.
+        if self.canvas.create_mode in auto_crosshair_modes and self._crosshair_was_toggled_for_drawing:
+            is_leaving_special_mode = edit or create_mode != self.canvas.create_mode
+            if is_leaving_special_mode:
                 self.restore_crosshair_if_needed()
 
         # Disable auto labeling if needed
@@ -3590,6 +3593,12 @@ class LabelingWidget(LabelDialog):
             self.actions.digit_shortcut_9.setEnabled(True)
         else:
             self.actions.union_selection.setEnabled(False)
+            
+            # Automatically toggle crosshair for specific modes
+            if create_mode in auto_crosshair_modes and not self._config["canvas"]["crosshair"]["show"]:
+                self.toggle_crosshair()
+                self._crosshair_was_toggled_for_drawing = True
+
             if create_mode == "polygon":
                 self.actions.create_mode.setEnabled(False)
                 self.actions.create_rectangle_mode.setEnabled(True)
@@ -3654,9 +3663,6 @@ class LabelingWidget(LabelDialog):
                 self.actions.create_point_mode.setEnabled(True)
                 self.actions.create_line_strip_mode.setEnabled(True)
             elif create_mode == "rotation3":
-                if not self._config["canvas"]["crosshair"]["show"]:
-                    self.toggle_crosshair()
-                    self._crosshair_was_toggled_for_rotation3 = True
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
@@ -5318,9 +5324,9 @@ class LabelingWidget(LabelDialog):
 
     def restore_crosshair_if_needed(self):
         """Restore crosshair to its original state if it was auto-toggled."""
-        if self._crosshair_was_toggled_for_rotation3:
+        if self._crosshair_was_toggled_for_drawing:
             self.toggle_crosshair()  # This will turn it from ON back to OFF.
-            self._crosshair_was_toggled_for_rotation3 = False
+            self._crosshair_was_toggled_for_drawing = False
 
     def on_drawing_cancelled(self):
         """Slot for when drawing is cancelled on the canvas."""
