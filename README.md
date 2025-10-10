@@ -312,6 +312,9 @@ https://github.com/user-attachments/assets/3cad97b1-c42e-493f-a6cf-803019fcde7e
 
 https://github.com/user-attachments/assets/be40e17e-d18d-472a-9fa4-6d6061272b63
 
+41.标注框边距扩展工具 双色标签工具 标签排序工具 增加范围修改功能 3个工具组合起来快速修改指定范围的标签 对上千张图片中的特地页数范围修改有奇效
+
+<img width="1243" height="830" alt="image" src="https://github.com/user-attachments/assets/a9b17b20-feb9-4798-9912-144c9e8da586" />
 
 
 
