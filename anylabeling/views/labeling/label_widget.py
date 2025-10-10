@@ -3138,10 +3138,13 @@ class LabelingWidget(LabelDialog):
                 files = [label_path]
             elif label_path:
                 missing.append(label_path)
-        elif scope == "opened":
+        elif scope == "all":
             files, missing = self._tag_sort_collect_from_images(self.image_list)
-        elif scope == "opened":
-            files, missing = self._tag_sort_collect_from_images(self.image_list)
+        elif scope == "range":
+            start_index = payload.get("start_index", 0)
+            end_index = payload.get("end_index", -1)
+            image_list_slice = self.image_list[start_index : end_index + 1]
+            files, missing = self._tag_sort_collect_from_images(image_list_slice)
         else:
             files = []
 
@@ -3341,6 +3344,7 @@ class LabelingWidget(LabelDialog):
             self.expand_margins_dialog.apply_current.connect(self.on_expand_margins_current)
             self.expand_margins_dialog.apply_selected.connect(self.on_expand_margins_selected)
             self.expand_margins_dialog.apply_all.connect(self.on_expand_margins_all)
+            self.expand_margins_dialog.apply_all_in_range.connect(self.on_expand_margins_in_range)
             self.expand_margins_dialog.setAttribute(
                 QtCore.Qt.WA_DeleteOnClose, False
             )
@@ -6860,6 +6864,150 @@ class LabelingWidget(LabelDialog):
                 f"处理完成！总共修改了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框。"
             )
         )
+
+    def on_expand_margins_in_range(self, margins, start_index, end_index):
+        """Handle applying margins to all shapes in a specified range of images."""
+        if not self.image_list:
+            self.status(self.tr("没有加载图像列表。"))
+            return
+
+        # Validate range
+        if not (0 <= start_index < len(self.image_list) and 0 <= end_index < len(self.image_list) and start_index <= end_index):
+            self.error_message(self.tr("范围无效"), self.tr("提供的文件范围无效。"))
+            return
+            
+        files_to_process = self.image_list[start_index : end_index + 1]
+        num_files = len(files_to_process)
+
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            self.tr("确认操作"),
+            self.tr(
+                f"你确定要将这些边距更改应用到从 {start_index + 1} 到 {end_index + 1} 的 {num_files} 个文件的标注吗？\n"
+                "这个操作会直接修改文件且无法撤销。"
+            ),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        processed_files = 0
+        modified_shapes_total = 0
+
+        for image_path in files_to_process:
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+            
+            if not osp.exists(label_file_path):
+                continue
+
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                shapes_data = data.get("shapes", [])
+                modified_in_file = False
+                modified_shapes_count = 0
+
+                for shape_dict in shapes_data:
+                    shape_type = shape_dict.get("shape_type")
+                    label = shape_dict.get("label")
+
+                    if label not in margins:
+                        continue
+                    
+                    top, bottom, left, right = margins[label]
+                    if top == 0 and bottom == 0 and left == 0 and right == 0:
+                        continue
+
+                    points = shape_dict.get("points", [])
+                    if not points: continue
+
+                    if shape_type == "rectangle":
+                        xs = [p[0] for p in points]
+                        ys = [p[1] for p in points]
+                        x_min, y_min, x_max, y_max = min(xs), min(ys), max(xs), max(ys)
+
+                        nx_min = x_min - left
+                        ny_min = y_min - top
+                        nx_max = x_max + right
+                        ny_max = y_max + bottom
+
+                        if nx_min < nx_max and ny_min < ny_max:
+                            shape_dict["points"] = [
+                                [nx_min, ny_min], [nx_max, ny_min],
+                                [nx_max, ny_max], [nx_min, ny_max]
+                            ]
+                            modified_in_file = True
+                            modified_shapes_count += 1
+                    
+                    elif shape_type == "rotation":
+                        np_points = np.array(points)
+                        center = np.mean(np_points, axis=0)
+                        width = np.linalg.norm(np_points[0] - np_points[1])
+                        height = np.linalg.norm(np_points[0] - np_points[3])
+                        
+                        vec = np_points[1] - np_points[0]
+                        angle = np.arctan2(vec[1], vec[0])
+
+                        new_width = width + left + right
+                        new_height = height + top + bottom
+
+                        if new_width <= 0 or new_height <= 0:
+                            continue
+
+                        center_offset_x = (right - left) / 2.0
+                        center_offset_y = (bottom - top) / 2.0
+                        
+                        dx = center_offset_x * np.cos(angle) - center_offset_y * np.sin(angle)
+                        dy = center_offset_x * np.sin(angle) + center_offset_y * np.cos(angle)
+                        
+                        new_center = center + np.array([dx, dy])
+
+                        hw = new_width / 2.0
+                        hh = new_height / 2.0
+                        
+                        cos_a = np.cos(angle)
+                        sin_a = np.sin(angle)
+
+                        new_points_local = np.array([
+                            [-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]
+                        ])
+                        
+                        rotation_matrix = np.array([
+                            [cos_a, -sin_a],
+                            [sin_a, cos_a]
+                        ])
+                        
+                        rotated_points = np.dot(new_points_local, rotation_matrix.T)
+                        final_points = rotated_points + new_center
+
+                        shape_dict["points"] = final_points.tolist()
+                        modified_in_file = True
+                        modified_shapes_count += 1
+
+                if modified_in_file:
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    processed_files += 1
+                    modified_shapes_total += modified_shapes_count
+
+            except Exception as e:
+                logger.error(f"处理文件失败 {label_file_path}: {e}")
+                continue
+        
+        # Reload current file to reflect changes if it was modified
+        self.load_file(self.filename)
+
+        self.status(
+            self.tr(
+                f"处理完成！总共修改了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框。"
+            )
+        )
+
 
     def _update_expand_margins_colors(self):
         """Update colors in expand margins dialog if it's open and visible."""
