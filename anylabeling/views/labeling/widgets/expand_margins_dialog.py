@@ -10,6 +10,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
     apply_current = QtCore.pyqtSignal(dict)
     apply_selected = QtCore.pyqtSignal(dict)
     apply_all = QtCore.pyqtSignal(dict)
+    apply_all_in_range = QtCore.pyqtSignal(dict, int, int)
 
     def __init__(self, labels, parent=None):
         super(ExpandMarginsDialog, self).__init__(parent)
@@ -67,6 +68,38 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.populate_table(labels)
         layout.addWidget(self.table_widget)
 
+        # Range selection group
+        range_group = QtWidgets.QGroupBox(self.tr("范围选择"))
+        range_layout = QtWidgets.QHBoxLayout(range_group)
+        range_layout.setContentsMargins(10, 10, 10, 10)
+        range_layout.setSpacing(10)
+
+        self.start_spinbox = QtWidgets.QSpinBox()
+        self.start_spinbox.setPrefix(self.tr("从: "))
+        self.end_spinbox = QtWidgets.QSpinBox()
+        self.end_spinbox.setPrefix(self.tr("到: "))
+
+        # Get file count from parent to set range
+        total_files = 0
+        if self.parent() and hasattr(self.parent(), 'file_list_widget'):
+            total_files = self.parent().file_list_widget.count()
+
+        if total_files > 0:
+            self.start_spinbox.setRange(1, total_files)
+            self.end_spinbox.setRange(1, total_files)
+            self.start_spinbox.setValue(1)
+            self.end_spinbox.setValue(total_files)
+
+        self.btn_apply_range = QtWidgets.QPushButton(self.tr("扩缩指定范围"))
+        self.btn_apply_range.setFixedSize(QtCore.QSize(110, 30))
+
+        range_layout.addWidget(self.start_spinbox)
+        range_layout.addWidget(self.end_spinbox)
+        range_layout.addWidget(self.btn_apply_range)
+        range_layout.addStretch()
+        
+        layout.addWidget(range_group)
+
         # Action Buttons
         button_layout = QtWidgets.QHBoxLayout()
 
@@ -80,7 +113,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         button_size = QtCore.QSize(100, 30)
         self.btn_apply_current.setFixedSize(button_size)
         self.btn_apply_selected.setFixedSize(button_size)
-        self.btn_apply_all.setFixedSize(button_size)
+        self.btn_apply_all.setFixedSize(QtCore.QSize(110, 30))
         self.btn_clear_all.setFixedSize(button_size)
 
         # Style the clear button differently
@@ -89,6 +122,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         button_layout.addWidget(self.btn_apply_current)
         button_layout.addWidget(self.btn_apply_selected)
         button_layout.addWidget(self.btn_apply_all)
+        button_layout.addStretch()
         button_layout.addWidget(self.btn_clear_all)
 
         layout.addLayout(button_layout)
@@ -97,6 +131,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.btn_apply_current.clicked.connect(self.on_apply_current)
         self.btn_apply_selected.clicked.connect(self.on_apply_selected)
         self.btn_apply_all.clicked.connect(self.on_apply_all)
+        self.btn_apply_range.clicked.connect(self.on_apply_range)
         self.btn_clear_all.clicked.connect(self.on_clear_all)
 
         # Add shortcut for closing the dialog
@@ -179,6 +214,21 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
     def on_apply_all(self):
         margins = self.get_margin_values()
         self.apply_all.emit(margins)
+
+    def on_apply_range(self):
+        """Handle applying margins to a specified range of images."""
+        margins = self.get_margin_values()
+        start_index = self.start_spinbox.value() - 1
+        end_index = self.end_spinbox.value() - 1
+
+        # Basic validation to ensure start is not after end
+        if start_index > end_index:
+            QtWidgets.QMessageBox.warning(
+                self, self.tr("范围无效"), self.tr("起始位置不能大于结束位置。")
+            )
+            return
+            
+        self.apply_all_in_range.emit(margins, start_index, end_index)
 
     def on_clear_all(self):
         """Clear all margin values to zero."""

@@ -1359,6 +1359,30 @@ class TagSortDialog(QtWidgets.QDialog):
         sort_form.addRow("", self.hide_numbers_checkbox)
         sort_form.addRow(self.tr("空间排序方式"), self.spatial_mode_combo)
 
+        range_group = QtWidgets.QGroupBox(self.tr("范围选择"))
+        range_layout = QtWidgets.QHBoxLayout(range_group)
+        self.start_spinbox = QtWidgets.QSpinBox()
+        self.start_spinbox.setPrefix("从: ")
+        self.end_spinbox = QtWidgets.QSpinBox()
+        self.end_spinbox.setPrefix("到: ")
+
+        total_files = 0
+        if self.parent() and hasattr(self.parent(), 'file_list_widget'):
+            total_files = self.parent().file_list_widget.count()
+
+        if total_files > 0:
+            self.start_spinbox.setRange(1, total_files)
+            self.end_spinbox.setRange(1, total_files)
+            self.start_spinbox.setValue(1)
+            self.end_spinbox.setValue(total_files)
+
+        range_layout.addWidget(self.start_spinbox)
+        range_layout.addWidget(self.end_spinbox)
+        range_layout.addStretch()
+        range_group.setLayout(range_layout)
+
+        sort_group.layout().addRow(range_group) # Add range group to the form layout
+
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -1375,11 +1399,13 @@ class TagSortDialog(QtWidgets.QDialog):
         status_layout.addWidget(self.log_output)
 
         self.run_current_button = QtWidgets.QPushButton(self.tr("对当前页面排序"))
+        self.run_range_button = QtWidgets.QPushButton(self.tr("对指定范围排序"))
         self.run_all_button = QtWidgets.QPushButton(self.tr("对全部页面排序"))
         self.close_button = QtWidgets.QPushButton(self.tr("关闭"))
 
         action_row = QtWidgets.QHBoxLayout()
         action_row.addWidget(self.run_current_button)
+        action_row.addWidget(self.run_range_button)
         action_row.addWidget(self.run_all_button)
         action_row.addStretch(1)
         action_row.addWidget(self.close_button)
@@ -1397,7 +1423,8 @@ class TagSortDialog(QtWidgets.QDialog):
         main_layout.addWidget(self.guide_widget, 1)
 
         self.run_current_button.clicked.connect(lambda: self._emit_request("current"))
-        self.run_all_button.clicked.connect(lambda: self._emit_request("opened"))
+        self.run_range_button.clicked.connect(lambda: self._emit_request("range"))
+        self.run_all_button.clicked.connect(lambda: self._emit_request("all"))
         self.close_button.clicked.connect(self.reject)
 
         # 初始化guide_widget的方法调用
@@ -1474,6 +1501,16 @@ class TagSortDialog(QtWidgets.QDialog):
 
         self.log_output.clear()
         payload = {"options": options, "scope": scope}
+
+        if scope == "range":
+            start_index = self.start_spinbox.value() - 1
+            end_index = self.end_spinbox.value() - 1
+            if start_index > end_index:
+                self.append_log("错误：起始位置不能大于结束位置。")
+                return
+            payload["start_index"] = start_index
+            payload["end_index"] = end_index
+
         self.run_requested.emit(payload)
 
     def _collect_exclude_labels(self) -> List[str]:
@@ -1529,6 +1566,7 @@ class TagSortDialog(QtWidgets.QDialog):
     def set_busy(self, busy: bool) -> None:
         for widget in (
             self.run_current_button,
+            self.run_range_button,
             self.run_all_button,
             self.close_button,
             self.exclude_label_edit,
