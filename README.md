@@ -316,6 +316,13 @@ https://github.com/user-attachments/assets/be40e17e-d18d-472a-9fa4-6d6061272b63
 
 <img width="1243" height="830" alt="image" src="https://github.com/user-attachments/assets/a9b17b20-feb9-4798-9912-144c9e8da586" />
 
+42.十字线优化增强 增加十字线显示隐藏快捷键  toggle_crosshair: Ctrl+Shift+H 设置 和菜单 可以一键开关十字线了
+
+新旋转矩形标注模式十字线优化 如果在未开启十字线的情况下 激活标注模式 会自动启用十字线 并在画框结束之后 自动关闭十字线 如果开启了则继续显示十字线 
+
+https://github.com/user-attachments/assets/3ed908db-6510-402c-81ba-af5b31005a59
+
+
 
 
 
