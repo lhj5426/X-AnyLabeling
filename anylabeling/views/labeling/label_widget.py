@@ -191,6 +191,7 @@ class LabelingWidget(LabelDialog):
         self.tag_sort_files = []
         self.tag_sort_total = 0
         self.tag_sort_last_payload = None
+        self._crosshair_was_toggled_for_rotation3 = False
 
         # see configs/anylabeling_config.yaml for valid configuration
         if config is None:
@@ -481,6 +482,7 @@ class LabelingWidget(LabelDialog):
         self.canvas.shape_rotated.connect(self.set_dirty)
         self.canvas.selection_changed.connect(self.shape_selection_changed)
         self.canvas.drawing_polygon.connect(self.toggle_drawing_sensitive)
+        self.canvas.drawing_cancelled.connect(self.on_drawing_cancelled)
         # [Feature] support for automatically switching to editing mode
         # when the cursor moves over an object
         self.canvas.h_shape_is_hovered = self._config.get(
@@ -1163,6 +1165,15 @@ class LabelingWidget(LabelDialog):
             tip=self.tr("Adjust cross line for mouse position"),
             icon="cartesian",
         )
+        toggle_cross_line = action(
+            self.tr("显示十字线"),
+            self.toggle_crosshair,
+            shortcuts.get("toggle_crosshair", "Ctrl+Shift+H"),
+            tip=self.tr("显示/隐藏十字线"),
+            icon="eye",
+            checkable=True,
+            checked=self._config["canvas"]["crosshair"]["show"],
+        )
         show_groups = action(
             self.tr("&Show Groups"),
             lambda x: self.set_canvas_params("show_groups", x),
@@ -1751,6 +1762,7 @@ class LabelingWidget(LabelDialog):
             fit_width=fit_width,
             brightness_contrast=brightness_contrast,
             set_cross_line=set_cross_line,
+            toggle_cross_line=toggle_cross_line,
             show_groups=show_groups,
             show_texts=show_texts,
             show_labels=show_labels,
@@ -2018,6 +2030,7 @@ class LabelingWidget(LabelDialog):
                 None,
                 brightness_contrast,
                 set_cross_line,
+                toggle_cross_line,
                 show_texts,
                 show_labels,
                 show_scores,
@@ -3537,6 +3550,12 @@ class LabelingWidget(LabelDialog):
     def toggle_draw_mode(
         self, edit=True, create_mode="rectangle", disable_auto_labeling=True
     ):
+        # Restore crosshair if we are leaving rotation3 mode for which it was auto-enabled.
+        if self.canvas.create_mode == 'rotation3' and self._crosshair_was_toggled_for_rotation3:
+            is_leaving_rotation3 = edit or create_mode != 'rotation3'
+            if is_leaving_rotation3:
+                self.restore_crosshair_if_needed()
+
         # Disable auto labeling if needed
         if (
             disable_auto_labeling
@@ -3635,6 +3654,9 @@ class LabelingWidget(LabelDialog):
                 self.actions.create_point_mode.setEnabled(True)
                 self.actions.create_line_strip_mode.setEnabled(True)
             elif create_mode == "rotation3":
+                if not self._config["canvas"]["crosshair"]["show"]:
+                    self.toggle_crosshair()
+                    self._crosshair_was_toggled_for_rotation3 = True
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
@@ -4883,6 +4905,8 @@ class LabelingWidget(LabelDialog):
             self.canvas.undo_last_line()
             self.canvas.shapes_backups.pop()
 
+        self.restore_crosshair_if_needed()
+
     def show_shape(self, shape_height, shape_width, pos):
         """Display annotation width and height while hovering inside.
 
@@ -5283,6 +5307,24 @@ class LabelingWidget(LabelDialog):
             self.actions.fit_window.setChecked(False)
         self.zoom_mode = self.FIT_WIDTH if value else self.MANUAL_ZOOM
         self.adjust_scale()
+
+    def toggle_crosshair(self):
+        """Toggle crosshair visibility."""
+        settings = self._config["canvas"]["crosshair"]
+        new_show_state = not settings.get("show", True)
+        settings["show"] = new_show_state
+        self.canvas.set_cross_line(**settings)
+        self.actions.toggle_cross_line.setChecked(new_show_state)
+
+    def restore_crosshair_if_needed(self):
+        """Restore crosshair to its original state if it was auto-toggled."""
+        if self._crosshair_was_toggled_for_rotation3:
+            self.toggle_crosshair()  # This will turn it from ON back to OFF.
+            self._crosshair_was_toggled_for_rotation3 = False
+
+    def on_drawing_cancelled(self):
+        """Slot for when drawing is cancelled on the canvas."""
+        self.restore_crosshair_if_needed()
 
     def set_cross_line(self):
         crosshair_dialog = CrosshairSettingsDialog(**self.crosshair_settings)
