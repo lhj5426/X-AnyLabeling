@@ -89,6 +89,7 @@ class Canvas(
     auto_decode_requested = QtCore.pyqtSignal(list)
     auto_decode_finish_requested = QtCore.pyqtSignal()
     shape_hover_changed = QtCore.pyqtSignal()  # 新增信号：形状hover状态变化
+    drawing_cancelled = QtCore.pyqtSignal()
 
     CREATE, EDIT = 0, 1
 
@@ -3622,6 +3623,14 @@ class Canvas(
         shape.direction = angle_radians
         self.update()
 
+    def cancel_drawing(self):
+        """Cancel the current drawing operation."""
+        if self.current:
+            self.current = None
+            self.drawing_polygon.emit(False)
+            self.drawing_cancelled.emit()
+            self.update()
+
     # QT Overload
     def keyPressEvent(self, ev):
         """Key press event"""
@@ -3629,9 +3638,7 @@ class Canvas(
         key = ev.key()
         if self.drawing():
             if key == QtCore.Qt.Key_Escape and self.current:
-                self.current = None
-                self.drawing_polygon.emit(False)
-                self.update()
+                self.cancel_drawing()
             elif key == QtCore.Qt.Key_Backspace and self.current:
                 # Backspace: undo last point (go back one step)
                 if self.create_mode == "rotation3":
