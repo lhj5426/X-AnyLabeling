@@ -322,7 +322,7 @@ https://github.com/user-attachments/assets/be40e17e-d18d-472a-9fa4-6d6061272b63
 
 https://github.com/user-attachments/assets/3ed908db-6510-402c-81ba-af5b31005a59
 
-43.标注框边距扩展工具 增强 增加调整页码功能 标签区域 增加 鼠标右键点击扩展当前页面上指定标签功能 和鼠标中键扩展当前页面选中的指定标签功能
+43.标注框边距扩展工具 增强 增加跳转页码功能 【配合38使用】 标签区域 增加 鼠标右键点击扩展当前页面上指定标签功能 和鼠标中键扩展当前页面选中的指定标签功能
 
 https://github.com/user-attachments/assets/612ca96f-6a60-40eb-9e18-85065569c38c
 
