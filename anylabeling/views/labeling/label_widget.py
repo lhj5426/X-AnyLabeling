@@ -3337,13 +3337,8 @@ class LabelingWidget(LabelDialog):
 
     def open_expand_margins_dialog(self):
         """Toggle the expand margins dialog."""
-        # Extract labels from the unique_label_list widget
-        labels = []
-        for i in range(self.unique_label_list.count()):
-            item = self.unique_label_list.item(i)
-            # The actual label name is stored in UserRole
-            label_text = item.data(QtCore.Qt.UserRole)
-            labels.append(label_text)
+        # Use all possible labels from config
+        labels = self._config.get("labels", [])
 
         if not labels:
             self.error_message(
@@ -4144,8 +4139,15 @@ class LabelingWidget(LabelDialog):
         if not items:
             return
         item = items[0]
+        
         if not self.may_continue():
             return
+        
+        # Update expand margins dialog if it is visible
+        if self.expand_margins_dialog and self.expand_margins_dialog.isVisible():
+            current_index = self.file_list_widget.currentRow()
+            if current_index >= 0:
+                self.expand_margins_dialog.set_current_page(current_index + 1)
 
         # Update expand margins dialog if it is visible
         if self.expand_margins_dialog and self.expand_margins_dialog.isVisible():
@@ -6316,6 +6318,25 @@ class LabelingWidget(LabelDialog):
         self.actions.open_prev_image.setEnabled(True)
         self.actions.open_next_unchecked_image.setEnabled(True)
         self.actions.open_prev_unchecked_image.setEnabled(True)
+
+        # After repopulating the file list, refresh the expand margins dialog if it's open.
+        if self.expand_margins_dialog and self.expand_margins_dialog.isVisible():
+            all_labels = self._config.get("labels", [])
+            total_files = self.file_list_widget.count()
+            # At this point, no item is selected yet, so the current page is temporarily set to 1.
+            # The subsequent call to load_file -> file_selection_changed will update it precisely.
+            self.expand_margins_dialog.refresh_state(all_labels, total_files, 1)
+
+        # 刷新 "标签排序工具"
+        if self.tag_sort_dialog and self.tag_sort_dialog.isVisible():
+            total_files = self.file_list_widget.count()
+            self.tag_sort_dialog.refresh_state(total_files, 1)
+
+        # 刷新 "双色标签工具"
+        if self.label_tool_dialog and self.label_tool_dialog.isVisible():
+            total_files = self.file_list_widget.count()
+            new_folder_path = self.last_open_dir 
+            self.label_tool_dialog.refresh_state(total_files, 1, new_folder_path)
 
         if load:
             self.filename = None
