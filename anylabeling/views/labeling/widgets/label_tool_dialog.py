@@ -175,6 +175,18 @@ class LabelToolDialog(QDialog):
         self.layout.addWidget(self.log_label)
         self.layout.addWidget(self.log_output)
 
+    def refresh_state(self, total_files: int, current_page: int, folder_path: str) -> None:
+        """刷新对话框的状态，包括文件范围和文件夹路径。"""
+        self.folder_path = folder_path
+        self.folder_label.setText(f"处理目录: {self.folder_path}\n")
+
+        if total_files > 0:
+            self.start_spinbox.setRange(1, total_files)
+            self.end_spinbox.setRange(1, total_files)
+            self.start_spinbox.setValue(1)
+            self.end_spinbox.setValue(total_files)
+
+
     def run_all_processing(self):
         if not self.parent() or not hasattr(self.parent(), 'image_list') or not self.parent().image_list:
             self.log_output.setText("错误：文件列表为空。")

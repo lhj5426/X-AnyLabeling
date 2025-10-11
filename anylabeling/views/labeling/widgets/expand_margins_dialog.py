@@ -387,6 +387,22 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         index = self.jump_spinbox.value() - 1
         self.jump_to_image.emit(index)
 
+    def refresh_state(self, labels, total_files, current_page):
+        """Refresh the entire state of the dialog."""
+        # Update ranges for all spinboxes
+        if total_files > 0:
+            self.start_spinbox.setRange(1, total_files)
+            self.end_spinbox.setRange(1, total_files)
+            self.jump_spinbox.setRange(1, total_files)
+            
+            # Also reset the values to something sensible
+            self.start_spinbox.setValue(1)
+            self.end_spinbox.setValue(total_files)
+            self.set_current_page(current_page) # Use existing method to set jump value
+
+        # Update labels
+        self.update_labels(labels)
+
     def set_current_page(self, page_number):
         """Sets the value of the jump spinbox."""
         if self.jump_spinbox.minimum() <= page_number <= self.jump_spinbox.maximum():

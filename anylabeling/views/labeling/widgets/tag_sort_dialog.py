@@ -1429,6 +1429,14 @@ class TagSortDialog(QtWidgets.QDialog):
 
         # 初始化guide_widget的方法调用
  
+    def refresh_state(self, total_files: int, current_page: int) -> None:
+        """刷新对话框的状态，特别是文件范围。"""
+        if total_files > 0:
+            self.start_spinbox.setRange(1, total_files)
+            self.end_spinbox.setRange(1, total_files)
+            self.start_spinbox.setValue(1)
+            self.end_spinbox.setValue(total_files)
+
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         """处理键盘快捷键"""
