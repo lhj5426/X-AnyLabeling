@@ -11,6 +11,9 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
     apply_selected = QtCore.pyqtSignal(dict)
     apply_all = QtCore.pyqtSignal(dict)
     apply_all_in_range = QtCore.pyqtSignal(dict, int, int)
+    apply_single_label = QtCore.pyqtSignal(dict)
+    apply_single_label_selected = QtCore.pyqtSignal(dict)
+    jump_to_image = QtCore.pyqtSignal(int)
 
     def __init__(self, labels, parent=None):
         super(ExpandMarginsDialog, self).__init__(parent)
@@ -55,8 +58,8 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             QtWidgets.QAbstractItemView.NoSelection
         )
 
-        # Connect cell click signal for single-row clearing
-        self.table_widget.cellClicked.connect(self.on_cell_clicked)
+        # Install event filter to handle left and right clicks on the table
+        self.table_widget.viewport().installEventFilter(self)
 
         # Add hover effect for label column
         self.table_widget.setStyleSheet("""
@@ -97,6 +100,17 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         range_layout.addWidget(self.end_spinbox)
         range_layout.addWidget(self.btn_apply_range)
         range_layout.addStretch()
+
+        # Add jump to page functionality
+        self.jump_spinbox = QtWidgets.QSpinBox()
+        self.jump_spinbox.setPrefix(self.tr("跳转到: "))
+        if total_files > 0:
+            self.jump_spinbox.setRange(1, total_files)
+        self.btn_jump = QtWidgets.QPushButton(self.tr("跳转"))
+        self.btn_jump.setFixedSize(QtCore.QSize(80, 30))
+
+        range_layout.addWidget(self.jump_spinbox)
+        range_layout.addWidget(self.btn_jump)
         
         layout.addWidget(range_group)
 
@@ -132,6 +146,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.btn_apply_selected.clicked.connect(self.on_apply_selected)
         self.btn_apply_all.clicked.connect(self.on_apply_all)
         self.btn_apply_range.clicked.connect(self.on_apply_range)
+        self.btn_jump.clicked.connect(self.on_jump_to_image)
         self.btn_clear_all.clicked.connect(self.on_clear_all)
 
         # Add shortcut for closing the dialog
@@ -146,7 +161,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             label_item.setFlags(label_item.flags() & ~QtCore.Qt.ItemIsEditable)
 
             # Add tooltip to indicate clickable functionality
-            label_item.setToolTip(self.tr("点击清零此行的所有边距值"))
+            label_item.setToolTip(self.tr("左键清零, 右键扩缩本页单个标签, 中键扩缩选中单个标签"))
 
             # Get label color using the new method
             self._update_label_color(label_item, label)
@@ -324,14 +339,58 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         label_item.setBackground(QtGui.QBrush())
         label_item.setForeground(QtGui.QBrush())
 
-    def on_cell_clicked(self, row, column):
-        """Handle cell click - if label column (0) is clicked, clear that row."""
-        if column == 0:  # Label column clicked
-            # Clear all margin values for this row
-            for j in range(1, 5):  # Columns for Top, Bottom, Left, Right
-                spinbox = self.table_widget.cellWidget(row, j)
-                if spinbox:
-                    spinbox.setValue(0.0)
+    def eventFilter(self, source, event):
+        """Filter events to handle left and right clicks on the table."""
+        if source is self.table_widget.viewport() and event.type() == QtCore.QEvent.MouseButtonPress:
+            index = self.table_widget.indexAt(event.pos())
+            if index.isValid() and index.column() == 0:
+                if event.button() == QtCore.Qt.LeftButton:
+                    self.clear_row(index.row())
+                    return True  # Event handled
+                elif event.button() == QtCore.Qt.RightButton:
+                    self.on_apply_single_label(index.row())
+                    return True  # Event handled
+                elif event.button() == QtCore.Qt.MidButton:
+                    self.on_apply_single_label_selected(index.row())
+                    return True  # Event handled
+        return super(ExpandMarginsDialog, self).eventFilter(source, event)
+
+    def clear_row(self, row):
+        """Clear all margin values for a specific row."""
+        for j in range(1, 5):  # Columns for Top, Bottom, Left, Right
+            spinbox = self.table_widget.cellWidget(row, j)
+            if spinbox:
+                spinbox.setValue(0.0)
+
+    def on_apply_single_label_selected(self, row):
+        """Emit a signal to apply margins for a single label on selected shapes."""
+        label = self.table_widget.item(row, 0).text()
+        top = self.table_widget.cellWidget(row, 1).value()
+        bottom = self.table_widget.cellWidget(row, 2).value()
+        left = self.table_widget.cellWidget(row, 3).value()
+        right = self.table_widget.cellWidget(row, 4).value()
+        margins = {label: (top, bottom, left, right)}
+        self.apply_single_label_selected.emit(margins)
+
+    def on_apply_single_label(self, row):
+        """Emit a signal to apply margins for a single label on the current page."""
+        label = self.table_widget.item(row, 0).text()
+        top = self.table_widget.cellWidget(row, 1).value()
+        bottom = self.table_widget.cellWidget(row, 2).value()
+        left = self.table_widget.cellWidget(row, 3).value()
+        right = self.table_widget.cellWidget(row, 4).value()
+        margins = {label: (top, bottom, left, right)}
+        self.apply_single_label.emit(margins)
+
+    def on_jump_to_image(self):
+        """Handle jumping to a specific image index."""
+        index = self.jump_spinbox.value() - 1
+        self.jump_to_image.emit(index)
+
+    def set_current_page(self, page_number):
+        """Sets the value of the jump spinbox."""
+        if self.jump_spinbox.minimum() <= page_number <= self.jump_spinbox.maximum():
+            self.jump_spinbox.setValue(page_number)
 
     def restore_window_position(self):
         """恢复上次保存的窗口位置"""
