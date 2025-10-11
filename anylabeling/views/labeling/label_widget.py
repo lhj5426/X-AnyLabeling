@@ -3358,6 +3358,11 @@ class LabelingWidget(LabelDialog):
             self.expand_margins_dialog.apply_selected.connect(self.on_expand_margins_selected)
             self.expand_margins_dialog.apply_all.connect(self.on_expand_margins_all)
             self.expand_margins_dialog.apply_all_in_range.connect(self.on_expand_margins_in_range)
+            self.expand_margins_dialog.apply_single_label.connect(self.on_expand_margins_single_label)
+            self.expand_margins_dialog.jump_to_image.connect(self.on_jump_to_image)
+            self.expand_margins_dialog.apply_single_label_selected.connect(
+                self.on_expand_margins_single_label_selected
+            )
             self.expand_margins_dialog.setAttribute(
                 QtCore.Qt.WA_DeleteOnClose, False
             )
@@ -3366,6 +3371,11 @@ class LabelingWidget(LabelDialog):
             self.expand_margins_dialog.update_labels(labels)
             # Refresh colors when reopening
             self.expand_margins_dialog.refresh_colors()
+
+        # Set current page number before showing
+        current_index = self.file_list_widget.currentRow()
+        if current_index >= 0:
+            self.expand_margins_dialog.set_current_page(current_index + 1)
 
         if self.expand_margins_dialog.isVisible():
             # If visible, check if it's minimized
@@ -4134,9 +4144,14 @@ class LabelingWidget(LabelDialog):
         if not items:
             return
         item = items[0]
-
         if not self.may_continue():
             return
+
+        # Update expand margins dialog if it is visible
+        if self.expand_margins_dialog and self.expand_margins_dialog.isVisible():
+            current_index = self.file_list_widget.currentRow()
+            if current_index >= 0:
+                self.expand_margins_dialog.set_current_page(current_index + 1)
 
         # Get actual filename (use UserRole for reliability)
         filename = item.data(Qt.UserRole)
@@ -7056,6 +7071,50 @@ class LabelingWidget(LabelDialog):
             )
         )
 
+    def on_expand_margins_single_label(self, margins):
+        """Handle applying margins to a single label on the current page."""
+        modified_count = 0
+        label_to_apply = list(margins.keys())[0]
+        for shape in self.canvas.shapes:
+            if shape.label == label_to_apply:
+                if self._adjust_shape_margins(shape, margins):
+                    modified_count += 1
+        
+        if modified_count > 0:
+            self.canvas.update()
+            self.set_dirty()
+            self.status(self.tr(f"已更新当前页面上标签为 '{label_to_apply}' 的 {modified_count} 个标注框。"))
+        else:
+            self.status(self.tr(f"当前页面上没有需要更新的 '{label_to_apply}' 标签的标注框。"))
+
+    def on_expand_margins_single_label_selected(self, margins):
+        """Handle applying margins to a single label on selected shapes."""
+        if not self.canvas.selected_shapes:
+            self.status(self.tr("没有选中的标注框。"))
+            return
+
+        modified_count = 0
+        label_to_apply = list(margins.keys())[0]
+
+        for shape in self.canvas.selected_shapes:
+            if shape.label == label_to_apply:
+                if self._adjust_shape_margins(shape, margins):
+                    modified_count += 1
+        
+        if modified_count > 0:
+            self.canvas.update()
+            self.set_dirty()
+            self.status(self.tr(f"已更新选中的标签为 '{label_to_apply}' 的 {modified_count} 个标注框。"))
+        else:
+            self.status(self.tr(f"选中的标注框中没有需要更新的 '{label_to_apply}' 标签。"))
+
+    def on_jump_to_image(self, index):
+        """Handle jumping to a specific image index."""
+        if 0 <= index < self.file_list_widget.count():
+            self.file_list_widget.setCurrentRow(index)
+            self.status(self.tr(f"已跳转到第 {index + 1} 张图片。"))
+        else:
+            self.status(self.tr(f"无效的图片索引: {index + 1}"))
 
     def _update_expand_margins_colors(self):
         """Update colors in expand margins dialog if it's open and visible."""
