@@ -761,7 +761,8 @@ class NavigatorDialog(QtWidgets.QDialog):
         self.config = config
         self.app_closing = False  # 标志应用是否正在关闭
         
-        self.setWindowTitle("导航器")
+        self.base_title = "导航器"
+        self.setWindowTitle(self.base_title)
         self.setWindowFlags(
             Qt.Tool |
             Qt.WindowCloseButtonHint
@@ -915,6 +916,18 @@ class NavigatorDialog(QtWidgets.QDialog):
     def set_image(self, image_data):
         """Set image in navigator"""
         self.navigator.set_image(image_data)
+        self._update_title_with_resolution()
+
+    def _update_title_with_resolution(self):
+        """Update window title with image resolution"""
+        if self.navigator.original_image and not self.navigator.original_image.isNull():
+            image = self.navigator.original_image
+            width = image.width()
+            height = image.height()
+            new_title = f"{self.base_title} - {width}x{height}"
+            self.setWindowTitle(new_title)
+        else:
+            self.setWindowTitle(self.base_title)
         
     def set_viewport(self, x_ratio, y_ratio, width_ratio, height_ratio):
         """Set viewport in navigator"""
