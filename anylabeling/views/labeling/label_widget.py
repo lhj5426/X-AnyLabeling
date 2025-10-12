@@ -2526,6 +2526,9 @@ class LabelingWidget(LabelDialog):
             When auto-save is disabled, marks document as dirty and enables save action.
             Always updates navigator shapes to maintain synchronization.
         """
+        if not self.image_path:
+            return
+
         # Mark as manually edited only if requested (user changes, not AI inference)
         if mark_as_manually_edited:
             self.other_data["manually_edited"] = True
