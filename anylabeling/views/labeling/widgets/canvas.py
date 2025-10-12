@@ -2955,48 +2955,13 @@ class Canvas(
             circle_radius = 6
             p.drawEllipse(start_point, circle_radius, circle_radius)
 
-        # Draw current end point with an arrow
-        if len(self.path_selection_points) > 1:
-            end_point = self.path_selection_points[-1]
-            # Get the direction from the second to last point to the last point
-            if len(self.path_selection_points) >= 2:
-                prev_point = self.path_selection_points[-2]
-                # Calculate direction vector
-                dx = end_point.x() - prev_point.x()
-                dy = end_point.y() - prev_point.y()
-                # Calculate length
-                length = (dx**2 + dy**2) ** 0.5
-                if length > 0:
-                    # Normalize direction
-                    dx /= length
-                    dy /= length
-
-                    # Arrow head size
-                    arrow_size = 12
-                    arrow_angle = 30  # degrees
-
-                    import math
-                    angle_rad = math.radians(arrow_angle)
-
-                    # Calculate arrow head points
-                    # Left wing
-                    left_x = end_point.x() - arrow_size * (dx * math.cos(angle_rad) + dy * math.sin(angle_rad))
-                    left_y = end_point.y() - arrow_size * (dy * math.cos(angle_rad) - dx * math.sin(angle_rad))
-
-                    # Right wing
-                    right_x = end_point.x() - arrow_size * (dx * math.cos(angle_rad) - dy * math.sin(angle_rad))
-                    right_y = end_point.y() - arrow_size * (dy * math.cos(angle_rad) + dx * math.sin(angle_rad))
-
-                    # Draw filled arrow head
-                    arrow_polygon = QtGui.QPolygonF([
-                        end_point,
-                        QtCore.QPointF(left_x, left_y),
-                        QtCore.QPointF(right_x, right_y)
-                    ])
-
-                    p.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))  # Blue fill
-                    p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # White border
-                    p.drawPolygon(arrow_polygon)
+            # Draw current end point with a circle, same as the start
+            if len(self.path_selection_points) > 1:
+                end_point = self.path_selection_points[-1]
+                p.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))  # Same blue color
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # White border
+                circle_radius = 6
+                p.drawEllipse(end_point, circle_radius, circle_radius)
 
         # Highlight shapes that intersect with the path - use hover effect settings
         for shape in self.path_highlighted_shapes:
