@@ -326,6 +326,10 @@ https://github.com/user-attachments/assets/3ed908db-6510-402c-81ba-af5b31005a59
 
 https://github.com/user-attachments/assets/612ca96f-6a60-40eb-9e18-85065569c38c
 
+44.导航窗标题  增加动态显示图片分辨率功能 可以知道当前图片的分辨率  再也不摸瞎了  
+
+https://github.com/user-attachments/assets/c3763f2b-58c4-445b-8cf0-09de031b9744
+
 
 
 
