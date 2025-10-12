@@ -326,9 +326,16 @@ https://github.com/user-attachments/assets/3ed908db-6510-402c-81ba-af5b31005a59
 
 https://github.com/user-attachments/assets/612ca96f-6a60-40eb-9e18-85065569c38c
 
-44.导航窗标题  增加动态显示图片分辨率功能 可以知道当前图片的分辨率  再也不摸瞎了  
+44.导航窗标题  增加 动态显示图片分辨率 选中单个矩形可以显示 矩形的宽高 选中多个矩形可以显示 选中的数量 标题空白地方充分利用 再也不摸瞎调整了
 
-https://github.com/user-attachments/assets/c3763f2b-58c4-445b-8cf0-09de031b9744
+https://github.com/user-attachments/assets/0c966290-175b-495f-b437-39a4dc111e9f
+
+45.标注框边距扩展工具 增强 可以独立调整 矩形的四条边的 任意一条了
+
+https://github.com/user-attachments/assets/d10e372b-e137-4bcb-80cb-138300e8e927
+
+
+
 
 
 
