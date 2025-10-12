@@ -481,6 +481,10 @@ class LabelingWidget(LabelDialog):
         self.canvas.shape_moved.connect(self.set_dirty)
         self.canvas.shape_rotated.connect(self.set_dirty)
         self.canvas.selection_changed.connect(self.shape_selection_changed)
+
+        # Connect shape modifications to update navigator title
+        self.canvas.shape_moved.connect(self._update_navigator_title_with_selection)
+        self.canvas.shape_rotated.connect(self._update_navigator_title_with_selection)
         self.canvas.drawing_polygon.connect(self.toggle_drawing_sensitive)
         self.canvas.drawing_cancelled.connect(self.on_drawing_cancelled)
         # [Feature] support for automatically switching to editing mode
@@ -4370,6 +4374,12 @@ class LabelingWidget(LabelDialog):
                     self.update_attributes(i)
                     break
         self.update_navigator_shapes()  # 更新导航器以同步点击选中效果
+        self._update_navigator_title_with_selection()
+
+    def _update_navigator_title_with_selection(self):
+        """Update navigator title with the size of the currently selected shape."""
+        selected_shapes = self.canvas.selected_shapes
+        self.navigator_dialog.update_title_with_selection(selected_shapes)
 
     def add_label(self, shape, update_last_label=True):
         global_order = len(self.label_list) + 1
@@ -6796,6 +6806,7 @@ class LabelingWidget(LabelDialog):
             self.canvas.update()
             self.set_dirty()
             self.status(self.tr(f"已更新当前页面上的 {modified_count} 个标注框。"))
+            self._update_navigator_title_with_selection()
         else:
             self.status(self.tr("当前页面上没有需要更新的标注框。"))
 
@@ -6814,6 +6825,7 @@ class LabelingWidget(LabelDialog):
             self.canvas.update()
             self.set_dirty()
             self.status(self.tr(f"已更新选中的 {modified_count} 个标注框。"))
+            self._update_navigator_title_with_selection()
         else:
             self.status(self.tr("选中的标注框没有需要更新的。"))
 
@@ -7108,6 +7120,7 @@ class LabelingWidget(LabelDialog):
             self.canvas.update()
             self.set_dirty()
             self.status(self.tr(f"已更新当前页面上标签为 '{label_to_apply}' 的 {modified_count} 个标注框。"))
+            self._update_navigator_title_with_selection()
         else:
             self.status(self.tr(f"当前页面上没有需要更新的 '{label_to_apply}' 标签的标注框。"))
 
@@ -7129,6 +7142,7 @@ class LabelingWidget(LabelDialog):
             self.canvas.update()
             self.set_dirty()
             self.status(self.tr(f"已更新选中的标签为 '{label_to_apply}' 的 {modified_count} 个标注框。"))
+            self._update_navigator_title_with_selection()
         else:
             self.status(self.tr(f"选中的标注框中没有需要更新的 '{label_to_apply}' 标签。"))
 
