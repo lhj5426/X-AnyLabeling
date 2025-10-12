@@ -881,6 +881,7 @@ class NavigatorDialog(QtWidgets.QDialog):
         self.current_filename = ""
         self.current_page = 1
         self.total_pages = 1
+        self.selected_shapes = []
         
     def resizeEvent(self, event):
         """Handle dialog resize"""
@@ -916,18 +917,66 @@ class NavigatorDialog(QtWidgets.QDialog):
     def set_image(self, image_data):
         """Set image in navigator"""
         self.navigator.set_image(image_data)
-        self._update_title_with_resolution()
+        # When image changes, clear selected shape info and update title
+        self.update_title_with_selection([])
 
-    def _update_title_with_resolution(self):
-        """Update window title with image resolution"""
+    def _calculate_shape_size(self, shape):
+        """Calculate the width and height of a shape."""
+        if not shape or not hasattr(shape, 'points') or not shape.points or len(shape.points) < 2:
+            return None, None
+
+        shape_type = getattr(shape, 'shape_type', 'polygon')
+
+        if shape_type in ['rotation', 'rotation3'] and len(shape.points) >= 3:
+            # For rotated rectangles, calculate the length of the two adjacent sides.
+            import math
+            p0, p1, p2 = shape.points[0], shape.points[1], shape.points[2]
+            side1 = math.sqrt((p1.x() - p0.x())**2 + (p1.y() - p0.y())**2)
+            side2 = math.sqrt((p2.x() - p1.x())**2 + (p2.y() - p1.y())**2)
+            # The order of width/height might be swapped, but it's consistent.
+            return side1, side2
+        else:
+            # For other shapes (rectangle, polygon), calculate the axis-aligned bounding box.
+            xs = [p.x() for p in shape.points]
+            ys = [p.y() for p in shape.points]
+            if not xs or not ys:
+                return None, None
+            
+            width = max(xs) - min(xs)
+            height = max(ys) - min(ys)
+            return width, height
+
+    def update_title_with_selection(self, selected_shapes):
+        """Update the navigator title with the current selection info."""
+        self.selected_shapes = selected_shapes
+        self._update_title()
+
+    def _update_title(self):
+        """Update the full window title with resolution and selection info."""
+        # Start with base title
+        new_title = self.base_title
+
+        # Add image resolution
         if self.navigator.original_image and not self.navigator.original_image.isNull():
             image = self.navigator.original_image
-            width = image.width()
-            height = image.height()
-            new_title = f"{self.base_title} - {width}x{height}"
-            self.setWindowTitle(new_title)
-        else:
-            self.setWindowTitle(self.base_title)
+            img_width = image.width()
+            img_height = image.height()
+            new_title = f"{new_title} - {img_width}x{img_height}"
+
+        # Add selected shape info
+        if hasattr(self, 'selected_shapes') and self.selected_shapes:
+            count = len(self.selected_shapes)
+            if count == 1:
+                # For single selection, show size and count
+                shape = self.selected_shapes[0]
+                width, height = self._calculate_shape_size(shape)
+                if width is not None and height is not None:
+                    new_title = f"{new_title} [{width:.0f}x{height:.0f}] [{count}]"
+            elif count > 1:
+                # For multiple selections, show only the count
+                new_title = f"{new_title} [{count}]"
+
+        self.setWindowTitle(new_title)
         
     def set_viewport(self, x_ratio, y_ratio, width_ratio, height_ratio):
         """Set viewport in navigator"""
