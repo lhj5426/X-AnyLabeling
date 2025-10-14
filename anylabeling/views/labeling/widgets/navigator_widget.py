@@ -985,6 +985,15 @@ class NavigatorDialog(QtWidgets.QDialog):
     def set_shapes(self, shapes, visible_shapes=None):
         """Set shapes to display in navigator"""
         self.navigator.set_shapes(shapes, visible_shapes)
+
+        # When shapes are updated, check if the selection is still valid.
+        # This handles cases where a selected shape is deleted.
+        if hasattr(self, 'selected_shapes') and self.selected_shapes:
+            current_shapes_set = set(shapes if shapes else [])
+            updated_selection = [s for s in self.selected_shapes if s in current_shapes_set]
+
+            if len(updated_selection) != len(self.selected_shapes):
+                self.update_title_with_selection(updated_selection)
         
     def eventFilter(self, source, event):
         if source == self.zoom_input and event.type() == QtCore.QEvent.Wheel:
