@@ -2991,19 +2991,22 @@ class LabelingWidget(QtWidgets.QWidget):
         if not self.label_file:
             return
 
-        label_colors = {}
-        for i in range(self.unique_label_list.count()):
-            item = self.unique_label_list.item(i)
-            label = item.data(Qt.UserRole)
-            if not label:
-                continue
-            color = item.background().color()
-            label_colors[label] = color
+        all_unique_labels = sorted(list(set(self._config["labels"]) | set(self.label_dialog.get_all_labels())))
+        # Add labels from existing shortcuts that might not be in config or history yet
+        for label_in_shortcut in self.label_toggle_shortcuts.values():
+            if label_in_shortcut not in all_unique_labels:
+                all_unique_labels.append(label_in_shortcut)
+        all_unique_labels = sorted(list(set(all_unique_labels))) # Re-sort and unique after adding from shortcuts
+
+        def get_label_qcolor_func(label_name):
+            rgb = self._get_rgb_by_label(label_name)
+            return QtGui.QColor(*rgb, LABEL_OPACITY)
 
         dialog = LabelToggleShortcutDialog(
             parent=self,
             shortcuts=self.label_toggle_shortcuts,
-            label_colors=label_colors
+            all_unique_labels=all_unique_labels,
+            get_label_qcolor_func=get_label_qcolor_func
         )
         
         if dialog.exec_():
