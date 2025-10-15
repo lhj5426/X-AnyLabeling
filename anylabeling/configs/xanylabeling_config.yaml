@@ -23,8 +23,6 @@ logger_level: info
 system_clipboard: false
 switch_to_checked: false
 
-zoom_at_mouse_percentage_increase: 20
-
 flags: null
 label_flags: null
 labels: null
@@ -120,6 +118,8 @@ canvas:
     width: 2.0
     color: "#00FF00"
     opacity: 0.5
+  zoom_at_mouse_percentage_increase: 20
+  zoom_at_mouse_shortcut: Ctrl+B
 
 shortcuts:
   close: Ctrl+W
@@ -143,7 +143,6 @@ shortcuts:
   zoom_in: [Ctrl++, Ctrl+=]
   zoom_out: Ctrl+-
   zoom_to_original: Ctrl+0
-  zoom_at_mouse_shortcut: Ctrl+B
   fit_window: Ctrl+F
   fit_width: Ctrl+Shift+F
   show_navigator: F9
