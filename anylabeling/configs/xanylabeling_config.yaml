@@ -185,6 +185,15 @@ shortcuts:
   auto_run: Ctrl+M
   loop_thru_labels: Ctrl+Shift+N
 
+  select_all_labels: Alt+Q
+  deselect_all_labels: Alt+W
+  invert_selection_labels: Alt+E
+  toggle_overlap: Alt+R
+  select_all_shapes: Alt+A
+  deselect_all_shapes: Alt+S
+  invert_selection_shapes: Alt+I
+  toggle_highlight: Alt+F
+
 # Auto labeling
 custom_models: []
 
