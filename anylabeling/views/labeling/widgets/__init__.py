@@ -31,6 +31,7 @@ from .label_category_widget import LabelCategoryWidget
 from .merge_dialog import MergeDialog
 from .label_tool_dialog import LabelToolDialog
 from .tag_sort_dialog import TagSortDialog
+from .label_toggle_shortcut_dialog import LabelToggleShortcutDialog
 
 
 __all__ = [
@@ -66,4 +67,5 @@ __all__ = [
     "MergeDialog",
     "LabelToolDialog",
     "TagSortDialog",
+    "LabelToggleShortcutDialog",
 ]
