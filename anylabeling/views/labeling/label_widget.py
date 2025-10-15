@@ -1131,6 +1131,15 @@ class LabelingWidget(QtWidgets.QWidget):
             self.tr("Zoom to original size"),
             enabled=False,
         )
+        zoom_at_mouse = action(
+            self.tr("Zoom at Mouse Position"),
+            self.zoom_at_mouse_shortcut_triggered,
+            self._config.get("zoom_at_mouse_shortcut", "Ctrl+B"),
+            "zoom-in", # Using zoom-in icon
+            self.tr("Zoom in at current mouse position"),
+            enabled=False, # Will be enabled when image is loaded
+        )
+        self.addAction(zoom_at_mouse)
         keep_prev_scale = action(
             self.tr("&Keep Previous Scale"),
             lambda x: self._config.update({"keep_prev_scale": x}),
@@ -1627,6 +1636,7 @@ class LabelingWidget(QtWidgets.QWidget):
             zoom_in,
             zoom_out,
             zoom_org,
+            zoom_at_mouse,
             fit_window,
             fit_width,
         )
@@ -1779,6 +1789,7 @@ class LabelingWidget(QtWidgets.QWidget):
             zoom_in=zoom_in,
             zoom_out=zoom_out,
             zoom_org=zoom_org,
+            zoom_at_mouse=zoom_at_mouse,
             keep_prev_scale=keep_prev_scale,
             keep_prev_brightness=keep_prev_brightness,
             keep_prev_contrast=keep_prev_contrast,
@@ -2991,22 +3002,19 @@ class LabelingWidget(QtWidgets.QWidget):
         if not self.label_file:
             return
 
-        all_unique_labels = sorted(list(set(self._config["labels"]) | set(self.label_dialog.get_all_labels())))
-        # Add labels from existing shortcuts that might not be in config or history yet
-        for label_in_shortcut in self.label_toggle_shortcuts.values():
-            if label_in_shortcut not in all_unique_labels:
-                all_unique_labels.append(label_in_shortcut)
-        all_unique_labels = sorted(list(set(all_unique_labels))) # Re-sort and unique after adding from shortcuts
-
-        def get_label_qcolor_func(label_name):
-            rgb = self._get_rgb_by_label(label_name)
-            return QtGui.QColor(*rgb, LABEL_OPACITY)
+        label_colors = {}
+        for i in range(self.unique_label_list.count()):
+            item = self.unique_label_list.item(i)
+            label = item.data(Qt.UserRole)
+            if not label:
+                continue
+            color = item.background().color()
+            label_colors[label] = color
 
         dialog = LabelToggleShortcutDialog(
             parent=self,
             shortcuts=self.label_toggle_shortcuts,
-            all_unique_labels=all_unique_labels,
-            get_label_qcolor_func=get_label_qcolor_func
+            label_colors=label_colors
         )
         
         if dialog.exec_():
@@ -5417,6 +5425,45 @@ class LabelingWidget(QtWidgets.QWidget):
             self.set_scroll(
                 Qt.Vertical,
                 self.scroll_bars[Qt.Vertical].value() + y_shift,
+            )
+
+    def zoom_at_mouse_shortcut_triggered(self):
+        if not self.image or self.image.isNull():
+            return
+
+        # Get current mouse position relative to the canvas
+        mouse_pos_global = QtGui.QCursor.pos()
+        mouse_pos_canvas = self.canvas.mapFromGlobal(mouse_pos_global)
+
+        # Store old canvas dimensions before zoom changes them
+        canvas_width_old = self.canvas.width()
+        canvas_height_old = self.canvas.height()
+        
+        # Get zoom percentage increase from config
+        zoom_percentage_increase = self._config.get("zoom_at_mouse_percentage_increase", 20)
+        current_zoom_value = self.zoom_widget.value()
+        new_zoom_value = round(current_zoom_value + zoom_percentage_increase)
+
+        # Set the new zoom value. This will also call paint_canvas() and update canvas dimensions.
+        self.set_zoom(new_zoom_value)
+
+        # Get new canvas dimensions after zoom
+        canvas_width_new = self.canvas.width()
+        canvas_height_new = self.canvas.height()
+
+        # Adjust scrollbars to center the zoom at the mouse position
+        if canvas_width_old != canvas_width_new:
+            canvas_scale_factor = canvas_width_new / canvas_width_old
+            x_shift = round(mouse_pos_canvas.x() * canvas_scale_factor - mouse_pos_canvas.x())
+            y_shift = round(mouse_pos_canvas.y() * canvas_scale_factor - mouse_pos_canvas.y())
+
+            self.set_scroll(
+                QtCore.Qt.Horizontal,
+                self.scroll_bars[QtCore.Qt.Horizontal].value() + x_shift,
+            )
+            self.set_scroll(
+                QtCore.Qt.Vertical,
+                self.scroll_bars[QtCore.Qt.Vertical].value() + y_shift,
             )
 
     def set_fit_window(self, value=True):
