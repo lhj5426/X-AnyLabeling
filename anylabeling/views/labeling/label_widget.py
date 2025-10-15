@@ -2994,7 +2994,9 @@ class LabelingWidget(QtWidgets.QWidget):
         label_colors = {}
         for i in range(self.unique_label_list.count()):
             item = self.unique_label_list.item(i)
-            label = item.text()
+            label = item.data(Qt.UserRole)
+            if not label:
+                continue
             color = item.background().color()
             label_colors[label] = color
 
@@ -3028,12 +3030,15 @@ class LabelingWidget(QtWidgets.QWidget):
             self.label_toggle_qshortcuts.append(qshortcut)
 
     def toggle_label_visibility_by_name(self, label_name):
-        items = self.unique_label_list.findItems(label_name, Qt.MatchExactly)
-        if items:
-            item = items[0]
-            item.setCheckState(
-                Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked
-            )
+        for i in range(self.unique_label_list.count()):
+            item = self.unique_label_list.item(i)
+            if item.data(Qt.UserRole) == label_name:
+                item.setCheckState(
+                    Qt.Unchecked
+                    if item.checkState() == Qt.Checked
+                    else Qt.Checked
+                )
+                return
 
     def label_manager(self):
         modify_label_dialog = LabelModifyDialog(
