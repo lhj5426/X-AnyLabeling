@@ -58,6 +58,7 @@ from .widgets import (
     LabelListWidget,
     LabelListWidgetItem,
     DigitShortcutDialog,
+    LabelToggleShortcutDialog,
     LabelModifyDialog,
     ObjectManagerDialog,
     GroupIDModifyDialog,
@@ -141,7 +142,7 @@ class TagSortThread(QtCore.QThread):
         self.finished.emit(outcomes, self._cancelled)
 
 
-class LabelingWidget(LabelDialog):
+class LabelingWidget(QtWidgets.QWidget):
     """The main widget for labeling images"""
 
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = 0, 1, 2
@@ -158,6 +159,7 @@ class LabelingWidget(LabelDialog):
         output_dir=None,
     ):
         self.parent = parent
+        super().__init__(parent=parent)
         if output is not None:
             logger.warning(
                 "argument output is deprecated, use output_file instead"
@@ -202,6 +204,10 @@ class LabelingWidget(LabelDialog):
         self.digit_to_label = None
         self.drawing_digit_shortcuts = self._config.get("digit_shortcuts", {})
 
+        self.label_toggle_shortcuts = self._config.get("label_toggle_shortcuts", {})
+        self.label_toggle_qshortcuts = []
+        self.load_label_toggle_shortcuts()
+
         Shape.highlighting_enabled = False
 
         # Load alpha settings for shape fill
@@ -238,8 +244,6 @@ class LabelingWidget(LabelDialog):
         Shape.select_line_width = self._config["shape"].get("select_line_width")
         Shape.canvas_select_line_width = self._config["shape"].get("canvas_select_line_width")
         Shape.canvas_hover_line_width = self._config["shape"].get("canvas_hover_line_width")
-
-        super(LabelDialog, self).__init__()
 
         # Whether we need to save or not.
         self.dirty = False
@@ -330,6 +334,13 @@ class LabelingWidget(LabelDialog):
                 shape.selected = self._highlight_on
             self.canvas.update()
         btn_highlight.clicked.connect(toggle_highlight)
+
+        # Set shortcuts from config
+        shortcuts = self._config.get("shortcuts", {})
+        btn_select_all_shapes.setShortcut(shortcuts.get("select_all_shapes", ""))
+        btn_invert_selection_shapes.setShortcut(shortcuts.get("invert_selection_shapes", ""))
+        btn_deselect_all_shapes.setShortcut(shortcuts.get("deselect_all_shapes", ""))
+        btn_highlight.setShortcut(shortcuts.get("toggle_highlight", ""))
 
         shape_control_layout.addWidget(btn_select_all_shapes)
         shape_control_layout.addWidget(btn_invert_selection_shapes)
@@ -943,6 +954,13 @@ class LabelingWidget(LabelDialog):
                 "Manage Digit Shortcuts: Assign Drawing Modes and Labels to Number Keys"
             ),
         )
+        label_toggle_shortcut_manager = action(
+            self.tr("标签切换快捷键管理器"),
+            self.open_label_toggle_shortcut_manager,
+            icon="edit",
+            tip=self.tr("管理用于切换标签可见性的快捷键"),
+        )
+
         label_manager = action(
             self.tr("&Label Manager"),
             self.label_manager,
@@ -1713,6 +1731,8 @@ class LabelingWidget(LabelDialog):
             digit_shortcut_7=digit_shortcut_7,
             digit_shortcut_8=digit_shortcut_8,
             digit_shortcut_9=digit_shortcut_9,
+            digit_shortcut_manager=digit_shortcut_manager,
+            label_toggle_shortcut_manager=label_toggle_shortcut_manager,
             upload_image_flags_file=upload_image_flags_file,
             upload_label_flags_file=upload_label_flags_file,
             upload_shape_attrs_file=upload_shape_attrs_file,
@@ -1910,6 +1930,7 @@ class LabelingWidget(LabelDialog):
                 save_crop,
                 None,
                 digit_shortcut_manager,
+                label_toggle_shortcut_manager,
                 label_manager,
                 object_manager,
                 gid_manager,
@@ -2957,11 +2978,62 @@ class LabelingWidget(LabelDialog):
             OverviewDialog(parent=self)
 
     def digit_shortcut_manager(self):
+        if self.label_file is None:
+            return
+
         digit_shortcut_dialog = DigitShortcutDialog(parent=self)
-        result = digit_shortcut_dialog.exec_()
-        if result == QtWidgets.QDialog.Accepted:
+        if digit_shortcut_dialog.exec_():
             self._config["digit_shortcuts"] = self.drawing_digit_shortcuts
             save_config(self._config)
+            self.load_digit_shortcuts()
+
+    def open_label_toggle_shortcut_manager(self):
+        if not self.label_file:
+            return
+
+        label_colors = {}
+        for i in range(self.unique_label_list.count()):
+            item = self.unique_label_list.item(i)
+            label = item.text()
+            color = item.background().color()
+            label_colors[label] = color
+
+        dialog = LabelToggleShortcutDialog(
+            parent=self,
+            shortcuts=self.label_toggle_shortcuts,
+            label_colors=label_colors
+        )
+        
+        if dialog.exec_():
+            self.label_toggle_shortcuts = dialog.shortcuts
+            self._config["label_toggle_shortcuts"] = self.label_toggle_shortcuts
+            save_config(self._config)
+            self.load_label_toggle_shortcuts()
+
+    def load_label_toggle_shortcuts(self):
+        # Clear existing shortcuts
+        for shortcut in self.label_toggle_qshortcuts:
+            shortcut.setEnabled(False)
+            shortcut.setParent(None)
+            shortcut.deleteLater()
+        self.label_toggle_qshortcuts.clear()
+
+        # Load from config
+        self.label_toggle_shortcuts = self._config.get("label_toggle_shortcuts", {})
+        for key, label in self.label_toggle_shortcuts.items():
+            qshortcut = QtWidgets.QShortcut(QtGui.QKeySequence(key), self)
+            qshortcut.activated.connect(
+                functools.partial(self.toggle_label_visibility_by_name, label)
+            )
+            self.label_toggle_qshortcuts.append(qshortcut)
+
+    def toggle_label_visibility_by_name(self, label_name):
+        items = self.unique_label_list.findItems(label_name, Qt.MatchExactly)
+        if items:
+            item = items[0]
+            item.setCheckState(
+                Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked
+            )
 
     def label_manager(self):
         modify_label_dialog = LabelModifyDialog(
@@ -4479,6 +4551,13 @@ class LabelingWidget(LabelDialog):
             # 更新按钮状态以反映当前显示状态
             self.btn_overlap.setChecked(self.canvas.show_overlap)
         self.btn_overlap.clicked.connect(toggle_overlap)
+
+        # Set shortcuts from config
+        shortcuts = self._config.get("shortcuts", {})
+        self.btn_select_all.setShortcut(shortcuts.get("select_all_labels", ""))
+        self.btn_invert_selection.setShortcut(shortcuts.get("invert_selection_labels", ""))
+        self.btn_deselect_all.setShortcut(shortcuts.get("deselect_all_labels", ""))
+        self.btn_overlap.setShortcut(shortcuts.get("toggle_overlap", ""))
 
         # 添加按钮到布局
         control_layout.addWidget(self.btn_select_all)
