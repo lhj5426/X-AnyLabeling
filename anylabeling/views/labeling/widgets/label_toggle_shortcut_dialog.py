@@ -6,16 +6,20 @@ from anylabeling.views.labeling.utils.qt import new_icon_path
 
 class ColoredLabelComboBox(QtWidgets.QComboBox):
     """A QComboBox that displays items with colored backgrounds."""
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, get_label_qcolor_func=None):
         super(ColoredLabelComboBox, self).__init__(parent)
         self.setStyleSheet("combobox-popup: 0;") # Remove popup frame
+        self.get_label_qcolor_func = get_label_qcolor_func
 
-    def addLabelItems(self, label_colors):
+    def addLabelItems(self, all_unique_labels, get_label_qcolor_func):
         """Populate the combobox with labels and their colors."""
+        self.get_label_qcolor_func = get_label_qcolor_func # Update the stored function
         self.addItem("") # Add an empty item first
-        for label, color in label_colors.items():
+        for label in all_unique_labels:
             self.addItem(label)
             index = self.count() - 1
+            
+            color = self.get_label_qcolor_func(label)
             
             # Set background color
             self.setItemData(index, color, QtCore.Qt.BackgroundRole)
@@ -37,11 +41,12 @@ class ColoredLabelComboBox(QtWidgets.QComboBox):
 
         # Draw the background for the selected item
         current_text = self.currentText()
-        if current_text:
-            color_data = self.itemData(self.currentIndex(), QtCore.Qt.BackgroundRole)
-            if isinstance(color_data, QtGui.QColor):
+        # Always try to get color if get_label_qcolor_func is available
+        if self.get_label_qcolor_func:
+            color = self.get_label_qcolor_func(current_text)
+            if isinstance(color, QtGui.QColor):
                 rect = self.style().subElementRect(QtWidgets.QStyle.SE_ComboBoxFocusRect, opt, self)
-                painter.fillRect(rect, color_data)
+                painter.fillRect(rect, color)
 
         # Draw the text
         text_color_data = self.itemData(self.currentIndex(), QtCore.Qt.ForegroundRole)
@@ -53,24 +58,24 @@ class ColoredLabelComboBox(QtWidgets.QComboBox):
         rect = self.style().subElementRect(QtWidgets.QStyle.SE_ComboBoxFocusRect, opt, self)
         rect.adjust(5, 0, -5, 0) # Adjust text padding
         painter.drawText(rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, current_text)
-
-
 class LabelToggleShortcutDialog(QtWidgets.QDialog):
     """Dialog for managing label toggle shortcuts"""
 
-    def __init__(self, parent=None, shortcuts=None, label_colors=None):
+    def __init__(self, parent=None, shortcuts=None, all_unique_labels=None, get_label_qcolor_func=None):
         """
         Initialize the dialog.
 
         Args:
             parent: The parent widget.
             shortcuts (dict): Existing shortcuts {'shortcut': 'label'}.
-            label_colors (dict): Dict of available labels and their QColor.
+            all_unique_labels (list): List of all unique label names.
+            get_label_qcolor_func (function): Function to get QColor for a given label name.
         """
         super(LabelToggleShortcutDialog, self).__init__(parent)
         self.parent = parent
         self.shortcuts = shortcuts if shortcuts is not None else {}
-        self.label_colors = label_colors if label_colors is not None else {}
+        self.all_unique_labels = sorted(list(set(all_unique_labels))) if all_unique_labels is not None else []
+        self.get_label_qcolor_func = get_label_qcolor_func
 
         self.setWindowTitle(self.tr("标签切换快捷键管理器"))
         self.setModal(True)
@@ -152,9 +157,9 @@ class LabelToggleShortcutDialog(QtWidgets.QDialog):
         self.table.setCellWidget(row_position, 0, key_sequence_edit)
 
         # Label combobox
-        label_combo = ColoredLabelComboBox()
-        label_combo.addLabelItems(self.label_colors)
-        if label in self.label_colors:
+        label_combo = ColoredLabelComboBox(get_label_qcolor_func=self.get_label_qcolor_func)
+        label_combo.addLabelItems(self.all_unique_labels, self.get_label_qcolor_func)
+        if label:
             label_combo.setCurrentText(label)
         self.table.setCellWidget(row_position, 1, label_combo)
 

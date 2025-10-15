@@ -1420,6 +1420,12 @@ class LabelDialog(QtWidgets.QDialog):
     def get_last_label(self):
         return self._last_label
 
+    def get_all_labels(self):
+        labels = []
+        for i in range(self.label_list.count()):
+            labels.append(self.label_list.item(i).text())
+        return labels
+
     def sort_labels(self):
         items = []
         for index in range(self.label_list.count()):
