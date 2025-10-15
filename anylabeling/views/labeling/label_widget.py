@@ -5402,9 +5402,7 @@ class LabelingWidget(QtWidgets.QWidget):
         """
         Zooms in on the canvas at the current mouse position by a configurable percentage.
         """
-        print("DEBUG_ZOOM: Method entered.") # Debug print at entry
         if not hasattr(self, 'image') or self.image is None or self.image.isNull():
-            print(f"DEBUG_ZOOM: Image check failed. hasattr(self, 'image'): {hasattr(self, 'image')}, self.image is None: {self.image is None}, self.image.isNull(): {self.image.isNull() if hasattr(self, 'image') and self.image is not None else 'N/A'}") # Debug print
             return
 
         # Get current mouse position in global screen coordinates
@@ -5413,12 +5411,9 @@ class LabelingWidget(QtWidgets.QWidget):
         widget_mouse_pos = self.mapFromGlobal(global_mouse_pos)
         # Convert widget-relative position to canvas-relative position
         canvas_mouse_pos = self.canvas.mapFromParent(widget_mouse_pos - self.canvas.pos())
-        print(f"DEBUG_ZOOM: Global mouse pos: {global_mouse_pos}, Widget mouse pos: {widget_mouse_pos}, Canvas mouse pos: {canvas_mouse_pos}") # Debug print
 
         is_mouse_over_canvas = self.canvas.rect().contains(canvas_mouse_pos)
-        print(f"DEBUG_ZOOM: Mouse over canvas check: {is_mouse_over_canvas}") # Debug print
         if not is_mouse_over_canvas:
-            print(f"DEBUG_ZOOM: Mouse not over canvas. Using canvas center for zoom.") # Debug print
             # If mouse is not over canvas, use center of canvas for zoom
             canvas_mouse_pos = self.canvas.rect().center()
 
@@ -5429,24 +5424,20 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Clamp zoom value to reasonable limits (e.g., 10% to 1000%)
         new_zoom = max(10, min(1000, new_zoom))
-        print(f"DEBUG_ZOOM: Config percentage: {percentage_increase}, Current zoom: {current_zoom}, New zoom (clamped): {new_zoom}") # Debug print
 
         # Apply zoom and adjust scrollbars to keep mouse position centered
         canvas_width_old = self.canvas.width()
         canvas_height_old = self.canvas.height()
         
-        self.set_zoom(new_zoom);
+        self.set_zoom(new_zoom)
 
         canvas_width_new = self.canvas.width()
         canvas_height_new = self.canvas.height()
         
-        print(f"DEBUG_ZOOM: Canvas old size: ({canvas_width_old}, {canvas_height_old}), New size: ({canvas_width_new}, {canvas_height_new})") # Debug print
-
         if canvas_width_old != canvas_width_new:
             canvas_scale_factor = canvas_width_new / canvas_width_old
             x_shift = round(canvas_mouse_pos.x() * canvas_scale_factor - canvas_mouse_pos.x())
             y_shift = round(canvas_mouse_pos.y() * canvas_scale_factor - canvas_mouse_pos.y())
-            print(f"DEBUG_ZOOM: Canvas scale factor: {canvas_scale_factor}, X shift: {x_shift}, Y shift: {y_shift}") # Debug print
 
             self.set_scroll(
                 Qt.Horizontal,
@@ -5456,10 +5447,6 @@ class LabelingWidget(QtWidgets.QWidget):
                 Qt.Vertical,
                 self.scroll_bars[Qt.Vertical].value() + y_shift,
             )
-            print(f"DEBUG_ZOOM: Scrollbars adjusted. New H scroll: {self.scroll_bars[Qt.Horizontal].value()}, New V scroll: {self.scroll_bars[Qt.Vertical].value()}") # Debug print
-        else:
-            print("DEBUG_ZOOM: Canvas width did not change, no scrollbar adjustment needed.") # Debug print
-        print("DEBUG_ZOOM: Method exited.") # Debug print at exit
     def zoom_request(self, delta, pos):
         canvas_width_old = self.canvas.width()
         canvas_height_old = self.canvas.height()
