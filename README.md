@@ -342,5 +342,10 @@ https://github.com/user-attachments/assets/c2a9da89-db34-42da-8e3b-98e96ad14854
 
 https://github.com/user-attachments/assets/fce2d393-8faf-4325-a619-28bebc496130
 
+48.增加一键放大 C盘配置文件可自定义放大数值  说白了就是免去CTRL+鼠标滚轮上的 慢慢放大 
+
+https://github.com/user-attachments/assets/760c5608-cfdc-4ddb-bbc5-3eb55fa4f54a
+
+
 
 
