@@ -51,6 +51,11 @@ def save_config(config):
             except Exception:  # noqa
                 existing = {}
         merged = _merge_prefer_non_null(existing, config)
+
+        # Force overwrite for label_toggle_shortcuts to handle deletions properly
+        if "label_toggle_shortcuts" in config:
+            merged["label_toggle_shortcuts"] = config["label_toggle_shortcuts"]
+            
         with open(user_config_file, "w", encoding="utf-8") as f:
             yaml.safe_dump(merged, f, allow_unicode=True)
     except Exception:  # noqa
@@ -143,9 +148,9 @@ def get_config(
 
     # 5. Persist the merged configuration back to user's file, filling missing keys
     #    while preserving any existing user-specified values.
-    try:
-        save_config(config)
-    except Exception:  # noqa
-        pass
+    # try:
+    #     save_config(config)
+    # except Exception:  # noqa
+    #     pass
 
     return config
