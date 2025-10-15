@@ -1,0 +1,309 @@
+﻿auto_highlight_shape: false   # 是否自动高亮标注形状
+auto_save: true               # 是否自动保存
+auto_switch_to_edit_mode: true  # 创建新标注后是否自动切换到编辑模式
+auto_use_last_label: false    # 是否自动使用上一次的标签
+canvas:
+  crosshair:
+    color: '#55ffff'          # 十字光标颜色
+    opacity: 0.47             # 十字光标透明度 (0~1)
+    show: false               # 是否显示十字光标
+    width: 3.0                # 十字光标线条宽度
+  double_click: close         # 双击操作方式：close 表示闭合多边形
+  num_backups: 10             # 自动保存的备份数量
+  wheel_rectangle_editing:
+    adjust_step: 1            # 滚轮微调矩形时的步长
+    enable: true              # 是否启用滚轮矩形编辑
+    fast_adjust_step: 5       # 快速滚轮调整时的步长
+    scale_step: 3             # 缩放调整步长
+custom_models:
+- classes:                    # 自定义模型的类别列表
+  - balloon                   # 类别：balloon
+  - qipao                     # 类别：气泡
+  - fangkuai                  # 类别：方块
+  - changfangtiao             # 类别：长方条
+  - kuangwai                  # 类别：框外
+  - other                     # 类别：其他
+  conf_threshold: 0.65         # 置信度阈值 (可能与下方重复)
+  confidence threshold: 0.76   # 置信度阈值（另一种写法）
+  config_file: J:\G\Desktop\yoloV11_40yuan\runs\train\056\weights\epoch145.yaml   # 模型配置文件路径
+  display_name: 056epoch145    # 模型显示名称
+  input height: 1640           # 模型输入高度
+  input width: 1640            # 模型输入宽度
+  iou_threshold: 0.45          # IOU 阈值
+  is_custom_model: true        # 是否为自定义模型
+  model_path: epoch145.onnx    # 模型文件路径
+  name: yolov8n-r20230520      # 模型内部名称
+  nms threshold: 0.65          # NMS（非极大值抑制）阈值
+  provider: Ultralytics        # 提供方：Ultralytics
+  type: yolov8                 # 模型类型：YOLOv8
+default_shape_color:
+- 0                           # 标注形状默认颜色 R 分量
+- 255                         # 标注形状默认颜色 G 分量
+- 0                           # 标注形状默认颜色 B 分量
+digit_shortcuts:               # 数字快捷键对应的标签与模式
+  1:
+    label: qipao              # 按键 1：标签 qipao
+    mode: rectangle           # 标注模式：矩形
+  2:
+    label: balloon            # 按键 2：标签 balloon
+    mode: rectangle           # 标注模式：矩形
+  3:
+    label: changfangtiao      # 按键 3：标签 changfangtiao
+    mode: rectangle           # 标注模式：矩形
+  4:
+    label: other              # 按键 4：标签 other
+    mode: rectangle           # 标注模式：矩形
+  5:
+    label: fangkuai           # 按键 5：标签 fangkuai
+    mode: rotation            # 标注模式：旋转框
+  6:
+    label: kuangwai           # 按键 6：标签 kuangwai
+    mode: rotation            # 标注模式：旋转框
+display_label_popup: true      # 创建标注时是否弹出标签选择窗口
+epsilon: 10.0                  # 多边形编辑时的点合并/平滑阈值
+file_dock:                     # 文件面板设置
+  closable: false              # 是否允许关闭
+  floatable: false             # 是否允许浮动
+  movable: false               # 是否允许移动
+  show: true                   # 是否显示文件面板
+file_search: null              # 文件搜索设置（当前未启用）
+fit_to_content:                # 自动适应内容设置
+  column: true                 # 表格列宽是否自适应内容
+  row: false                   # 表格行高是否自适应内容
+flag_dock:                     # 标记（flag）面板设置
+  closable: false              # 是否允许关闭
+  floatable: false             # 是否允许浮动
+  movable: false               # 是否允许移动
+  show: true                   # 是否显示标记面板
+flags: null                    # 自定义标记列表（当前为空）
+keep_prev: false               # 是否保留上一次的标注框
+keep_prev_brightness: false    # 是否保留上一张图片的亮度调整
+keep_prev_contrast: false      # 是否保留上一张图片的对比度调整
+keep_prev_scale: true          # 是否保留上一张图片的缩放比例
+label_colors:                  # 各类别对应的显示颜色 (RGB)
+  balloon:
+  - 0                          # R 分量
+  - 255                        # G 分量
+  - 255                        # B 分量 (青色)
+  balloon2:
+  - 49
+  - 140
+  - 231                        # 蓝色
+  changfangtiao:
+  - 255
+  - 0
+  - 255                        # 紫色
+  changfangtiao2:
+  - 209
+  - 145
+  - 255                        # 淡紫色
+  fangkuai:
+  - 148
+  - 87
+  - 235                        # 深紫色
+  kuangwai:
+  - 255
+  - 120
+  - 0                          # 橙色
+  other:
+  - 255
+  - 3
+  - 62                         # 红色
+  qipao:
+  - 85
+  - 255
+  - 0                          # 绿色
+  qipao2:
+  - 148
+  - 87
+  - 235                        # 深紫色（与 fangkuai 相似）
+label_completion: startswith    # 标签自动补全模式：以输入开头匹配
+label_dock:                     # 标签面板设置
+  closable: false              # 是否允许关闭
+  floatable: false             # 是否允许浮动
+  movable: false               # 是否允许移动
+  show: true                   # 是否显示标签面板
+label_flags: null               # 标签标记设置（当前为空）
+labels:                        # 定义标签类别列表
+- balloon                      # 标签：balloon
+- qipao                        # 标签：气泡
+- fangkuai                     # 标签：方块
+- changfangtiao                # 标签：长方条
+- kuangwai                     # 标签：框外
+- other                        # 标签：其他
+- balloon2                     # 标签：balloon 的第二类
+- qipao2                       # 标签：气泡的第二类
+- changfangtiao2               # 标签：长方条的第二类
+language: zh_CN                # 界面语言：简体中文
+logger_level: info             # 日志输出等级：info
+model_hub: github              # 模型来源：GitHub
+move_mode: parameter           # 移动模式：parameter（参数控制方式）
+navigator:                     # 缩略图导航器设置
+  height: 243                  # 高度
+  position_x: 1612             # X 坐标位置
+  position_y: 707              # Y 坐标位置
+  visible: true                # 是否可见
+  width: 278                   # 宽度
+shape:                         # 标注形状的显示样式设置
+  canvas_hover_line_color:     # 鼠标悬停时的边框颜色 (RGBA)
+  - 201
+  - 255
+  - 229
+  - 255
+  canvas_hover_line_width: 5   # 鼠标悬停时的边框线宽
+  canvas_select_line_color:    # 选中标注时的边框颜色 (RGBA)
+  - 255
+  - 32
+  - 82
+  - 255
+  canvas_select_line_width: 5  # 选中标注时的边框线宽
+  fill_color:                  # 标注区域填充颜色 (RGBA)
+  - 220
+  - 45
+  - 220
+  - 180
+  hvertex_fill_color:          # 控制点（顶点）填充颜色 (RGBA)
+  - 255
+  - 255
+  - 255
+  - 255
+  line_color:                  # 默认边框颜色 (RGBA)
+  - 0
+  - 255
+  - 0
+  - 255
+  line_width: 2                # 默认边框线宽
+  navigator_hover_line_color:  # 缩略图中鼠标悬停时的边框颜色 (RGBA)
+  - 254
+  - 254
+  - 51
+  - 255
+  navigator_select_line_color: # 缩略图中选中时的边框颜色 (RGBA)
+  - 27
+  - 24
+  - 17
+  - 255
+  overlap_color:               # 重叠区域的填充颜色 (RGBA)
+  - 150
+  - 255
+  - 0
+  - 100
+  point_size: 7                # 控制点大小（像素）
+  select_fill_color:            # 选中标注区域的填充颜色 (RGBA)
+  - 0                           # R 分量
+  - 255                         # G 分量
+  - 0                           # B 分量 (绿色)
+  - 100                         # A 分量 (透明度 100)
+  select_line_color:            # 选中标注边框颜色 (RGBA)
+  - 0
+  - 255
+  - 0                           # 绿色边框
+  - 255                         # 不透明
+  select_line_width: null       # 选中边框线宽（null 表示使用默认值）
+  shape_fill_alpha_highlight: 150  # 标注高亮时的填充透明度
+  shape_fill_alpha_idle: 30        # 标注闲置时的填充透明度
+  vertex_fill_color:            # 顶点（控制点）填充颜色 (RGBA)
+  - 255
+  - 255
+  - 255
+  - 255                         # 白色，不透明
+shape_color: manual             # 形状颜色模式：manual（手动指定颜色）
+shape_dock:                     # 形状（shape）面板设置
+  closable: false               # 是否允许关闭
+  floatable: false              # 是否允许浮动
+  movable: false                # 是否允许移动
+  show: true                    # 是否显示形状面板
+shift_auto_shape_color: 0       # Shift 快捷键切换自动颜色功能（0 表示禁用）
+shortcuts:                      # 快捷键设置
+  add_point_to_edge: Ctrl+Shift+P  # 在边上添加新点
+  auto_label: Ctrl+A               # 自动标注
+  auto_run: Ctrl+M                 # 自动运行
+  close: Ctrl+W                   # 关闭当前窗口
+  copy_polygon: Ctrl+C            # 复制多边形
+  create_circle: null             # 创建圆形（未设置快捷键）
+  create_line: null               # 创建直线（未设置快捷键）
+  create_linestrip: null          # 创建折线（未设置快捷键）
+  create_point: null              # 创建点（未设置快捷键）
+  create_polygon:                 # 创建多边形
+  - P
+  - Ctrl+N
+  create_rectangle:               # 创建矩形
+  - R
+  - Ctrl+R
+  create_rotation: O              # 创建旋转框
+  delete_file: Ctrl+Delete        # 删除文件
+  delete_image_file: Ctrl+Shift+Delete  # 删除图像文件
+  delete_polygon: Delete          # 删除选中多边形
+  duplicate_polygon: Ctrl+D       # 复制选中多边形
+  edit_digit_shortcut: Alt+O      # 编辑数字快捷键
+  edit_group_id: Alt+G            # 编辑分组 ID
+  edit_label: Ctrl+E              # 编辑标签
+  edit_polygon: Ctrl+J            # 编辑多边形
+  fit_width: Ctrl+Shift+F         # 适应宽度显示
+  fit_window: Ctrl+F              # 适应窗口显示
+  group_selected_shapes: G        # 将选中的形状分组
+  hide_selected_polygons: S       # 隐藏选中的多边形
+  loop_thru_labels: N             # 循环浏览标签
+  open: null                      # 打开文件（未设置快捷键）
+  open_chatbot: Ctrl+B            # 打开聊天机器人
+  open_dir: Ctrl+U                # 打开目录
+  open_next:                      # 打开下一张图像
+  - D
+  - Ctrl+Shift+D
+  open_next_unchecked: Ctrl+Shift+D  # 打开下一张未检查的图像
+  open_prev:                      # 打开上一张图像
+  - A
+  - Ctrl+Shift+A
+  open_prev_unchecked: Ctrl+Shift+A  # 打开上一张未检查的图像
+  open_video: Ctrl+O              # 打开视频文件
+  open_vqa: null                  # 打开 VQA 功能（未设置快捷键）
+  paste_polygon: Ctrl+V           # 粘贴多边形
+  quit: null                      # 退出程序（未设置快捷键）
+  remove_selected_point: Backspace # 删除选中的点
+  save: Ctrl+S                    # 保存
+  save_as: Ctrl+Shift+S           # 另存为
+  save_to: null                   # 保存到（未设置快捷键）
+  show_attributes: Ctrl+Shift+L   # 显示属性
+  show_hidden_polygons: W         # 显示已隐藏的多边形
+  show_labels: Ctrl+L             # 显示/隐藏标签
+  show_linking: null              # 显示链接关系（未设置快捷键）
+  show_navigator: Alt+Z           # 显示导航器
+  show_order: Ctrl+Shift+O        # 显示顺序
+  show_overview: Ctrl+G           # 显示总览
+  show_texts: null                # 显示文字（未设置快捷键）
+  toggle_auto_use_last_label: Ctrl+K  # 切换自动使用上次标签模式
+  toggle_keep_prev_mode: Ctrl+P   # 切换保持上一个标注模式
+  toggle_visibility_shapes: Ctrl+H # 切换形状可见性
+  undo: Ctrl+Z                    # 撤销
+  undo_last_point: Ctrl+Z         # 撤销上一个点
+  ungroup_selected_shapes: U      # 取消分组
+  union_selected_shapes: M        # 合并选中形状
+  zoom_in:                        # 放大
+  - Ctrl++ 
+  - Ctrl+=
+  zoom_out: Ctrl+-                # 缩小
+  zoom_to_original: Ctrl+0        # 缩放到原始大小
+show_attributes: true             # 是否显示属性
+show_degrees: true                # 是否显示角度
+show_groups: false                # 是否显示分组
+show_label_text_field: true       # 是否显示标签输入框
+show_labels: true                 # 是否显示标签
+show_linking: false               # 是否显示标签间的链接关系
+show_order: true                  # 是否显示顺序
+show_scores: true                 # 是否显示置信度分数
+show_shapes: true                 # 是否显示形状
+show_texts: false                 # 是否显示文本
+sort_labels: true                 # 标签是否排序
+store_data: false                 # 是否存储数据
+switch_to_checked: false          # 是否切换到已检查文件
+system_clipboard: true            # 是否启用系统剪贴板
+validate_label: null              # 标签验证规则（未设置）
+toggle_crosshair: Ctrl+Shift+H # “切换/显示/隐藏十字线”功能
+1 select_all_labels: Alt+Q # 全选 (标签列表)
+2 deselect_all_labels: Alt+W # 取消 (标签列表)
+3 invert_selection_labels: Alt+E # 反选 (标签列表)
+4 toggle_overlap: Alt+R # 重叠
+5 select_all_shapes: Alt+T# 全选 (对象列表)
+6 deselect_all_shapes: Alt+S # 取消 (对象列表)
+7 invert_selection_shapes: Alt+I # 反选 (对象列表)
+8 toggle_highlight: Alt+F # 高亮
