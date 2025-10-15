@@ -307,3 +307,5 @@ toggle_crosshair: Ctrl+Shift+H # “切换/显示/隐藏十字线”功能
 6 deselect_all_shapes: Alt+S # 取消 (对象列表)
 7 invert_selection_shapes: Alt+I # 反选 (对象列表)
 8 toggle_highlight: Alt+F # 高亮
+zoom_at_mouse_percentage_increase: 20 # 鼠标位置放大时增加的百分比
+zoom_at_mouse_shortcut: Alt+N # 鼠标位置放大快捷键
