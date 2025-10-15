@@ -1131,15 +1131,6 @@ class LabelingWidget(QtWidgets.QWidget):
             self.tr("Zoom to original size"),
             enabled=False,
         )
-        zoom_at_mouse = action(
-            self.tr("Zoom at Mouse Position"),
-            self.zoom_at_mouse_shortcut_triggered,
-            self._config.get("zoom_at_mouse_shortcut", "Ctrl+B"),
-            "zoom-in", # Using zoom-in icon
-            self.tr("Zoom in at current mouse position"),
-            enabled=False, # Will be enabled when image is loaded
-        )
-        self.addAction(zoom_at_mouse)
         keep_prev_scale = action(
             self.tr("&Keep Previous Scale"),
             lambda x: self._config.update({"keep_prev_scale": x}),
@@ -1630,15 +1621,26 @@ class LabelingWidget(QtWidgets.QWidget):
             tip="导出 ImageTrans ipt 项目文件",
         )
 
+        # Create action for zoom at mouse
+        zoom_at_mouse = action(
+            self.tr("Zoom at Mouse"),
+            self.zoom_at_mouse_shortcut_triggered,
+            QtGui.QKeySequence(self._config["canvas"].get("zoom_at_mouse_shortcut", "Ctrl+B")),
+            "zoom-in",
+            self.tr("Zoom in at mouse position"),
+            # enabled=False, # Removed enabled=False, toggle_actions will handle it
+        )
+        self.addAction(zoom_at_mouse) # Explicitly add action to widget for shortcut recognition
+
         # Group zoom controls into a list for easier toggling.
         zoom_actions = (
             self.zoom_widget,
             zoom_in,
             zoom_out,
             zoom_org,
-            zoom_at_mouse,
             fit_window,
             fit_width,
+            zoom_at_mouse, # Add the new action here
         )
         self.zoom_mode = self.FIT_WINDOW
         fit_window.setChecked(Qt.Checked)
@@ -1789,7 +1791,6 @@ class LabelingWidget(QtWidgets.QWidget):
             zoom_in=zoom_in,
             zoom_out=zoom_out,
             zoom_org=zoom_org,
-            zoom_at_mouse=zoom_at_mouse,
             keep_prev_scale=keep_prev_scale,
             keep_prev_brightness=keep_prev_brightness,
             keep_prev_contrast=keep_prev_contrast,
@@ -1807,6 +1808,7 @@ class LabelingWidget(QtWidgets.QWidget):
             show_linking=show_linking,
             show_order=show_order,
             show_navigator=show_navigator,
+            zoom_at_mouse=zoom_at_mouse, # Add the new action here
             zoom_actions=zoom_actions,
             open_next_image=open_next_image,
             open_prev_image=open_prev_image,
@@ -3002,19 +3004,22 @@ class LabelingWidget(QtWidgets.QWidget):
         if not self.label_file:
             return
 
-        label_colors = {}
-        for i in range(self.unique_label_list.count()):
-            item = self.unique_label_list.item(i)
-            label = item.data(Qt.UserRole)
-            if not label:
-                continue
-            color = item.background().color()
-            label_colors[label] = color
+        all_unique_labels = sorted(list(set(self._config["labels"]) | set(self.label_dialog.get_all_labels())))
+        # Add labels from existing shortcuts that might not be in config or history yet
+        for label_in_shortcut in self.label_toggle_shortcuts.values():
+            if label_in_shortcut not in all_unique_labels:
+                all_unique_labels.append(label_in_shortcut)
+        all_unique_labels = sorted(list(set(all_unique_labels))) # Re-sort and unique after adding from shortcuts
+
+        def get_label_qcolor_func(label_name):
+            rgb = self._get_rgb_by_label(label_name)
+            return QtGui.QColor(*rgb, LABEL_OPACITY)
 
         dialog = LabelToggleShortcutDialog(
             parent=self,
             shortcuts=self.label_toggle_shortcuts,
-            label_colors=label_colors
+            all_unique_labels=all_unique_labels,
+            get_label_qcolor_func=get_label_qcolor_func
         )
         
         if dialog.exec_():
@@ -5393,6 +5398,68 @@ class LabelingWidget(QtWidgets.QWidget):
             zoom_value = math.floor(zoom_value)
         self.set_zoom(zoom_value)
 
+    def zoom_at_mouse_shortcut_triggered(self):
+        """
+        Zooms in on the canvas at the current mouse position by a configurable percentage.
+        """
+        print("DEBUG_ZOOM: Method entered.") # Debug print at entry
+        if not hasattr(self, 'image') or self.image is None or self.image.isNull():
+            print(f"DEBUG_ZOOM: Image check failed. hasattr(self, 'image'): {hasattr(self, 'image')}, self.image is None: {self.image is None}, self.image.isNull(): {self.image.isNull() if hasattr(self, 'image') and self.image is not None else 'N/A'}") # Debug print
+            return
+
+        # Get current mouse position in global screen coordinates
+        global_mouse_pos = QtGui.QCursor.pos()
+        # Convert global mouse position to widget-relative position
+        widget_mouse_pos = self.mapFromGlobal(global_mouse_pos)
+        # Convert widget-relative position to canvas-relative position
+        canvas_mouse_pos = self.canvas.mapFromParent(widget_mouse_pos - self.canvas.pos())
+        print(f"DEBUG_ZOOM: Global mouse pos: {global_mouse_pos}, Widget mouse pos: {widget_mouse_pos}, Canvas mouse pos: {canvas_mouse_pos}") # Debug print
+
+        is_mouse_over_canvas = self.canvas.rect().contains(canvas_mouse_pos)
+        print(f"DEBUG_ZOOM: Mouse over canvas check: {is_mouse_over_canvas}") # Debug print
+        if not is_mouse_over_canvas:
+            print(f"DEBUG_ZOOM: Mouse not over canvas. Using canvas center for zoom.") # Debug print
+            # If mouse is not over canvas, use center of canvas for zoom
+            canvas_mouse_pos = self.canvas.rect().center()
+
+        percentage_increase = self._config["canvas"].get("zoom_at_mouse_percentage_increase", 20)
+        current_zoom = self.zoom_widget.value()
+        new_zoom = current_zoom + percentage_increase # Add percentage points directly
+        new_zoom = math.ceil(new_zoom) # Ensure it's an integer
+
+        # Clamp zoom value to reasonable limits (e.g., 10% to 1000%)
+        new_zoom = max(10, min(1000, new_zoom))
+        print(f"DEBUG_ZOOM: Config percentage: {percentage_increase}, Current zoom: {current_zoom}, New zoom (clamped): {new_zoom}") # Debug print
+
+        # Apply zoom and adjust scrollbars to keep mouse position centered
+        canvas_width_old = self.canvas.width()
+        canvas_height_old = self.canvas.height()
+        
+        self.set_zoom(new_zoom);
+
+        canvas_width_new = self.canvas.width()
+        canvas_height_new = self.canvas.height()
+        
+        print(f"DEBUG_ZOOM: Canvas old size: ({canvas_width_old}, {canvas_height_old}), New size: ({canvas_width_new}, {canvas_height_new})") # Debug print
+
+        if canvas_width_old != canvas_width_new:
+            canvas_scale_factor = canvas_width_new / canvas_width_old
+            x_shift = round(canvas_mouse_pos.x() * canvas_scale_factor - canvas_mouse_pos.x())
+            y_shift = round(canvas_mouse_pos.y() * canvas_scale_factor - canvas_mouse_pos.y())
+            print(f"DEBUG_ZOOM: Canvas scale factor: {canvas_scale_factor}, X shift: {x_shift}, Y shift: {y_shift}") # Debug print
+
+            self.set_scroll(
+                Qt.Horizontal,
+                self.scroll_bars[Qt.Horizontal].value() + x_shift,
+            )
+            self.set_scroll(
+                Qt.Vertical,
+                self.scroll_bars[Qt.Vertical].value() + y_shift,
+            )
+            print(f"DEBUG_ZOOM: Scrollbars adjusted. New H scroll: {self.scroll_bars[Qt.Horizontal].value()}, New V scroll: {self.scroll_bars[Qt.Vertical].value()}") # Debug print
+        else:
+            print("DEBUG_ZOOM: Canvas width did not change, no scrollbar adjustment needed.") # Debug print
+        print("DEBUG_ZOOM: Method exited.") # Debug print at exit
     def zoom_request(self, delta, pos):
         canvas_width_old = self.canvas.width()
         canvas_height_old = self.canvas.height()
@@ -5425,45 +5492,6 @@ class LabelingWidget(QtWidgets.QWidget):
             self.set_scroll(
                 Qt.Vertical,
                 self.scroll_bars[Qt.Vertical].value() + y_shift,
-            )
-
-    def zoom_at_mouse_shortcut_triggered(self):
-        if not self.image or self.image.isNull():
-            return
-
-        # Get current mouse position relative to the canvas
-        mouse_pos_global = QtGui.QCursor.pos()
-        mouse_pos_canvas = self.canvas.mapFromGlobal(mouse_pos_global)
-
-        # Store old canvas dimensions before zoom changes them
-        canvas_width_old = self.canvas.width()
-        canvas_height_old = self.canvas.height()
-        
-        # Get zoom percentage increase from config
-        zoom_percentage_increase = self._config.get("zoom_at_mouse_percentage_increase", 20)
-        current_zoom_value = self.zoom_widget.value()
-        new_zoom_value = round(current_zoom_value + zoom_percentage_increase)
-
-        # Set the new zoom value. This will also call paint_canvas() and update canvas dimensions.
-        self.set_zoom(new_zoom_value)
-
-        # Get new canvas dimensions after zoom
-        canvas_width_new = self.canvas.width()
-        canvas_height_new = self.canvas.height()
-
-        # Adjust scrollbars to center the zoom at the mouse position
-        if canvas_width_old != canvas_width_new:
-            canvas_scale_factor = canvas_width_new / canvas_width_old
-            x_shift = round(mouse_pos_canvas.x() * canvas_scale_factor - mouse_pos_canvas.x())
-            y_shift = round(mouse_pos_canvas.y() * canvas_scale_factor - mouse_pos_canvas.y())
-
-            self.set_scroll(
-                QtCore.Qt.Horizontal,
-                self.scroll_bars[QtCore.Qt.Horizontal].value() + x_shift,
-            )
-            self.set_scroll(
-                QtCore.Qt.Vertical,
-                self.scroll_bars[QtCore.Qt.Vertical].value() + y_shift,
             )
 
     def set_fit_window(self, value=True):
@@ -7361,6 +7389,14 @@ class LabelingWidget(QtWidgets.QWidget):
             self.label_tool_dialog = LabelToolDialog(self.last_open_dir, self)
         
         # 如果对话框已存在但文件夹已更改，则重新创建
+        if self.label_tool_dialog.folder_path != self.last_open_dir:
+            self.label_tool_dialog.close()
+            self.label_tool_dialog = LabelToolDialog(self.last_open_dir, self)
+
+        self.label_tool_dialog.show()
+        self.label_tool_dialog.raise_()
+        self.label_tool_dialog.activateWindow()
+
         if self.label_tool_dialog.folder_path != self.last_open_dir:
             self.label_tool_dialog.close()
             self.label_tool_dialog = LabelToolDialog(self.last_open_dir, self)
