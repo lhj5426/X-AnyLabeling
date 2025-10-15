@@ -334,9 +334,13 @@ https://github.com/user-attachments/assets/0c966290-175b-495f-b437-39a4dc111e9f
 
 https://github.com/user-attachments/assets/d10e372b-e137-4bcb-80cb-138300e8e927
 
+46.右侧8个按钮增加快捷键 可以不用鼠标点击宏 而是使用键盘宏了  不再局限于特定的窗口大小来使用了 同时写入C盘配置文件
 
+https://github.com/user-attachments/assets/c2a9da89-db34-42da-8e3b-98e96ad14854
 
+47.模仿原版的 数字快捷键管理器窗口 增加 右侧标签打勾区域的 标签切换快捷键管理器  同样可以不用鼠标点击宏 而是使用键盘宏 不再局限于特定的窗口大小来使用了 同时写入C盘配置文件
 
+https://github.com/user-attachments/assets/fce2d393-8faf-4325-a619-28bebc496130
 
 
 
