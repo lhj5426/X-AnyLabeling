@@ -390,6 +390,30 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         index = self.jump_spinbox.value() - 1
         self.jump_to_image.emit(index)
 
+    def showEvent(self, event):
+        super(ExpandMarginsDialog, self).showEvent(event)
+        total_files = 0
+        if self.parent() and hasattr(self.parent(), 'file_list_widget'):
+            total_files = self.parent().file_list_widget.count()
+
+        if self.start_spinbox.maximum() != total_files:
+            if total_files > 0:
+                self.start_spinbox.setRange(1, total_files)
+                self.end_spinbox.setRange(1, total_files)
+                self.jump_spinbox.setRange(1, total_files)
+                self.start_spinbox.setValue(1)
+                self.end_spinbox.setValue(total_files)
+            else:
+                self.start_spinbox.setRange(0, 0)
+                self.end_spinbox.setRange(0, 0)
+                self.jump_spinbox.setRange(0, 0)
+        
+        current_page = 0
+        if self.parent() and hasattr(self.parent(), 'file_list_widget'):
+            current_page = self.parent().file_list_widget.currentRow() + 1
+        
+        self.set_current_page(current_page)
+
     def refresh_state(self, labels, total_files, current_page):
         if total_files > 0:
             self.start_spinbox.setRange(1, total_files)
