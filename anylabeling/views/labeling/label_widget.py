@@ -75,6 +75,7 @@ from .widgets import (
     MergeDialog,
     LabelToolDialog,
     TagSortDialog,
+    AngleCorrectionDialog,
 )
 from ...services import merger, tag_sorting
 
@@ -188,6 +189,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.merge_progress_dialog = None
         self.label_tool_dialog = None
         self.tag_sort_dialog = None
+        self.angle_correction_dialog = None
         self.tag_sort_thread = None
         self.tag_sort_scope = None
         self.tag_sort_files = []
@@ -1033,6 +1035,12 @@ class LabelingWidget(QtWidgets.QWidget):
             self.open_tag_sort_dialog,
             icon="edit",
             tip=self.tr("根据排序规则批量调整标注标签顺序"),
+        )
+        angle_correction_tool = action(
+            self.tr("旋转框角度修正工具"),
+            self.open_angle_correction_dialog,
+            icon="rotation",
+            tip=self.tr("批量修正旋转框的角度"),
         )
         merge_shapes = action(
             self.tr("区域合并工具"),
@@ -1955,6 +1963,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 None,
                 expand_margins,
                 tag_sort_tool,
+                angle_correction_tool,
                 merge_shapes,
                 None,
                 dual_color_label_tool,
@@ -3509,6 +3518,25 @@ class LabelingWidget(QtWidgets.QWidget):
             self.tag_sort_dialog.activateWindow()
         else:
             self.tag_sort_dialog.show()
+
+    def open_angle_correction_dialog(self):
+        """Open the angle correction dialog window."""
+        if not self.image_list:
+            self.error_message(
+                self.tr("No images loaded"),
+                self.tr("Please load an image folder before using this tool."),
+            )
+            return
+
+        if self.angle_correction_dialog is None:
+            self.angle_correction_dialog = AngleCorrectionDialog(parent=self)
+            self.angle_correction_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        if self.angle_correction_dialog.isVisible():
+            self.angle_correction_dialog.raise_()
+            self.angle_correction_dialog.activateWindow()
+        else:
+            self.angle_correction_dialog.show()
 
 
     def open_vqa(self):
