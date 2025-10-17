@@ -38,15 +38,24 @@ class MergeDialog(QtWidgets.QDialog):
         for text, data in self.merge_mode_map.items():
             self.merge_mode.addItem(text, userData=data)
         main_layout.addRow("合并模式:", self.merge_mode)
-
-        # 添加文字阅读方向设置
-        self.reading_direction = QtWidgets.QComboBox()
-        self.reading_direction.addItem("从左到右 (LTR)", userData="LTR")
-        self.reading_direction.addItem("从右到左 (RTL) - 日文漫画", userData="RTL")
-        self.reading_direction.setCurrentIndex(1)  # 默认选择日文漫画模式
-        main_layout.addRow("文字阅读方向:", self.reading_direction)
-
         self.layout.addWidget(main_group)
+
+        # --- Text Reading Order Settings ---
+        reading_order_group = QtWidgets.QGroupBox("文本合并顺序 (按标签)")
+        reading_order_layout = QtWidgets.QFormLayout(reading_order_group)
+        
+        self.ltr_labels_edit = QtWidgets.QLineEdit()
+        self.ltr_labels_edit.setPlaceholderText("标签1,标签2,...")
+        self.rtl_labels_edit = QtWidgets.QLineEdit()
+        self.rtl_labels_edit.setText("balloon,qipao,shuqing")
+        self.ttb_labels_edit = QtWidgets.QLineEdit()
+        self.ttb_labels_edit.setText("changfangtiao,hengxie")
+
+        reading_order_layout.addRow("从左到右 (LTR) 标签:", self.ltr_labels_edit)
+        reading_order_layout.addRow("从右到左 (RTL) 标签:", self.rtl_labels_edit)
+        reading_order_layout.addRow("从上到下 (TTB) 标签:", self.ttb_labels_edit)
+        
+        self.layout.addWidget(reading_order_group)
 
         # --- Labeling Rules --- #
         label_group = QtWidgets.QGroupBox("标签合并规则")
@@ -68,6 +77,7 @@ class MergeDialog(QtWidgets.QDialog):
         self.use_specific_groups = QtWidgets.QCheckBox("仅在特定标签组内合并")
         self.specific_groups_edit = QtWidgets.QPlainTextEdit()
         self.specific_groups_edit.setPlaceholderText("每行一个分组, 组内标签用逗号分隔\n例如:\nballoon,balloon2\nqipao,qipao2")
+        self.specific_groups_edit.setPlainText("balloon\nqipao\nshuqing\nchangfangtiao\nhengxie")
         self.specific_groups_edit.setEnabled(False)
         self.use_specific_groups.toggled.connect(self.specific_groups_edit.setEnabled)
         self.use_specific_groups.toggled.connect(lambda checked: self.require_same_label.setDisabled(checked))
@@ -77,38 +87,37 @@ class MergeDialog(QtWidgets.QDialog):
 
         self.layout.addWidget(label_group)
 
-        # --- Geometric Rules --- #
-        geo_tabs = QtWidgets.QTabWidget()
-        
-        # Vertical Tab
-        vertical_widget = QtWidgets.QWidget()
-        vertical_layout = QtWidgets.QFormLayout(vertical_widget)
+        # --- Geometric Rules ---
+        geo_group = QtWidgets.QGroupBox("几何合并参数")
+        geo_layout = QtWidgets.QFormLayout(geo_group)
+
+        # Vertical merge parameters
         self.max_vertical_gap = QtWidgets.QSpinBox()
         self.max_vertical_gap.setRange(0, 1000)
-        self.max_vertical_gap.setValue(3)
+        self.max_vertical_gap.setValue(10)
         self.min_width_overlap_ratio = QtWidgets.QSpinBox()
         self.min_width_overlap_ratio.setRange(0, 100)
-        self.min_width_overlap_ratio.setValue(5)
+        self.min_width_overlap_ratio.setValue(90)
         self.min_width_overlap_ratio.setSuffix(" %")
-        vertical_layout.addRow("最大垂直间隙 (像素):", self.max_vertical_gap)
-        vertical_layout.addRow("最小水平重叠比例:", self.min_width_overlap_ratio)
-        geo_tabs.addTab(vertical_widget, "垂直合并参数")
-
-        # Horizontal Tab
-        horizontal_widget = QtWidgets.QWidget()
-        horizontal_layout = QtWidgets.QFormLayout(horizontal_widget)
+        
+        # Horizontal merge parameters
         self.max_horizontal_gap = QtWidgets.QSpinBox()
         self.max_horizontal_gap.setRange(0, 1000)
         self.max_horizontal_gap.setValue(10)
         self.min_height_overlap_ratio = QtWidgets.QSpinBox()
         self.min_height_overlap_ratio.setRange(0, 100)
-        self.min_height_overlap_ratio.setValue(10)
+        self.min_height_overlap_ratio.setValue(90)
         self.min_height_overlap_ratio.setSuffix(" %")
-        horizontal_layout.addRow("最大水平间隙 (像素):", self.max_horizontal_gap)
-        horizontal_layout.addRow("最小垂直重叠比例:", self.min_height_overlap_ratio)
-        geo_tabs.addTab(horizontal_widget, "水平合并参数")
 
-        self.layout.addWidget(geo_tabs)
+        # Add separator and widgets to layout
+        geo_layout.addRow(QtWidgets.QLabel("<b>垂直合并 (上下)</b>"))
+        geo_layout.addRow("最大垂直间隙 (像素):", self.max_vertical_gap)
+        geo_layout.addRow("最小水平重叠比例:", self.min_width_overlap_ratio)
+        geo_layout.addRow(QtWidgets.QLabel("<b>水平合并 (左右)</b>"))
+        geo_layout.addRow("最大水平间隙 (像素):", self.max_horizontal_gap)
+        geo_layout.addRow("最小垂直重叠比例:", self.min_height_overlap_ratio)
+
+        self.layout.addWidget(geo_group)
 
         # --- Advanced Options --- #
         advanced_group = QtWidgets.QGroupBox("高级选项")
@@ -118,6 +127,24 @@ class MergeDialog(QtWidgets.QDialog):
         advanced_layout.addWidget(self.allow_negative_gap)
 
         self.layout.addWidget(advanced_group)
+
+        # --- Merge Result Type --- #
+        result_type_group = QtWidgets.QGroupBox("合并结果类型")
+        result_type_layout = QtWidgets.QVBoxLayout(result_type_group)
+        
+        self.output_type_group = QtWidgets.QButtonGroup(self)
+        self.radio_output_rectangle = QtWidgets.QRadioButton("合并水平矩形")
+        self.radio_output_rotation = QtWidgets.QRadioButton("合并旋转矩形")
+        
+        self.radio_output_rectangle.setChecked(True) # Default to rectangle
+        
+        self.output_type_group.addButton(self.radio_output_rectangle, 1)
+        self.output_type_group.addButton(self.radio_output_rotation, 2)
+        
+        result_type_layout.addWidget(self.radio_output_rectangle)
+        result_type_layout.addWidget(self.radio_output_rotation)
+        
+        self.layout.addWidget(result_type_group)
 
         # --- Buttons --- #
         self.button_box = QtWidgets.QDialogButtonBox()
@@ -132,7 +159,19 @@ class MergeDialog(QtWidgets.QDialog):
     def get_config(self):
         config = {}
         config["MERGE_MODE"] = self.merge_mode.currentData()
-        config["READING_DIRECTION"] = self.reading_direction.currentData()
+        # Set a default reading direction, as the UI for a global default has been removed.
+        # The logic in merger.py uses this as a fallback.
+        config["READING_DIRECTION"] = "LTR"
+
+        # Parse per-label directions from the new QLineEdits
+        per_label_directions = {}
+        for label in [l.strip() for l in self.ltr_labels_edit.text().split(',') if l.strip()]:
+            per_label_directions[label] = 'LTR'
+        for label in [l.strip() for l in self.rtl_labels_edit.text().split(',') if l.strip()]:
+            per_label_directions[label] = 'RTL'
+        for label in [l.strip() for l in self.ttb_labels_edit.text().split(',') if l.strip()]:
+            per_label_directions[label] = 'TTB'
+        config["PER_LABEL_DIRECTIONS"] = per_label_directions
 
         excluded = self.exclude_labels.text().strip()
         config["LABELS_TO_EXCLUDE_FROM_MERGE"] = set(l.strip() for l in excluded.split(",") if l.strip())
@@ -168,5 +207,7 @@ class MergeDialog(QtWidgets.QDialog):
             "allow_negative_gap": self.allow_negative_gap.isChecked(),
             "debug_mode": False # Not exposed in UI
         }
+
+        config["OUTPUT_SHAPE_TYPE"] = "rectangle" if self.output_type_group.checkedId() == 1 else "rotation"
 
         return config

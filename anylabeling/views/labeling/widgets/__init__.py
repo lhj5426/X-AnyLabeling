@@ -32,6 +32,7 @@ from .merge_dialog import MergeDialog
 from .label_tool_dialog import LabelToolDialog
 from .tag_sort_dialog import TagSortDialog
 from .label_toggle_shortcut_dialog import LabelToggleShortcutDialog
+from .angle_correction_dialog import AngleCorrectionDialog
 
 
 __all__ = [
@@ -68,4 +69,5 @@ __all__ = [
     "LabelToolDialog",
     "TagSortDialog",
     "LabelToggleShortcutDialog",
+    "AngleCorrectionDialog",
 ]
