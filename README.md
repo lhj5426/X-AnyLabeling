@@ -346,6 +346,14 @@ https://github.com/user-attachments/assets/fce2d393-8faf-4325-a619-28bebc496130
 
 https://github.com/user-attachments/assets/760c5608-cfdc-4ddb-bbc5-3eb55fa4f54a
 
+49.增加针对旋转矩形的角度扶正功能 
+
+https://github.com/user-attachments/assets/f2fd9387-1956-4676-b919-b74edaa763e5
+
+50.区域合并工具工具 增加旋转矩形合并功能 增强合并逻辑  文本合并增加从上到下合并 以及精细化文本合并标签设置
+
+https://github.com/user-attachments/assets/4ccee7ca-81c7-4847-bb5d-f0be7e68cc2b
+
 
 
 
