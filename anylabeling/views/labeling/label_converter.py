@@ -1216,7 +1216,7 @@ class LabelConverter:
                 ]
 
             shape = {
-                "label": "text_region", 
+                "label": item.get("label", "text_region"), 
                 "score": None,
                 "points": points,
                 "group_id": None,
@@ -1246,6 +1246,7 @@ class LabelConverter:
             return None
 
         description_text = shape.get('description') or ''
+        label_text = shape.get('label') or ''
         points = shape['points']
 
         angle_deg = 0.0
@@ -1284,6 +1285,7 @@ class LabelConverter:
         is_vertical = h >= w
 
         obj = {
+            "label": label_text,
             "xyxy": [x1, y1, x2, y2],
             "lines": final_lines,
             "language": "unknown",
