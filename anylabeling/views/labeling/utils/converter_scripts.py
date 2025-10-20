@@ -95,7 +95,7 @@ def convert_ballons_to_anylabel(ballons_json_path):
                 ]
 
             shape = {
-                "label": item.get("label", "text_region"), 
+                "label": item.get("label") or "text_region", 
                 "score": None,
                 "points": points,
                 "group_id": None,
