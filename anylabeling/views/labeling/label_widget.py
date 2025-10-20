@@ -551,6 +551,15 @@ class LabelingWidget(QtWidgets.QWidget):
             "open",
             self.tr("Open Dir"),
         )
+        load_subfolders_action = action(
+            text=self.tr("加载子文件夹"),
+            slot=lambda x: self._config.update({"load_subfolders": x}),
+            icon=None,
+            tip=self.tr("加载所选文件夹的所有子文件夹中的图像"),
+            checkable=True,
+            enabled=True,
+            checked=self._config.get("load_subfolders", False),
+        )
         open_next_image = action(
             self.tr("&Next Image"),
             self.open_next_image,
@@ -1929,6 +1938,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 open_next_unchecked_image,
                 open_prev_unchecked_image,
                 opendir,
+                load_subfolders_action,
                 openvideo,
                 self.menus.recent_files,
                 save,
@@ -6193,6 +6203,9 @@ class LabelingWidget(QtWidgets.QWidget):
         if not self.may_continue():
             return
         self.reset_state()
+        self.file_list_widget.clear()
+        self.fn_to_index.clear()
+        self.last_open_dir = None
         self.set_clean()
         self.toggle_actions(False)
         self.canvas.setEnabled(False)
@@ -6399,7 +6412,13 @@ class LabelingWidget(QtWidgets.QWidget):
                 | QtWidgets.QFileDialog.DontResolveSymlinks,
             )
         )
-        self.import_image_folder(target_dir_path)
+
+        if not target_dir_path:
+            return
+
+        # Read the recursive option from the config
+        recursive = self._config.get("load_subfolders", False)
+        self.import_image_folder(target_dir_path, recursive=recursive)
 
     @property
     def image_list(self):
@@ -6448,7 +6467,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.open_next_image()
 
-    def import_image_folder(self, dirpath, pattern=None, load=True):
+    def import_image_folder(self, dirpath, pattern=None, load=True, recursive=True):
         if not self.may_continue() or not dirpath:
             return
 
@@ -6466,7 +6485,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.last_open_dir = dirpath
         self.file_list_widget.clear()
         self.fn_to_index = {}
-        for filename in utils.scan_all_images(dirpath):
+        for filename in utils.scan_all_images(dirpath, recursive=recursive):
             if pattern and pattern not in filename:
                 continue
             label_file = osp.splitext(filename)[0] + ".json"
