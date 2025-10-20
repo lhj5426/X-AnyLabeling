@@ -54,6 +54,8 @@ class Worker(QThread):
 
         if self.mode == 'to_bicolor':
             self.to_bicolor(data)
+        elif self.mode == 'bulk_edit':
+            self.bulk_edit(data)
         elif self.mode == 'to_monocolor':
             self.to_monocolor(data)
 
@@ -75,6 +77,16 @@ class Worker(QThread):
                     new_label = label_map[label]
                     shape['label'] = new_label
                     self.log_signal.emit(f"  已将第 {counters[label]} 个 '{label}' 修改为 '{new_label}'")
+
+    def bulk_edit(self, data):
+        label_map = dict(zip(self.labels_a, self.labels_b))
+        for shape in data['shapes']:
+            label = shape.get('label')
+            if label in label_map:
+                original_label = label
+                new_label = label_map[label]
+                shape['label'] = new_label
+                self.log_signal.emit(f"  已将 '{original_label}' 批量修改为 '{new_label}'")
 
     def to_monocolor(self, data):
         revert_map = dict(zip(self.labels_b, self.labels_a))
@@ -146,10 +158,12 @@ class LabelToolDialog(QDialog):
 
         # Mode selection
         self.mode_group = QGroupBox("模式")
-        self.to_bicolor_radio = QRadioButton("转换为双色标签")
-        self.to_monocolor_radio = QRadioButton("还原为单色标签")
-        self.to_bicolor_radio.setChecked(True)
+        self.bulk_edit_radio = QRadioButton("批量修改标签 (将所有A替换为B)")
+        self.to_bicolor_radio = QRadioButton("间隔修改标签 (将偶数个A替换为B)")
+        self.to_monocolor_radio = QRadioButton("还原为单色标签 (将B还原为A)")
+        self.bulk_edit_radio.setChecked(True)
         mode_layout = QVBoxLayout()
+        mode_layout.addWidget(self.bulk_edit_radio)
         mode_layout.addWidget(self.to_bicolor_radio)
         mode_layout.addWidget(self.to_monocolor_radio)
         self.mode_group.setLayout(mode_layout)
@@ -216,7 +230,13 @@ class LabelToolDialog(QDialog):
     def _run_processing_with_worker(self, files_to_process):
         labels_a_str = self.label_a_edit.text().strip()
         labels_b_str = self.label_b_edit.text().strip()
-        mode = 'to_bicolor' if self.to_bicolor_radio.isChecked() else 'to_monocolor'
+        
+        if self.bulk_edit_radio.isChecked():
+            mode = 'bulk_edit'
+        elif self.to_bicolor_radio.isChecked():
+            mode = 'to_bicolor'
+        else:
+            mode = 'to_monocolor'
 
         labels_a = [label.strip() for label in labels_a_str.split(',') if label.strip()]
         labels_b = [label.strip() for label in labels_b_str.split(',') if label.strip()]
@@ -241,7 +261,13 @@ class LabelToolDialog(QDialog):
     def run_current_page_processing(self):
         labels_a_str = self.label_a_edit.text().strip()
         labels_b_str = self.label_b_edit.text().strip()
-        mode = 'to_bicolor' if self.to_bicolor_radio.isChecked() else 'to_monocolor'
+
+        if self.bulk_edit_radio.isChecked():
+            mode = 'bulk_edit'
+        elif self.to_bicolor_radio.isChecked():
+            mode = 'to_bicolor'
+        else:
+            mode = 'to_monocolor'
 
         labels_a = [label.strip() for label in labels_a_str.split(',') if label.strip()]
         labels_b = [label.strip() for label in labels_b_str.split(',') if label.strip()]
@@ -286,6 +312,8 @@ class LabelToolDialog(QDialog):
 
         if mode == 'to_bicolor':
             self._to_bicolor(data, labels_a, labels_b)
+        elif mode == 'bulk_edit':
+            self._bulk_edit(data, labels_a, labels_b)
         elif mode == 'to_monocolor':
             self._to_monocolor(data, labels_a, labels_b)
 
@@ -319,6 +347,16 @@ class LabelToolDialog(QDialog):
                     new_label = label_map[label]
                     shape['label'] = new_label
                     self.log_output.append(f"  已将第 {counters[label]} 个 '{label}' 修改为 '{new_label}'")
+
+    def _bulk_edit(self, data, labels_a, labels_b):
+        label_map = dict(zip(labels_a, labels_b))
+        for shape in data['shapes']:
+            label = shape.get('label')
+            if label in label_map:
+                original_label = label
+                new_label = label_map[label]
+                shape['label'] = new_label
+                self.log_output.append(f"  已将 '{original_label}' 批量修改为 '{new_label}'")
 
     def _to_monocolor(self, data, labels_a, labels_b):
         revert_map = dict(zip(labels_b, labels_a))
