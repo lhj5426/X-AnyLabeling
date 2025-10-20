@@ -95,8 +95,7 @@ def convert_ballons_to_anylabel(ballons_json_path):
                 ]
 
             shape = {
-                # BallonsTranslator 没有 label, 这里给一个默认值
-                "label": "text_region", 
+                "label": item.get("label", "text_region"), 
                 "score": None,
                 "points": points,
                 "group_id": None,
