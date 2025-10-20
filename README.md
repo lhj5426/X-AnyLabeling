@@ -354,6 +354,18 @@ https://github.com/user-attachments/assets/f2fd9387-1956-4676-b919-b74edaa763e5
 
 https://github.com/user-attachments/assets/4ccee7ca-81c7-4847-bb5d-f0be7e68cc2b
 
+51.双色标签增强 增加 单标签全部修改模式
+
+https://github.com/user-attachments/assets/2a71a6fb-35e1-4345-97df-87e8e064d28d
+
+52.配合自魔改版[BallonsTranslator](https://github.com/lhj5426/BallonsTranslator) BallonsTranslator的导入导出增加标签字段
+
+https://github.com/user-attachments/assets/bdfb46e6-79e6-4411-be18-94ed519c91dd
+
+
+
+
+
 
 
 
