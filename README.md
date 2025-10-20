@@ -362,6 +362,14 @@ https://github.com/user-attachments/assets/2a71a6fb-35e1-4345-97df-87e8e064d28d
 
 https://github.com/user-attachments/assets/bdfb46e6-79e6-4411-be18-94ed519c91dd
 
+53.原版加载一个文件夹 如果文件夹里有子文件夹且有图片也会加载 用户无法选择是否加载子文件夹这种一刀切的做法实属没必要  现在可以选择是否加载子文件夹 默认不加载子文件夹
+
+https://github.com/user-attachments/assets/224eda31-bef2-4645-94fd-c232f4f1cf8c
+
+54.原版的关闭有BUG 明明点击关闭了 但右下角的地址栏没有清空导致按A 或者D切换图片 还可以打开路径的图片 是假关闭 修复 成真关闭 关闭会清空右下角的地址栏
+
+https://github.com/user-attachments/assets/63d18a17-b61e-49d0-b8b6-dc6ec217a019
+
 
 
 
