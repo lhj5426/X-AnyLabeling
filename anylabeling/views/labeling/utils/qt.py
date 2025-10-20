@@ -10,7 +10,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from anylabeling.views.labeling.logger import logger
 
 
-def scan_all_images(folder_path):
+def scan_all_images(folder_path, recursive=True):
     try:
         extensions = [
             f".{fmt.data().decode().lower()}"
@@ -20,12 +20,19 @@ def scan_all_images(folder_path):
         images = []
         folder_path = osp.normpath(osp.abspath(folder_path))
 
-        for root, _, files in os.walk(folder_path):
-            for file in files:
+        if recursive:
+            for root, _, files in os.walk(folder_path):
+                for file in files:
+                    if file.lower().endswith(tuple(extensions)):
+                        relative_path = osp.normpath(osp.join(root, file))
+                        relative_path = str(relative_path)
+                        images.append(relative_path)
+        else:
+            for file in os.listdir(folder_path):
                 if file.lower().endswith(tuple(extensions)):
-                    relative_path = osp.normpath(osp.join(root, file))
-                    relative_path = str(relative_path)
-                    images.append(relative_path)
+                    file_path = osp.join(folder_path, file)
+                    if osp.isfile(file_path):
+                        images.append(file_path)
 
         try:
             return natsort.natsorted(images)
