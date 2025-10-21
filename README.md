@@ -370,6 +370,11 @@ https://github.com/user-attachments/assets/224eda31-bef2-4645-94fd-c232f4f1cf8c
 
 https://github.com/user-attachments/assets/63d18a17-b61e-49d0-b8b6-dc6ec217a019
 
+55.加载模型后 uI增加 过滤标签按钮 可以实时调整过滤标签了
+
+https://github.com/user-attachments/assets/a76933ba-0288-4865-bab7-795630517b12
+
+
 
 
 
