@@ -190,6 +190,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.label_tool_dialog = None
         self.tag_sort_dialog = None
         self.angle_correction_dialog = None
+        self.mask_generator_dialog = None
         self.tag_sort_thread = None
         self.tag_sort_scope = None
         self.tag_sort_files = []
@@ -1062,6 +1063,12 @@ class LabelingWidget(QtWidgets.QWidget):
             self.open_label_tool,
             icon="edit",
             tip=self.tr("转换或还原双色标签"),
+        )
+        mask_generator_tool = action(
+            self.tr("MASK生成"),
+            self.open_mask_generator,
+            icon="edit",
+            tip=self.tr("使用CTD模型生成文字区域掩膜"),
         )
 
         open_chatbot = action(
@@ -1977,6 +1984,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 merge_shapes,
                 None,
                 dual_color_label_tool,
+                mask_generator_tool,
             ),
         )
         utils.add_actions(
@@ -3842,7 +3850,9 @@ class LabelingWidget(QtWidgets.QWidget):
         def make_folder_opener(folder_path):
             """Create a function that opens the given folder - avoids closure issues."""
             def open_folder():
-                self.import_image_folder(folder_path)
+                # Respect the "load_subfolders" setting when opening from recent folders
+                recursive = self._config.get("load_subfolders", False)
+                self.import_image_folder(folder_path, recursive=recursive)
             return open_folder
 
         menu = self.menus.recent_files
@@ -7421,7 +7431,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         if self.label_tool_dialog is None:
             self.label_tool_dialog = LabelToolDialog(self.last_open_dir, self)
-        
+
         # 如果对话框已存在但文件夹已更改，则重新创建
         if self.label_tool_dialog.folder_path != self.last_open_dir:
             self.label_tool_dialog.close()
@@ -7435,7 +7445,14 @@ class LabelingWidget(QtWidgets.QWidget):
             self.label_tool_dialog.close()
             self.label_tool_dialog = LabelToolDialog(self.last_open_dir, self)
 
-        self.label_tool_dialog.show()
-        self.label_tool_dialog.raise_()
-        self.label_tool_dialog.activateWindow()
+    def open_mask_generator(self):
+        """打开MASK生成对话框"""
+        if self.mask_generator_dialog is None:
+            from anylabeling.views.labeling.widgets.mask_generator_dialog import MaskGeneratorDialog
+            self.mask_generator_dialog = MaskGeneratorDialog(self)
+
+        self.mask_generator_dialog.show()
+        self.mask_generator_dialog.raise_()
+        self.mask_generator_dialog.activateWindow()
+
 
