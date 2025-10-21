@@ -351,6 +351,16 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="button_filter_classes">
+       <property name="text">
+        <string>过滤标签</string>
+       </property>
+       <property name="toolTip">
+        <string>配置检测结果中显示的标签</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <spacer name="horizontalSpacer">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>

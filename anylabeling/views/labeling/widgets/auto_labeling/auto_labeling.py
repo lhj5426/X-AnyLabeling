@@ -3,7 +3,7 @@ import yaml
 import collections
 
 from PyQt5 import uic
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, QPoint
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, QPoint, Qt
 from PyQt5.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -26,6 +26,7 @@ from anylabeling.views.labeling.utils.style import (
     get_toggle_button_style,
 )
 from anylabeling.views.labeling.widgets.api_token_dialog import ApiTokenDialog
+from anylabeling.views.labeling.widgets.filter_classes_dialog import FilterClassesDialog
 from anylabeling.views.labeling.widgets.searchable_model_dropdown import (
     load_json,
     save_json,
@@ -115,6 +116,9 @@ class AutoLabelingWidget(QWidget):
         self.initial_iou_value = 0
         self.initial_preserve_annotations_state = False
 
+        # 保存从YAML导入的额外标签（在软件运行期间持久化）
+        self.extra_labels_from_yaml = []
+
         # ===================================
         #  Auto labeling buttons
         # ===================================
@@ -135,6 +139,13 @@ class AutoLabelingWidget(QWidget):
         # --- Configuration for: button_reset_tracker ---
         self.button_reset_tracker.setStyleSheet(get_normal_button_style())
         self.button_reset_tracker.clicked.connect(self.on_reset_tracker)
+
+        # --- Configuration for: button_filter_classes ---
+        self.button_filter_classes.setStyleSheet(get_normal_button_style())
+        self.button_filter_classes.clicked.connect(self.on_filter_classes_clicked)
+        self.button_filter_classes.setToolTip(
+            self.tr("Configure which labels to display in detection results")
+        )
 
         # --- Configuration for: button_set_api_token ---
         self.button_set_api_token.setStyleSheet(get_normal_button_style())
@@ -681,6 +692,7 @@ class AutoLabelingWidget(QWidget):
             "toggle_preserve_existing_annotations",
             "button_set_api_token",
             "button_reset_tracker",
+            "button_filter_classes",
             "upn_select_combobox",
             "gd_select_combobox",
             "florence2_select_combobox",
@@ -730,6 +742,90 @@ class AutoLabelingWidget(QWidget):
                 self.model_manager.set_auto_labeling_api_token(token)
             except Exception as e:
                 logger.error(f"Error setting API token: {e}")
+
+    def on_filter_classes_clicked(self):
+        """Handle filter classes button click - show dialog to configure filter classes"""
+        if not self.model_manager.loaded_model_config:
+            logger.warning("No model loaded. Please load a model first.")
+            return
+
+        # 从右侧标签列表获取所有类别（而不是从模型配置文件读取）
+        unique_label_list = self.parent.unique_label_list
+        all_classes = []
+        for row in range(unique_label_list.count()):
+            item = unique_label_list.item(row)
+            label_text = item.data(Qt.UserRole)  # 获取标签名称
+            if label_text and label_text not in all_classes:
+                all_classes.append(label_text)
+
+        # 添加从YAML导入的额外标签
+        for label in self.extra_labels_from_yaml:
+            if label not in all_classes:
+                all_classes.append(label)
+
+        if not all_classes:
+            logger.warning("No labels found in the label list. Please add some labels first.")
+            return
+
+        # 不读取持久化的过滤配置，每次打开都默认全选（显示所有标签）
+        # 只使用当前会话的过滤设置（如果有的话）
+        model_config = self.model_manager.loaded_model_config
+        current_filter_classes = model_config.get("filter_classes", []) if hasattr(self, '_session_filter_applied') else []
+
+        # 创建非模态对话框，允许同时操作主界面
+        dialog = FilterClassesDialog(
+            all_classes=all_classes,
+            current_filter_classes=current_filter_classes,
+            extra_labels_from_yaml=self.extra_labels_from_yaml,
+            on_yaml_import=self.on_yaml_labels_imported,
+            on_apply=self.apply_filter_classes,  # 添加应用回调
+            parent=self
+        )
+
+        # 使用 show() 而不是 exec_()，实现非模态显示
+        dialog.show()
+
+    def apply_filter_classes(self, selected_classes):
+        """应用过滤类别设置"""
+        model_config = self.model_manager.loaded_model_config
+        if not model_config:
+            return
+
+        # 更新模型配置（仅内存中）
+        model_config["filter_classes"] = selected_classes
+        self._session_filter_applied = True  # 标记本次会话已设置过滤
+
+        # 更新模型的过滤类别设置
+        if model_config.get("model"):
+            # 获取模型原始的所有类别
+            model_classes = model_config.get("classes", [])
+            # 将类别名称转换为索引
+            # 注意：selected_classes 为空列表时应该返回空列表（不显示任何标签）
+            # 只有在 selected_classes 为 None 时才返回 None（显示所有标签）
+            if selected_classes is not None:
+                filter_indices = [
+                    i for i, cls in enumerate(model_classes)
+                    if cls in selected_classes
+                ]
+            else:
+                filter_indices = None
+            model_config["model"].filter_classes = filter_indices
+
+        # 不再保存配置到 YAML 文件，只在当前会话生效
+
+        logger.info(f"Filter classes updated (session only): {selected_classes}")
+
+    def on_yaml_labels_imported(self, new_labels):
+        """
+        当从YAML导入新标签时的回调函数
+
+        Args:
+            new_labels: 新导入的标签列表
+        """
+        for label in new_labels:
+            if label not in self.extra_labels_from_yaml:
+                self.extra_labels_from_yaml.append(label)
+        logger.info(f"Imported labels from YAML: {new_labels}")
 
     def on_cache_auto_label_changed(self, text, gid):
         self.model_manager.set_cache_auto_label(text, gid)
