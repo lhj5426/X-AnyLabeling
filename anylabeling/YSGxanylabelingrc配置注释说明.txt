@@ -1,4 +1,4 @@
-﻿auto_highlight_shape: false   # 是否自动高亮标注形状
+auto_highlight_shape: false   # 是否自动高亮标注形状
 auto_save: true               # 是否自动保存
 auto_switch_to_edit_mode: true  # 创建新标注后是否自动切换到编辑模式
 auto_use_last_label: false    # 是否自动使用上一次的标签
@@ -67,7 +67,7 @@ file_dock:                     # 文件面板设置
   movable: false               # 是否允许移动
   show: true                   # 是否显示文件面板
 file_search: null              # 文件搜索设置（当前未启用）
-fit_to_content:                # 自动适应内容设置
+fit_to_content:
   column: true                 # 表格列宽是否自适应内容
   row: false                   # 表格行高是否自适应内容
 flag_dock:                     # 标记（flag）面板设置
@@ -214,7 +214,7 @@ shape_dock:                     # 形状（shape）面板设置
   movable: false                # 是否允许移动
   show: true                    # 是否显示形状面板
 shift_auto_shape_color: 0       # Shift 快捷键切换自动颜色功能（0 表示禁用）
-shortcuts:                      # 快捷键设置
+shortcuts:
   add_point_to_edge: Ctrl+Shift+P  # 在边上添加新点
   auto_label: Ctrl+A               # 自动标注
   auto_run: Ctrl+M                 # 自动运行
@@ -247,11 +247,11 @@ shortcuts:                      # 快捷键设置
   open: null                      # 打开文件（未设置快捷键）
   open_chatbot: Ctrl+B            # 打开聊天机器人
   open_dir: Ctrl+U                # 打开目录
-  open_next:                      # 打开下一张图像
+  open_next:
   - D
   - Ctrl+Shift+D
   open_next_unchecked: Ctrl+Shift+D  # 打开下一张未检查的图像
-  open_prev:                      # 打开上一张图像
+  open_prev:
   - A
   - Ctrl+Shift+A
   open_prev_unchecked: Ctrl+Shift+A  # 打开上一张未检查的图像
@@ -271,6 +271,7 @@ shortcuts:                      # 快捷键设置
   show_order: Ctrl+Shift+O        # 显示顺序
   show_overview: Ctrl+G           # 显示总览
   show_texts: null                # 显示文字（未设置快捷键）
+  show_wh: Ctrl+Shift+W           # 显示/隐藏宽高信息
   toggle_auto_use_last_label: Ctrl+K  # 切换自动使用上次标签模式
   toggle_keep_prev_mode: Ctrl+P   # 切换保持上一个标注模式
   toggle_visibility_shapes: Ctrl+H # 切换形状可见性
@@ -278,7 +279,7 @@ shortcuts:                      # 快捷键设置
   undo_last_point: Ctrl+Z         # 撤销上一个点
   ungroup_selected_shapes: U      # 取消分组
   union_selected_shapes: M        # 合并选中形状
-  zoom_in:                        # 放大
+  zoom_in:
   - Ctrl++ 
   - Ctrl+=
   zoom_out: Ctrl+-                # 缩小
