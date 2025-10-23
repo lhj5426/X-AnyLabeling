@@ -167,13 +167,80 @@ def _check_filename_exist(self):
     return True
 
 
+def _filter_images_by_labels(image_list, label_dir_path, filter_config):
+    """
+    根据标签筛选配置过滤图片列表
+
+    Args:
+        image_list: 图片文件路径列表
+        label_dir_path: 标签文件目录
+        filter_config: 筛选配置字典，包含 enabled, mode, match_condition, labels
+
+    Returns:
+        过滤后的图片列表
+    """
+    if not filter_config['enabled'] or not filter_config['labels']:
+        return image_list
+
+    filtered_list = []
+    mode = filter_config['mode']
+    match_condition = filter_config['match_condition']
+    target_labels = set(filter_config['labels'])
+
+    for image_file in image_list:
+        image_file_name = osp.basename(image_file)
+        label_file_name = osp.splitext(image_file_name)[0] + ".json"
+        label_file = osp.join(label_dir_path, label_file_name)
+
+        if not osp.exists(label_file):
+            # 如果标签文件不存在，根据模式决定是否包含
+            # 排除模式：没有标签就导出
+            # 包含模式：没有标签就不导出
+            if mode == 'exclude':
+                filtered_list.append(image_file)
+            continue
+
+        try:
+            with open(label_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # 获取该图片中所有的标签
+                image_labels = set()
+                for shape in data.get('shapes', []):
+                    label = shape.get('label', '')
+                    if label:
+                        image_labels.add(label)
+
+                # 根据筛选配置决定是否包含该图片
+                if mode == 'include':
+                    # 包含模式：图片标签必须满足条件
+                    if match_condition == 'any':
+                        # 包含任意一个目标标签
+                        if image_labels & target_labels:
+                            filtered_list.append(image_file)
+                    else:  # match_condition == 'all'
+                        # 包含所有目标标签
+                        if target_labels.issubset(image_labels):
+                            filtered_list.append(image_file)
+                else:  # mode == 'exclude'
+                    # 排除模式：图片标签不能包含任何目标标签
+                    if not (image_labels & target_labels):
+                        filtered_list.append(image_file)
+        except Exception as e:
+            logger.warning(f"Failed to read label file {label_file}: {e}")
+            # 读取失败时，排除模式包含该图片，包含模式排除该图片
+            if mode == 'exclude':
+                filtered_list.append(image_file)
+
+    return filtered_list
+
+
 class LabelExclusionDialog(QDialog):
     def __init__(self, labels, parent=None):
         super().__init__(parent)
         self.setWindowTitle("排除标签")
         self.setMinimumWidth(300)
         layout = QVBoxLayout(self)
-        
+
         description = QLabel("勾选要从导出中排除的标签：")
         layout.addWidget(description)
 
@@ -184,7 +251,7 @@ class LabelExclusionDialog(QDialog):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.list_widget.addItem(item)
-        
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
             Qt.Horizontal,
@@ -201,6 +268,124 @@ class LabelExclusionDialog(QDialog):
             if item.checkState() == Qt.Checked:
                 excluded.append(item.text())
         return excluded
+
+
+class LabelFilterDialog(QDialog):
+    """对话框用于筛选包含或排除特定标签的文件"""
+    def __init__(self, labels, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("高级标签筛选")
+        self.setMinimumWidth(400)
+        layout = QVBoxLayout(self)
+
+        # 启用筛选的复选框
+        self.enable_filter_checkbox = QtWidgets.QCheckBox("启用标签筛选")
+        self.enable_filter_checkbox.setChecked(False)
+        layout.addWidget(self.enable_filter_checkbox)
+
+        # 筛选模式选择
+        mode_layout = QHBoxLayout()
+        mode_label = QLabel("筛选模式：")
+        mode_layout.addWidget(mode_label)
+
+        self.mode_group = QtWidgets.QButtonGroup(self)
+        self.include_radio = QtWidgets.QRadioButton("包含模式（导出包含以下标签的图片）")
+        self.exclude_radio = QtWidgets.QRadioButton("排除模式（不导出包含以下标签的图片）")
+        self.include_radio.setChecked(True)
+
+        self.mode_group.addButton(self.include_radio)
+        self.mode_group.addButton(self.exclude_radio)
+
+        layout.addWidget(self.include_radio)
+        layout.addWidget(self.exclude_radio)
+
+        # 匹配条件选择（仅在包含模式下可用）
+        self.match_layout = QHBoxLayout()
+        self.match_label = QLabel("匹配条件：")
+        self.match_layout.addWidget(self.match_label)
+
+        self.match_group = QtWidgets.QButtonGroup(self)
+        self.match_any_radio = QtWidgets.QRadioButton("包含任意一个标签")
+        self.match_all_radio = QtWidgets.QRadioButton("包含所有标签")
+        self.match_any_radio.setChecked(True)
+
+        self.match_group.addButton(self.match_any_radio)
+        self.match_group.addButton(self.match_all_radio)
+
+        layout.addWidget(self.match_any_radio)
+        layout.addWidget(self.match_all_radio)
+
+        # 标签列表
+        description = QLabel("勾选要筛选的标签：")
+        layout.addWidget(description)
+
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
+        for label in labels:
+            item = QListWidgetItem(label)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.list_widget.addItem(item)
+
+        # 连接信号，控制匹配条件的可用性
+        self.include_radio.toggled.connect(self._update_match_condition_state)
+        self.enable_filter_checkbox.toggled.connect(self._update_all_controls_state)
+
+        # 按钮
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            Qt.Horizontal,
+            self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        # 初始化状态
+        self._update_all_controls_state()
+
+    def _update_match_condition_state(self):
+        """更新匹配条件的启用状态"""
+        is_include_mode = self.include_radio.isChecked()
+        is_enabled = self.enable_filter_checkbox.isChecked()
+        self.match_any_radio.setEnabled(is_include_mode and is_enabled)
+        self.match_all_radio.setEnabled(is_include_mode and is_enabled)
+        self.match_label.setEnabled(is_include_mode and is_enabled)
+
+    def _update_all_controls_state(self):
+        """更新所有控件的启用状态"""
+        is_enabled = self.enable_filter_checkbox.isChecked()
+        self.include_radio.setEnabled(is_enabled)
+        self.exclude_radio.setEnabled(is_enabled)
+        self.list_widget.setEnabled(is_enabled)
+        self._update_match_condition_state()
+
+    def is_filter_enabled(self):
+        """返回是否启用了筛选"""
+        return self.enable_filter_checkbox.isChecked()
+
+    def get_filter_config(self):
+        """
+        返回筛选配置
+        返回格式: {
+            'enabled': bool,
+            'mode': 'include' or 'exclude',
+            'match_condition': 'any' or 'all',  # 仅在 include 模式下有意义
+            'labels': [label1, label2, ...]
+        }
+        """
+        selected_labels = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                selected_labels.append(item.text())
+
+        return {
+            'enabled': self.enable_filter_checkbox.isChecked(),
+            'mode': 'include' if self.include_radio.isChecked() else 'exclude',
+            'match_condition': 'any' if self.match_any_radio.isChecked() else 'all',
+            'labels': selected_labels
+        }
 
 
 def export_yolo_annotation(self, mode):
@@ -292,6 +477,49 @@ def export_yolo_annotation(self, mode):
     only_manually_edited_checkbox.setChecked(False)
     layout.addWidget(only_manually_edited_checkbox)
 
+    # 高级标签筛选按钮
+    advanced_filter_layout = QHBoxLayout()
+    advanced_filter_button = QtWidgets.QPushButton(self.tr("筛选标签"))
+    advanced_filter_button.setMinimumWidth(120)
+    advanced_filter_button.setStyleSheet(get_cancel_btn_style())
+
+    # 存储筛选配置
+    filter_config = {
+        'enabled': False,
+        'mode': 'include',
+        'match_condition': 'any',
+        'labels': []
+    }
+
+    def open_label_filter_dialog():
+        # 获取所有唯一标签
+        unique_labels = []
+        if hasattr(self, 'unique_label_list'):
+            for i in range(self.unique_label_list.count()):
+                item = self.unique_label_list.item(i)
+                label_text = item.data(Qt.UserRole)
+                if label_text:
+                    unique_labels.append(label_text)
+
+        if not unique_labels:
+            popup = Popup(
+                self.tr("没有找到标签，请先标注图片"),
+                self,
+                icon=new_icon_path("warning", "svg"),
+            )
+            popup.show_popup(self, position="center")
+            return
+
+        filter_dialog = LabelFilterDialog(unique_labels, self)
+        if filter_dialog.exec_() == QtWidgets.QDialog.Accepted:
+            nonlocal filter_config
+            filter_config = filter_dialog.get_filter_config()
+
+    advanced_filter_button.clicked.connect(open_label_filter_dialog)
+    advanced_filter_layout.addWidget(advanced_filter_button)
+    advanced_filter_layout.addStretch()
+    layout.addLayout(advanced_filter_layout)
+
     button_layout = QHBoxLayout()
     button_layout.setContentsMargins(0, 16, 0, 0)
     button_layout.setSpacing(8)
@@ -374,6 +602,18 @@ def export_yolo_annotation(self, mode):
                 except:
                     pass
         image_list = filtered_image_list
+
+    # Filter by labels if advanced filter is enabled
+    if filter_config['enabled']:
+        image_list = _filter_images_by_labels(image_list, label_dir_path, filter_config)
+        if not image_list:
+            popup = Popup(
+                self.tr("没有图片符合筛选条件！"),
+                self,
+                icon=new_icon_path("warning", "svg"),
+            )
+            popup.show_popup(self, position="center")
+            return
 
     progress_dialog = QProgressDialog(
         self.tr("Exporting..."), self.tr("Cancel"), 0, len(image_list), self
@@ -494,6 +734,49 @@ def export_voc_annotation(self, mode):
     skip_empty_files_checkbox.setChecked(False)
     layout.addWidget(skip_empty_files_checkbox)
 
+    # 高级标签筛选按钮
+    advanced_filter_layout = QHBoxLayout()
+    advanced_filter_button = QtWidgets.QPushButton(self.tr("筛选标签"))
+    advanced_filter_button.setMinimumWidth(120)
+    advanced_filter_button.setStyleSheet(get_cancel_btn_style())
+
+    # 存储筛选配置
+    filter_config = {
+        'enabled': False,
+        'mode': 'include',
+        'match_condition': 'any',
+        'labels': []
+    }
+
+    def open_label_filter_dialog():
+        # 获取所有唯一标签
+        unique_labels = []
+        if hasattr(self, 'unique_label_list'):
+            for i in range(self.unique_label_list.count()):
+                item = self.unique_label_list.item(i)
+                label_text = item.data(Qt.UserRole)
+                if label_text:
+                    unique_labels.append(label_text)
+
+        if not unique_labels:
+            popup = Popup(
+                self.tr("没有找到标签，请先标注图片"),
+                self,
+                icon=new_icon_path("warning", "svg"),
+            )
+            popup.show_popup(self, position="center")
+            return
+
+        filter_dialog = LabelFilterDialog(unique_labels, self)
+        if filter_dialog.exec_() == QtWidgets.QDialog.Accepted:
+            nonlocal filter_config
+            filter_config = filter_dialog.get_filter_config()
+
+    advanced_filter_button.clicked.connect(open_label_filter_dialog)
+    advanced_filter_layout.addWidget(advanced_filter_button)
+    advanced_filter_layout.addStretch()
+    layout.addLayout(advanced_filter_layout)
+
     button_layout = QHBoxLayout()
     button_layout.setContentsMargins(0, 16, 0, 0)
     button_layout.setSpacing(8)
@@ -559,6 +842,18 @@ def export_voc_annotation(self, mode):
     label_dir_path = osp.dirname(self.filename)
     if self.output_dir:
         label_dir_path = self.output_dir
+
+    # Filter by labels if advanced filter is enabled
+    if filter_config['enabled']:
+        image_list = _filter_images_by_labels(image_list, label_dir_path, filter_config)
+        if not image_list:
+            popup = Popup(
+                self.tr("没有图片符合筛选条件！"),
+                self,
+                icon=new_icon_path("warning", "svg"),
+            )
+            popup.show_popup(self, position="center")
+            return
 
     progress_dialog = QProgressDialog(
         self.tr("Exporting..."), self.tr("Cancel"), 0, len(image_list), self
@@ -692,6 +987,49 @@ def export_coco_annotation(self, mode):
     path_input_layout.addWidget(path_button)
     path_layout.addLayout(path_input_layout)
     layout.addLayout(path_layout)
+
+    # 高级标签筛选按钮
+    advanced_filter_layout = QHBoxLayout()
+    advanced_filter_button = QtWidgets.QPushButton(self.tr("筛选标签"))
+    advanced_filter_button.setMinimumWidth(120)
+    advanced_filter_button.setStyleSheet(get_cancel_btn_style())
+
+    # 存储筛选配置
+    filter_config = {
+        'enabled': False,
+        'mode': 'include',
+        'match_condition': 'any',
+        'labels': []
+    }
+
+    def open_label_filter_dialog():
+        # 获取所有唯一标签
+        unique_labels = []
+        if hasattr(self, 'unique_label_list'):
+            for i in range(self.unique_label_list.count()):
+                item = self.unique_label_list.item(i)
+                label_text = item.data(Qt.UserRole)
+                if label_text:
+                    unique_labels.append(label_text)
+
+        if not unique_labels:
+            popup = Popup(
+                self.tr("没有找到标签，请先标注图片"),
+                self,
+                icon=new_icon_path("warning", "svg"),
+            )
+            popup.show_popup(self, position="center")
+            return
+
+        filter_dialog = LabelFilterDialog(unique_labels, self)
+        if filter_dialog.exec_() == QtWidgets.QDialog.Accepted:
+            nonlocal filter_config
+            filter_config = filter_dialog.get_filter_config()
+
+    advanced_filter_button.clicked.connect(open_label_filter_dialog)
+    advanced_filter_layout.addWidget(advanced_filter_button)
+    advanced_filter_layout.addStretch()
+    layout.addLayout(advanced_filter_layout)
 
     button_layout = QHBoxLayout()
     button_layout.setContentsMargins(0, 16, 0, 0)
