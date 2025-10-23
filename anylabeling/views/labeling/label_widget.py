@@ -5453,17 +5453,18 @@ class LabelingWidget(QtWidgets.QWidget):
         if not hasattr(self, 'image') or self.image is None or self.image.isNull():
             return
 
-        # Get current mouse position in global screen coordinates
-        global_mouse_pos = QtGui.QCursor.pos()
-        # Convert global mouse position to widget-relative position
-        widget_mouse_pos = self.mapFromGlobal(global_mouse_pos)
-        # Convert widget-relative position to canvas-relative position
-        canvas_mouse_pos = self.canvas.mapFromParent(widget_mouse_pos - self.canvas.pos())
+        # Get current mouse position relative to the canvas
+        canvas_mouse_pos = self.canvas.mapFromGlobal(QtGui.QCursor.pos())
 
         is_mouse_over_canvas = self.canvas.rect().contains(canvas_mouse_pos)
         if not is_mouse_over_canvas:
-            # If mouse is not over canvas, use center of canvas for zoom
-            canvas_mouse_pos = self.canvas.rect().center()
+            # If mouse is not over canvas, use center of the visible part of the canvas
+            scroll_area = self._central_widget
+            h_bar = scroll_area.horizontalScrollBar()
+            v_bar = scroll_area.verticalScrollBar()
+            x = h_bar.value() + scroll_area.viewport().width() / 2
+            y = v_bar.value() + scroll_area.viewport().height() / 2
+            canvas_mouse_pos = QtCore.QPoint(int(x), int(y))
 
         percentage_increase = self._config["canvas"].get("zoom_at_mouse_percentage_increase", 20)
         current_zoom = self.zoom_widget.value()
@@ -5475,14 +5476,12 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Apply zoom and adjust scrollbars to keep mouse position centered
         canvas_width_old = self.canvas.width()
-        canvas_height_old = self.canvas.height()
         
         self.set_zoom(new_zoom)
 
         canvas_width_new = self.canvas.width()
-        canvas_height_new = self.canvas.height()
         
-        if canvas_width_old != canvas_width_new:
+        if canvas_width_old > 0 and canvas_width_old != canvas_width_new:
             canvas_scale_factor = canvas_width_new / canvas_width_old
             x_shift = round(canvas_mouse_pos.x() * canvas_scale_factor - canvas_mouse_pos.x())
             y_shift = round(canvas_mouse_pos.y() * canvas_scale_factor - canvas_mouse_pos.y())
@@ -5495,6 +5494,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 Qt.Vertical,
                 self.scroll_bars[Qt.Vertical].value() + y_shift,
             )
+
     def zoom_request(self, delta, pos):
         canvas_width_old = self.canvas.width()
         canvas_height_old = self.canvas.height()
