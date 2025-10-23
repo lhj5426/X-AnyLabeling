@@ -231,6 +231,7 @@ class Canvas(
         self.show_labels = True
         self.show_scores = True
         self.show_degrees = False
+        self.show_wh = False
         self.show_attributes = True
         self.show_linking = True
         self.show_order = True
@@ -2259,12 +2260,100 @@ class Canvas(
                     p.drawPath(cp)
                     p.fillPath(cp, QtGui.QColor(255, 153, 0, 255))
 
+        # Draw Width/Height
+        if self.show_wh:
+            p.setFont(
+                QtGui.QFont(
+                    "Arial", int(max(6.0, int(round(8.0 / Shape.scale))))
+                )
+            )
+            for shape in self.shapes:
+                if not self.is_visible(shape) or shape.shape_type not in ['rectangle', 'rotation']:
+                    continue
+                
+                text = ""
+                if shape.shape_type == 'rectangle':
+                    rect = shape.bounding_rect()
+                    w = rect.width()
+                    h = rect.height()
+                    text = f"{w:.0f}:{h:.0f}"
+                elif shape.shape_type == 'rotation':
+                    w = utils.distance(shape.points[0] - shape.points[1])
+                    h = utils.distance(shape.points[1] - shape.points[2])
+                    text = f"{w:.0f}:{h:.0f}"
+
+                if text:
+                    fm = QtGui.QFontMetrics(p.font())
+                    text_rect = fm.boundingRect(text)
+                    
+                    padding_x = 2
+                    padding_y = 0
+
+                    if shape.shape_type == 'rotation':
+                        center = (shape.points[0] + shape.points[2]) / 2.0
+                        # Position W/H below the angle text
+                        line_height = text_rect.height()
+                        base_pos = QtCore.QPointF(center.x() - text_rect.width() / 2.0, center.y() + text_rect.height() / 4.0 + line_height)
+                    else: # rectangle
+                        center = shape.bounding_rect().center()
+                        base_pos = QtCore.QPointF(center.x() - text_rect.width() / 2.0, center.y() + text_rect.height() / 4.0)
+
+                    bg_x = int(text_rect.x() + base_pos.x() - padding_x)
+                    bg_y = int(text_rect.y() + base_pos.y() - padding_y)
+                    bg_w = int(text_rect.width() + 2 * padding_x)
+                    bg_h = int(text_rect.height() + 2 * padding_y)
+
+                    p.fillRect(bg_x, bg_y, bg_w, bg_h, QtGui.QColor("#195905"))
+
+                    border_pen = QtGui.QPen(QtGui.QColor("#D68A59"), 1, QtCore.Qt.SolidLine)
+                    p.setPen(border_pen)
+                    p.drawRect(bg_x, bg_y, bg_w, bg_h)
+
+                    text_pen = QtGui.QPen(QtGui.QColor("#FFFFFF"))
+                    p.setPen(text_pen)
+                    p.drawText(base_pos, text)
+
         if self.current:
             # Don't paint the shape itself in rotation3 mode (only paint line with arrow)
             if self.create_mode != "rotation3":
                 self.current.paint(p)
 
             self.line.paint(p)
+
+            # Draw real-time width and height while drawing
+            if self.drawing() and self.create_mode in ['rectangle', 'rotation']:
+                if len(self.line.points) > 1:
+                    p1 = self.line.points[0]
+                    p2 = self.line.points[1]
+                    w = abs(p1.x() - p2.x())
+                    h = abs(p1.y() - p2.y())
+                    
+                    text = f"{w:.0f}:{h:.0f}"
+                    
+                    p.setFont(QtGui.QFont("Arial", int(max(6.0, int(round(8.0 / self.scale))))))
+                    fm = QtGui.QFontMetrics(p.font())
+                    text_rect = fm.boundingRect(text)
+                    
+                    padding_x = 2
+                    padding_y = 0
+
+                    # Position near the cursor (p2)
+                    base_pos = QtCore.QPointF(p2.x() + 5 / self.scale, p2.y() - text_rect.height() - 5 / self.scale)
+
+                    bg_x = int(text_rect.x() + base_pos.x() - padding_x)
+                    bg_y = int(text_rect.y() + base_pos.y() - padding_y)
+                    bg_w = int(text_rect.width() + 2 * padding_x)
+                    bg_h = int(text_rect.height() + 2 * padding_y)
+
+                    p.fillRect(bg_x, bg_y, bg_w, bg_h, QtGui.QColor("#195905"))
+
+                    border_pen = QtGui.QPen(QtGui.QColor("#D68A59"), 1, QtCore.Qt.SolidLine)
+                    p.setPen(border_pen)
+                    p.drawRect(bg_x, bg_y, bg_w, bg_h)
+
+                    text_pen = QtGui.QPen(QtGui.QColor("#FFFFFF"))
+                    p.setPen(text_pen)
+                    p.drawText(base_pos, text)
 
             # For rotation3 mode, also paint the center line when drawing the second line
             if (self.create_mode == "rotation3" and len(self.current.points) == 2
