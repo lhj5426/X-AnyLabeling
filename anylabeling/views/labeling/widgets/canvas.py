@@ -2211,30 +2211,38 @@ class Canvas(
                     (shape.points[0].y() + shape.points[2].y()) / 2,
                 )
                 if self.show_degrees:
-                    degrees = str(int(math.degrees(shape.direction))) + "°"
+                    degrees = f"{math.degrees(shape.direction):.2f}"
                     p.setFont(
                         QtGui.QFont(
                             "Arial",
                             int(max(6.0, int(round(8.0 / Shape.scale)))),
                         )
                     )
-                    pen = QtGui.QPen(
-                        QtGui.QColor("#FF9900"), 8, QtCore.Qt.SolidLine
-                    )
-                    p.setPen(pen)
                     fm = QtGui.QFontMetrics(p.font())
                     rect = fm.boundingRect(degrees)
-                    p.fillRect(
-                        int(rect.x() + center.x() - d),
-                        int(rect.y() + center.y() + d),
-                        int(rect.width()),
-                        int(rect.height()),
-                        QtGui.QColor("#FF9900"),
-                    )
-                    pen = QtGui.QPen(
+                    
+                    padding_left = 1
+                    padding_right = 3
+                    padding_y = 0 # vertical padding
+
+                    bg_x = int(rect.x() + center.x() - d - padding_left)
+                    bg_y = int(rect.y() + center.y() + d - padding_y)
+                    bg_w = int(rect.width() + padding_left + padding_right)
+                    bg_h = int(rect.height() + 2 * padding_y)
+
+                    # Draw background
+                    p.fillRect(bg_x, bg_y, bg_w, bg_h, QtGui.QColor("#B38B6D"))
+
+                    # Draw border
+                    border_pen = QtGui.QPen(QtGui.QColor("#000000"), 1, QtCore.Qt.SolidLine)
+                    p.setPen(border_pen)
+                    p.drawRect(bg_x, bg_y, bg_w, bg_h)
+
+                    # Draw text
+                    text_pen = QtGui.QPen(
                         QtGui.QColor("#FFFFFF"), 7, QtCore.Qt.SolidLine
                     )
-                    p.setPen(pen)
+                    p.setPen(text_pen)
                     p.drawText(
                         int(center.x() - d),
                         int(center.y() + d),
@@ -2358,7 +2366,7 @@ class Canvas(
                         # Normalize to 0-360 range
                         if angle_deg < 0:
                             angle_deg += 360
-                        angle_text = f"{angle_deg:.1f}°"
+                        angle_text = f"{angle_deg:.2f}"
 
                         # Set font for angle text
                         font = QtGui.QFont()
