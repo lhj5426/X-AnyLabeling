@@ -378,6 +378,13 @@ https://github.com/user-attachments/assets/a76933ba-0288-4865-bab7-795630517b12
 
 https://github.com/user-attachments/assets/ae78e599-8215-4e42-b1fe-351d8c5637dd
 
+57.增加矩形宽高显示菜单项和快捷键 现在每个矩形都可以像显示角度那样显示各自的宽高数值了
+
+并且在创建矩形的时候可以实时显示宽高数值 这更直观 44的修改也能用 看情况 画面太乱就关闭 用导航器上的查看
+
+https://github.com/user-attachments/assets/9c98df95-04d8-4e6f-ac3e-d28dc2ad287d
+
+
 
 
 
