@@ -23,7 +23,7 @@ CURSOR_ROTATION3 = None  # 将在Canvas初始化时创建 - rotation3模式专�
 # 自定义鼠标指针路径
 CUSTOM_CURSOR_GRAB_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Arrow.cur"
 CUSTOM_CURSOR_MOVE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Link.cur"
-CUSTOM_CURSOR_ROTATION3_PATH = r"J:\Downloads\鼠标指针X个\Cyan Ring\Cross.cur"
+CUSTOM_CURSOR_ROTATION3_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Unavailiable.cur"
 
 AUTO_DECODE_DELAY_MS = 100
 MAX_AUTO_DECODE_MARKS = 42
