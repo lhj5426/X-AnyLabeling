@@ -1283,6 +1283,17 @@ class LabelingWidget(QtWidgets.QWidget):
             enabled=True,
             auto_trigger=True,
         )
+        show_wh = action(
+            self.tr("显示宽高"),
+            lambda x: self.set_canvas_params("show_wh", x),
+            shortcut=shortcuts.get("show_wh", "Ctrl+Shift+W"),
+            tip=self.tr("Show width and height on shapes"),
+            icon=None,
+            checkable=True,
+            checked=self._config.get("show_wh", False),
+            enabled=True,
+            auto_trigger=True,
+        )
         show_linking = action(
             self.tr("&Show KIE Linking"),
             lambda x: self.set_canvas_params("show_linking", x),
@@ -1828,6 +1839,7 @@ class LabelingWidget(QtWidgets.QWidget):
             show_labels=show_labels,
             show_scores=show_scores,
             show_degrees=show_degrees,
+            show_wh=show_wh,
             show_attributes=show_attributes,
             show_linking=show_linking,
             show_order=show_order,
@@ -2100,6 +2112,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 show_labels,
                 show_scores,
                 show_degrees,
+                show_wh,
                 show_attributes,
                 show_linking,
                 show_groups,
