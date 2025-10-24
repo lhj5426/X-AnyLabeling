@@ -3435,17 +3435,17 @@ class Canvas(
             return # Not applicable to other shapes
 
         # Check if all new points are within the image boundaries.
-        min_x = min(p.x() for p in new_points)
-        max_x = max(p.x() for p in new_points)
-        min_y = min(p.y() for p in new_points)
-        max_y = max(p.y() for p in new_points)
-        if (
-            min_x < 0
-            or max_x >= img_width
-            or min_y < 0
-            or max_y >= img_height
-        ):
-            return
+        # min_x = min(p.x() for p in new_points)
+        # max_x = max(p.x() for p in new_points)
+        # min_y = min(p.y() for p in new_points)
+        # max_y = max(p.y() for p in new_points)
+        # if (
+        #     min_x < 0
+        #     or max_x >= img_width
+        #     or min_y < 0
+        #     or max_y >= img_height
+        # ):
+        #     return
 
         # If all checks pass, update the shape's points.
         for i, new_point in enumerate(new_points):
@@ -3509,10 +3509,8 @@ class Canvas(
             new_y2 = p2.y() + move_y
 
             # Check if new points are within bounds
-            if (0 <= new_x1 < img_width and 0 <= new_y1 < img_height and
-                0 <= new_x2 < img_width and 0 <= new_y2 < img_height):
-                shape.points[idx1] = QtCore.QPointF(new_x1, new_y1)
-                shape.points[idx2] = QtCore.QPointF(new_x2, new_y2)
+            shape.points[idx1] = QtCore.QPointF(new_x1, new_y1)
+            shape.points[idx2] = QtCore.QPointF(new_x2, new_y2)
 
     def _adjust_rectangle_edge(self, shape, cursor_pos, move_outward, fast_mode=False):
         """Adjust the rectangle edge closest to cursor position within image boundaries"""
@@ -3540,16 +3538,16 @@ class Canvas(
             new_point = None
 
             if closest_edge == "left" and abs(point.x() - min_x) < 1e-6:
-                new_x = max(0, point.x() - step)
+                new_x = point.x() - step
                 new_point = QtCore.QPointF(new_x, point.y())
             elif closest_edge == "right" and abs(point.x() - max_x) < 1e-6:
-                new_x = min(img_width - 1, point.x() + step)
+                new_x = point.x() + step
                 new_point = QtCore.QPointF(new_x, point.y())
             elif closest_edge == "top" and abs(point.y() - min_y) < 1e-6:
-                new_y = max(0, point.y() - step)
+                new_y = point.y() - step
                 new_point = QtCore.QPointF(point.x(), new_y)
             elif closest_edge == "bottom" and abs(point.y() - max_y) < 1e-6:
-                new_y = min(img_height - 1, point.y() + step)
+                new_y = point.y() + step
                 new_point = QtCore.QPointF(point.x(), new_y)
 
             if new_point is not None:
