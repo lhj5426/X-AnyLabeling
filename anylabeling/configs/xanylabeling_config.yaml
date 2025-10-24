@@ -182,6 +182,7 @@ shortcuts:
   toggle_auto_use_last_label: Ctrl+Y
   toggle_visibility_shapes: Ctrl+H
   toggle_crosshair: Ctrl+Shift+H
+  toggle_degrees: Ctrl+Alt+D
 
   show_order: Ctrl+Shift+O
   auto_label: Ctrl+A
