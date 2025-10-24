@@ -384,6 +384,10 @@ https://github.com/user-attachments/assets/ae78e599-8215-4e42-b1fe-351d8c5637dd
 
 https://github.com/user-attachments/assets/9c98df95-04d8-4e6f-ac3e-d28dc2ad287d
 
+58.修正了 旋转矩形超出画布图片区域 使用滚轮 调整四条边 失效的问题 现在可以自由调整
+
+https://github.com/user-attachments/assets/543261dd-98f7-41c5-8068-e32d24617dc1
+
 
 
 
