@@ -1276,6 +1276,7 @@ class LabelingWidget(QtWidgets.QWidget):
         show_degrees = action(
             self.tr("&Show Degress"),
             lambda x: self.set_canvas_params("show_degrees", x),
+            shortcut=shortcuts.get("toggle_degrees", "Ctrl+Alt+D"),
             tip=self.tr("Show degrees above rotated shapes"),
             icon=None,
             checkable=True,
