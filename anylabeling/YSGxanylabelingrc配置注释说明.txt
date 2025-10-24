@@ -321,6 +321,7 @@ shortcuts: # 快捷键设置
   - Ctrl+=
   zoom_out: Ctrl+- # 缩小
   zoom_to_original: Ctrl+0 # 缩放到原始大小
+  keymap_dialog: K # 旋转标签快捷键管理器
 show_attributes: true # 是否显示属性
 show_degrees: true # 是否显示角度
 show_groups: false # 是否显示分组
