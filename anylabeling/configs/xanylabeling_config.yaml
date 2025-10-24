@@ -197,6 +197,7 @@ shortcuts:
   deselect_all_shapes: Alt+S
   invert_selection_shapes: Alt+I
   toggle_highlight: Alt+F
+  keymap_dialog: K
 
 # Auto labeling
 custom_models: []
