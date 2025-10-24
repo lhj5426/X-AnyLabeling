@@ -28,9 +28,7 @@ CUSTOM_CURSOR_ROTATION3_PATH = r"J:\文件夹存放\鼠标指针文件\1111\Goog
 AUTO_DECODE_DELAY_MS = 100
 MAX_AUTO_DECODE_MARKS = 42
 AUTO_DECODE_MOVE_THRESHOLD = 5.0
-MOVE_SPEED = 0.5
-LARGE_ROTATION_INCREMENT = 0.0087
-SMALL_ROTATION_INCREMENT = 0.001745
+
 
 LABEL_COLORMAP = label_colormap()
 
@@ -157,6 +155,17 @@ class Canvas(
         
         # Get configuration for colors and settings
         self._config = kwargs.pop("config", {})
+
+        # Initialize speed settings from config or use defaults
+        speed_settings = self._config.get("speed_settings", {})
+        self.move_speed = speed_settings.get("move_speed", 0.5)
+        self.large_rotation_increment = speed_settings.get("large_rotation_increment", 0.0087)
+        self.small_rotation_increment = speed_settings.get("small_rotation_increment", 0.001745)
+
+        self.keys = {
+            "direction": [Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right],
+            "zxcv": [Qt.Key_Z, Qt.Key_X, Qt.Key_C, Qt.Key_V],
+        }
         
         # Initialize overlap color from configuration
         self.overlap_color = get_overlap_color(self._config)
@@ -254,6 +263,18 @@ class Canvas(
         self.auto_decode_timer.setSingleShot(True)
         self.auto_decode_tracklet = []
         self.last_mouse_pos = None
+
+    def update_speed_settings(self, speed_settings: dict):
+        """Update canvas speed settings."""
+        self.move_speed = speed_settings.get("move_speed", self.move_speed)
+        self.large_rotation_increment = speed_settings.get("large_rotation_increment", self.large_rotation_increment)
+        self.small_rotation_increment = speed_settings.get("small_rotation_increment", self.small_rotation_increment)
+        self.update()
+
+    def update_key_actions(self, keymap_config: dict):
+        """Update canvas key actions based on keymap configuration."""
+        self._config["keymap"] = keymap_config
+        self.update()
 
     def set_loading(self, is_loading: bool, loading_text: Optional[str] = None) -> None:
         """
@@ -1876,6 +1897,25 @@ class Canvas(
             self.prev_point = pos
             return True
         return False
+
+    def move_by_keyboard(self, dp: QtCore.QPointF):
+        """Move selected shapes by keyboard."""
+        if not self.selected_shapes:
+            return
+        for shape in self.selected_shapes:
+            shape.move_by(dp)
+        self.parent.set_dirty()
+        self.repaint()
+
+    def rotate_by_keyboard(self, theta: float):
+        """Rotate selected shapes by keyboard."""
+        if not self.selected_shapes:
+            return
+        for i, shape in enumerate(self.selected_shapes):
+            if shape.shape_type == "rotation":
+                self.bounded_rotate_shapes(i, shape, theta)
+        self.parent.set_dirty()
+        self.repaint()
 
     def rotate_point(self, p, center, theta):
         order = p - center
@@ -3691,61 +3731,96 @@ class Canvas(
             self.drawing_cancelled.emit()
             self.update()
 
-    # QT Overload
-    def keyPressEvent(self, ev):
-        """Key press event"""
-        modifiers = ev.modifiers()
-        key = ev.key()
-        if self.drawing():
-            if key == QtCore.Qt.Key_Escape and self.current:
-                self.cancel_drawing()
-            elif key == QtCore.Qt.Key_Backspace and self.current:
-                # Backspace: undo last point (go back one step)
-                if self.create_mode == "rotation3":
-                    if len(self.current.points) == 2:
-                        # Step 2 -> Step 1: remove second point
-                        self.current.points.pop()
-                        # Reset line to start from first point
-                        self.line[0] = self.current[0]
-                        self.line[1] = self.current[0]
-                        self.update()
-                    elif len(self.current.points) == 1:
-                        # Step 1 -> Cancel: remove all and cancel
-                        self.current = None
-                        self.drawing_polygon.emit(False)
-                        self.update()
-                elif self.create_mode in ["polygon", "linestrip"]:
-                    # For polygon/linestrip, remove last point
-                    if len(self.current.points) > 1:
-                        self.current.points.pop()
-                        self.line[0] = self.current[-1]
-                        self.update()
-                    elif len(self.current.points) == 1:
-                        # Only one point left, cancel
-                        self.current = None
-                        self.drawing_polygon.emit(False)
-                        self.update()
-            elif key == QtCore.Qt.Key_Return and self.can_close_shape():
-                self.finalise()
-            elif modifiers == QtCore.Qt.AltModifier:
-                self.snapping = False
-        elif self.editing():
-            if key == QtCore.Qt.Key_Up:
-                self.move_by_keyboard(QtCore.QPointF(0.0, -MOVE_SPEED))
-            elif key == QtCore.Qt.Key_Down:
-                self.move_by_keyboard(QtCore.QPointF(0.0, MOVE_SPEED))
-            elif key == QtCore.Qt.Key_Left:
-                self.move_by_keyboard(QtCore.QPointF(-MOVE_SPEED, 0.0))
-            elif key == QtCore.Qt.Key_Right:
-                self.move_by_keyboard(QtCore.QPointF(MOVE_SPEED, 0.0))
-            elif key == QtCore.Qt.Key_Z:
-                self.rotate_by_keyboard(-LARGE_ROTATION_INCREMENT)
-            elif key == QtCore.Qt.Key_X:
-                self.rotate_by_keyboard(-SMALL_ROTATION_INCREMENT)
-            elif key == QtCore.Qt.Key_C:
-                self.rotate_by_keyboard(SMALL_ROTATION_INCREMENT)
-            elif key == QtCore.Qt.Key_V:
-                self.rotate_by_keyboard(LARGE_ROTATION_INCREMENT)
+    def update_speed_settings(self, speed_settings: dict):
+        """Update move speed and rotation increments from provided settings."""
+        self.move_speed = speed_settings.get("move_speed", 0.5)
+        self.large_rotation_increment = speed_settings.get("large_rotation_increment", 0.0087)
+        self.small_rotation_increment = speed_settings.get("small_rotation_increment", 0.001745)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            event.accept()
+            return
+
+        if self.editing():
+            keymap_config = self.parent._config.get("keymap", {})
+            selected_label = None
+            if self.selected_shapes:
+                selected_label = self.selected_shapes[0].label
+
+            key_qt = event.key()
+            key_str = None
+            if key_qt == Qt.Key_Up:
+                key_str = "Up"
+            elif key_qt == Qt.Key_Down:
+                key_str = "Down"
+            elif key_qt == Qt.Key_Left:
+                key_str = "Left"
+            elif key_qt == Qt.Key_Right:
+                key_str = "Right"
+            elif key_qt == Qt.Key_Z:
+                key_str = "Z"
+            elif key_qt == Qt.Key_X:
+                key_str = "X"
+            elif key_qt == Qt.Key_C:
+                key_str = "C"
+            elif key_qt == Qt.Key_V:
+                key_str = "V"
+
+            if key_str:
+                action_to_perform = None
+
+                direction_enabled = keymap_config.get("direction_enabled", True)
+                zxcv_enabled = keymap_config.get("zxcv_enabled", True)
+
+                # Check direction keys group
+                if direction_enabled:
+                    direction_config = keymap_config.get("direction", {})
+                    direction_labels = [label.strip() for label in direction_config.get("labels", []) if label.strip()]
+                    if selected_label and selected_label in direction_labels and key_qt in self.keys["direction"]:
+                        action_to_perform = direction_config.get("actions", {}).get(key_str.lower())
+                
+                # Check zxcv keys group
+                if zxcv_enabled:
+                    zxcv_config = keymap_config.get("zxcv", {})
+                    zxcv_labels = [label.strip() for label in zxcv_config.get("labels", []) if label.strip()]
+                    if selected_label and selected_label in zxcv_labels and key_qt in self.keys["zxcv"]:
+                        # If action_to_perform is already set by direction_enabled, prioritize it.
+                        # Otherwise, set it from zxcv_config.
+                        if action_to_perform is None:
+                            action_to_perform = zxcv_config.get("actions", {}).get(key_str.lower())
+
+                # If no specific action found by custom settings, use default behavior
+                if action_to_perform is None:
+                    if key_qt in self.keys["direction"]:
+                        action_to_perform = "default_move" # Default for direction keys is move
+                    elif key_qt in self.keys["zxcv"]:
+                        action_to_perform = "default_rotate" # Default for zxcv keys is rotate
+
+                # Execute the action
+                if action_to_perform == "move_up" or (action_to_perform == "default_move" and key_qt == Qt.Key_Up):
+                    self.move_by_keyboard(QtCore.QPointF(0.0, -self.move_speed))
+                elif action_to_perform == "move_down" or (action_to_perform == "default_move" and key_qt == Qt.Key_Down):
+                    self.move_by_keyboard(QtCore.QPointF(0.0, self.move_speed))
+                elif action_to_perform == "move_left" or (action_to_perform == "default_move" and key_qt == Qt.Key_Left):
+                    self.move_by_keyboard(QtCore.QPointF(-self.move_speed, 0.0))
+                elif action_to_perform == "move_right" or (action_to_perform == "default_move" and key_qt == Qt.Key_Right):
+                    self.move_by_keyboard(QtCore.QPointF(self.move_speed, 0.0))
+                elif action_to_perform == "rotate_small_left" or (action_to_perform == "default_rotate" and key_qt == Qt.Key_X):
+                    self.rotate_by_keyboard(-self.small_rotation_increment)
+                elif action_to_perform == "rotate_small_right" or (action_to_perform == "default_rotate" and key_qt == Qt.Key_C):
+                    self.rotate_by_keyboard(self.small_rotation_increment)
+                elif action_to_perform == "rotate_large_left" or (action_to_perform == "default_rotate" and key_qt == Qt.Key_Z):
+                    self.rotate_by_keyboard(-self.large_rotation_increment)
+                elif action_to_perform == "rotate_large_right" or (action_to_perform == "default_rotate" and key_qt == Qt.Key_V):
+                    self.rotate_by_keyboard(self.large_rotation_increment)
+                elif action_to_perform == "default": # This means the original behavior of the key, but now handled by default_move/rotate
+                    # This block should ideally not be reached if default_move/rotate are correctly assigned
+                    pass
+                event.accept()
+                return
+
+        super(Canvas, self).keyPressEvent(event)
 
     # QT Overload
     def keyReleaseEvent(self, ev):
