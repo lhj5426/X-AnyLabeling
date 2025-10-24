@@ -76,6 +76,7 @@ from .widgets import (
     LabelToolDialog,
     TagSortDialog,
     AngleCorrectionDialog,
+    KeymapDialog,
 )
 from ...services import merger, tag_sorting
 
@@ -191,6 +192,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.tag_sort_dialog = None
         self.angle_correction_dialog = None
         self.mask_generator_dialog = None
+        self.keymap_dialog = None # New dialog instance
         self.tag_sort_thread = None
         self.tag_sort_scope = None
         self.tag_sort_files = []
@@ -1070,6 +1072,15 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="edit",
             tip=self.tr("使用CTD模型生成文字区域掩膜"),
         )
+
+        keymap_tool = action(
+            self.tr("旋转标签快捷键管理器"),
+            self.open_keymap_dialog,
+            shortcuts.get("keymap_dialog"),
+            icon="edit", # Using a generic edit icon for now
+            tip=self.tr("管理旋转标签的快捷键映射"),
+        )
+        self.addAction(keymap_tool) # Explicitly add action to widget for shortcut recognition
 
         open_chatbot = action(
             self.tr("ChatBot"),
@@ -1998,6 +2009,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 None,
                 dual_color_label_tool,
                 mask_generator_tool,
+                None,
+                keymap_tool,
             ),
         )
         utils.add_actions(
@@ -3570,6 +3583,40 @@ class LabelingWidget(QtWidgets.QWidget):
         else:
             self.angle_correction_dialog.show()
 
+    def open_keymap_dialog(self):
+        """Open or toggle the keymap dialog window, restoring if minimized."""
+        # No labels check needed for keymap dialog
+
+        if self.keymap_dialog is None:
+            self.keymap_dialog = KeymapDialog(
+                parent=self,
+                config=self._config,
+                shortcut_key=self._config["shortcuts"].get("keymap_dialog"), # Pass the shortcut key
+            )
+            self.keymap_dialog.accepted.connect(self._save_keymap_config)
+            self.keymap_dialog.rejected.connect(self._cancel_keymap_config)
+            self.keymap_dialog.config_saved.connect(self._update_canvas_speed_settings)
+            self.keymap_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+        # No else block for updating labels/colors needed for keymap dialog
+
+        # No current page number setting needed for keymap dialog
+
+        if self.keymap_dialog.isVisible():
+            # If visible, check if it's minimized
+            if self.keymap_dialog.isMinimized():
+                # If minimized, restore to normal state
+                self.keymap_dialog.showNormal()
+                self.keymap_dialog.raise_()
+                self.keymap_dialog.activateWindow()
+            else:
+                # If visible and not minimized, hide it (toggle off)
+                self.keymap_dialog.hide()
+        else:
+            # If not visible, show it (toggle on)
+            self.keymap_dialog.show()
+            self.keymap_dialog.raise_()
+            self.keymap_dialog.activateWindow()
+
 
     def open_vqa(self):
         if not self.image_list:
@@ -3589,6 +3636,29 @@ class LabelingWidget(QtWidgets.QWidget):
             self.vqa_window.activateWindow()
         else:
             self.vqa_window.show()
+
+    def _save_keymap_config(self):
+        """Slot to save keymap config when dialog is accepted."""
+        if self.keymap_dialog:
+            keymap_config = self.keymap_dialog.get_config()
+            self._config["keymap"] = keymap_config
+            save_config(self._config)
+            # Update canvas speed settings
+            speed_settings = self._config.get("speed_settings", {})
+            self.canvas.update_speed_settings(speed_settings)
+
+    def _cancel_keymap_config(self):
+        """Slot to handle keymap dialog rejection (optional)."""
+        # No action needed on cancel, as config is only saved on accept
+        pass
+
+    def _update_canvas_speed_settings(self, keymap_config: dict):
+        """Update canvas speed settings and key actions from the keymap dialog."""
+        speed_settings = keymap_config.get("speed_settings", {})
+        self.canvas.update_speed_settings(speed_settings)
+
+        # Pass the entire keymap_config to canvas to handle key actions
+        self.canvas.update_key_actions(keymap_config)
 
     # Help
     def documentation(self):
