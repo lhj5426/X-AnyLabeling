@@ -388,6 +388,10 @@ https://github.com/user-attachments/assets/9c98df95-04d8-4e6f-ac3e-d28dc2ad287d
 
 https://github.com/user-attachments/assets/543261dd-98f7-41c5-8068-e32d24617dc1
 
+59.增加 旋转矩形可以针对标签来执行快捷键的不同功能同时界面增加方向键速度调整和 旋转角度调整 功能
+
+https://github.com/user-attachments/assets/af946af7-c771-4fa7-a8c1-5bdd8884226c
+
 
 
 
