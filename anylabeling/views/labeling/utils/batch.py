@@ -314,26 +314,26 @@ def show_progress_dialog_and_process(self):
     self.cancel_processing = False
 
     progress_dialog = QProgressDialog(
-        self.tr("Processing..."),
-        self.tr("Cancel"),
+        "正在处理...",
+        "取消",
         self.image_index,
         len(self.image_list),
         self,
     )
     progress_dialog.setWindowModality(Qt.WindowModal)
-    progress_dialog.setWindowTitle(self.tr("Batch Processing"))
+    progress_dialog.setWindowTitle("批量处理中")
     progress_dialog.setMinimumWidth(400)
     progress_dialog.setMinimumHeight(150)
 
     progress_dialog.setLabelText(
-        f"Progress: {self.image_index}/{len(self.image_list)}"
+        f"进度: {self.image_index}/{len(self.image_list)}"
     )
     progress_bar = progress_dialog.findChild(QtWidgets.QProgressBar)
 
     if progress_bar:
 
         def update_progress(value):
-            progress_dialog.setLabelText(f"{value}/{len(self.image_list)}")
+            progress_dialog.setLabelText(f"进度: {value}/{len(self.image_list)}")
 
         progress_bar.valueChanged.connect(update_progress)
 
@@ -427,14 +427,14 @@ def run_all_images(self):
 
     response = QtWidgets.QMessageBox()
     response.setIcon(QtWidgets.QMessageBox.Warning)
-    response.setWindowTitle(self.tr("Confirmation"))
-    response.setText(self.tr("Do you want to process all images?"))
-    response.setStandardButtons(
-        QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Ok
-    )
+    response.setWindowTitle("确认")
+    response.setText("是否要处理所有图片？")
+    ok_button = response.addButton("确定", QtWidgets.QMessageBox.AcceptRole)
+    response.addButton("取消", QtWidgets.QMessageBox.RejectRole)
     response.setStyleSheet(get_msg_box_style())
 
-    if response.exec_() != QtWidgets.QMessageBox.Ok:
+    response.exec_()
+    if response.clickedButton() != ok_button:
         return
 
     logger.info("Start running all images...")

@@ -2308,3 +2308,137 @@ def export_ballontranslator_annotation(self):
     self.export_thread.start()
 
     progress_dialog.canceled.connect(self.export_thread.terminate)
+
+class ExportRotatedJsonThread(QThread):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(
+        self,
+        converter,
+        image_list,
+        label_dir_path,
+        save_path,
+        excluded_labels,
+    ):
+        super().__init__()
+        self.converter = converter
+        self.image_list = image_list
+        self.label_dir_path = label_dir_path
+        self.save_path = save_path
+        self.excluded_labels = excluded_labels
+
+    def run(self):
+        try:
+            time.sleep(1)
+            self.converter.custom_to_rotated_json(
+                self.image_list,
+                self.label_dir_path,
+                self.save_path,
+                self.excluded_labels,
+            )
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+def export_rotated_json_annotation(self):
+    if not _check_filename_exist(self):
+        return
+
+    # 1. Ask user for a classes file
+    filter = "Label Files (*.txt);;All Files (*)"
+    classes_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+        self,
+        "选择标签文件",
+        "",
+        filter,
+    )
+    if not classes_file:
+        return
+
+    # 2. Read labels from the file
+    with open(classes_file, 'r', encoding='utf-8') as f:
+        unique_labels = [line.strip() for line in f.readlines() if line.strip()]
+
+    # 3. Show exclusion dialog
+    if not unique_labels:
+        excluded_labels = []
+    else:
+        exclusion_dialog = LabelExclusionDialog(unique_labels, self)
+        if exclusion_dialog.exec_() == QtWidgets.QDialog.Accepted:
+            excluded_labels = exclusion_dialog.get_excluded_labels()
+        else:
+            return # User cancelled
+
+    # 4. Ask for save path
+    default_path = osp.join(
+        osp.dirname(self.filename), "output_rotated.json"
+    )
+    save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        self,
+        "导出BallonsTranslator JSON 旋转框",
+        default_path,
+        "JSON Files (*.json)",
+    )
+
+    if not save_path:
+        return
+
+    # 5. Proceed with export
+    image_list = self.image_list if self.image_list else [self.filename]
+    label_dir_path = osp.dirname(self.filename)
+    if self.output_dir:
+        label_dir_path = self.output_dir
+
+    converter = LabelConverter()
+
+    progress_dialog = QProgressDialog(
+        self.tr("正在导出为旋转框JSON..."), self.tr("取消"), 0, 0, self
+    )
+    progress_dialog.setWindowModality(Qt.WindowModal)
+    progress_dialog.setWindowTitle(self.tr("导出进度"))
+    progress_dialog.setMinimumWidth(500)
+    progress_dialog.setMinimumHeight(150)
+    progress_dialog.setRange(0, 0)  # Indeterminate
+    progress_dialog.setStyleSheet(
+        get_progress_dialog_style(color="#1d1d1f", height=20)
+    )
+
+    self.export_thread = ExportRotatedJsonThread(
+        converter,
+        image_list,
+        label_dir_path,
+        save_path,
+        excluded_labels,
+    )
+
+    def on_export_finished(success, error_msg):
+        progress_dialog.close()
+        if success:
+            template = self.tr(
+                "导出标注成功！\n"
+                "结果已保存到：\n"
+                "%s"
+            )
+            message_text = template % save_path
+            popup = Popup(
+                message_text,
+                self,
+                icon=new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self, popup_height=65, position="center")
+        else:
+            message = f"Error occurred while exporting annotations: {str(error_msg)}"
+            logger.error(message)
+            popup = Popup(
+                message,
+                self,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self, position="center")
+
+    self.export_thread.finished.connect(on_export_finished)
+
+    progress_dialog.show()
+    self.export_thread.start()
+
+    progress_dialog.canceled.connect(self.export_thread.terminate)

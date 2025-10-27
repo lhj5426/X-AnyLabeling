@@ -1238,10 +1238,7 @@ class LabelConverter:
         self.custom_data["imageWidth"] = image_width
         return self.custom_data
 
-    def _convert_shape_to_balloon_obj(self, shape):
-        """
-        Converts a single X-AnyLabeling shape object to BallonsTranslator's object format.
-        """
+    def _convert_shape_to_rotated_json_obj(self, shape):
         if 'points' not in shape or not shape['points']:
             return None
 
@@ -1250,26 +1247,47 @@ class LabelConverter:
         points = shape['points']
 
         angle_deg = 0.0
-        final_lines = [points]
         
         if shape.get('shape_type') == 'rotation' and len(points) == 4:
             p1, p2, p3, p4 = points[0], points[1], points[2], points[3]
-            
-            true_width = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
-            true_height = math.hypot(p4[0] - p1[0], p4[1] - p1[1])
-            
-            angle_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
-            angle_deg = math.degrees(angle_rad) % 360
-            
-            center_x = (p1[0] + p3[0]) / 2
-            center_y = (p1[1] + p3[1]) / 2
-            
-            unrotated_x = center_x - true_width / 2
-            unrotated_y = center_y - true_height / 2
-            
-            x1, y1 = math.floor(unrotated_x), math.floor(unrotated_y)
-            w, h = math.floor(true_width), math.floor(true_height)
-            x2, y2 = x1 + w, y1 + h
+
+            width = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+            height = math.hypot(p4[0] - p1[0], p4[1] - p1[1])
+
+            if 'direction' in shape and shape['direction'] is not None:
+                angle_deg = math.degrees(shape['direction'])
+            else:
+                angle_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+                angle_deg = math.degrees(angle_rad)
+
+            while angle_deg > 180:
+                angle_deg -= 360
+            while angle_deg < -180:
+                angle_deg += 360
+
+            center_x = sum(p[0] for p in points) / 4
+            center_y = sum(p[1] for p in points) / 4
+
+            unrotated_x = center_x - width / 2
+            unrotated_y = center_y - height / 2
+
+            x1_unrotated = int(round(unrotated_x))
+            y1_unrotated = int(round(unrotated_y))
+            x2_unrotated = int(round(unrotated_x + width))
+            y2_unrotated = int(round(unrotated_y + height))
+
+            final_lines = [[[x1_unrotated, y1_unrotated], [x2_unrotated, y1_unrotated], [x2_unrotated, y2_unrotated], [x1_unrotated, y2_unrotated]]]
+            _bounding_rect = [x1_unrotated, y1_unrotated, x2_unrotated - x1_unrotated, y2_unrotated - y1_unrotated]
+
+            x_coords = [p[0] for p in points]
+            y_coords = [p[1] for p in points]
+            xyxy = [
+                int(round(min(x_coords))),
+                int(round(min(y_coords))),
+                int(round(max(x_coords))),
+                int(round(max(y_coords)))
+            ]
+            w, h = xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]
 
         else:
             x_coords = [p[0] for p in points]
@@ -1280,13 +1298,15 @@ class LabelConverter:
             x1, y1 = math.floor(x_min), math.floor(y_min)
             x2, y2 = math.ceil(x_max), math.ceil(y_max)
             w, h = x2 - x1, y2 - y1
+            xyxy = [x1, y1, x2, y2]
             final_lines = [[[x1, y1], [x2, y1], [x2, y2], [x1, y2]]]
+            _bounding_rect = [x1, y1, w, h]
 
         is_vertical = h >= w
 
         obj = {
             "label": label_text,
-            "xyxy": [x1, y1, x2, y2],
+            "xyxy": xyxy,
             "lines": final_lines,
             "language": "unknown",
             "distance": None,
@@ -1296,7 +1316,7 @@ class LabelConverter:
             "merged": False,
             "text": [description_text],
             "translation": "", "rich_text": "",
-            "_bounding_rect": [x1, y1, w, h],
+            "_bounding_rect": _bounding_rect,
             "src_is_vertical": is_vertical,
             "det_model": "XAL_Import",
             "region_mask": None, "region_inpaint_dict": None,
@@ -1345,7 +1365,7 @@ class LabelConverter:
             for shape in xal_data['shapes']:
                 if shape.get('label') in excluded_labels:
                     continue
-                balloon_obj = self._convert_shape_to_balloon_obj(shape)
+                balloon_obj = self._convert_shape_to_rotated_json_obj(shape)
                 if balloon_obj:
                     page_objects.append(balloon_obj)
             
@@ -1471,6 +1491,109 @@ class LabelConverter:
                 json.dump(itrans_data, f, indent=4, ensure_ascii=False)
         except Exception as e:
             raise IOError(f"Failed to save output file: {e}")
+
+        if shape.get('shape_type') == 'rotation' and len(points) == 4:
+            p1, p2, p3, p4 = points[0], points[1], points[2], points[3]
+            
+            angle_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+            angle_deg = math.degrees(angle_rad)
+
+            x_coords = [p[0] for p in points]
+            y_coords = [p[1] for p in points]
+            x_min, y_min = min(x_coords), min(y_coords)
+            x_max, y_max = max(x_coords), max(y_coords)
+            
+            x1, y1 = math.floor(x_min), math.floor(y_min)
+            x2, y2 = math.ceil(x_max), math.ceil(y_max)
+            w, h = x2 - x1, y2 - y1
+
+            final_lines = [[[x1, y1], [x2, y1], [x2, y2], [x1, y2]]]
+
+        else:
+            x_coords = [p[0] for p in points]
+            y_coords = [p[1] for p in points]
+            x_min, y_min = min(x_coords), min(y_coords)
+            x_max, y_max = max(x_coords), max(y_coords)
+            
+            x1, y1 = math.floor(x_min), math.floor(y_min)
+            x2, y2 = math.ceil(x_max), math.ceil(y_max)
+            w, h = x2 - x1, y2 - y1
+            final_lines = [[[x1, y1], [x2, y1], [x2, y2], [x1, y2]]]
+
+        is_vertical = h >= w
+
+        obj = {
+            "label": label_text,
+            "xyxy": [x1, y1, x2, y2],
+            "lines": final_lines,
+            "language": "unknown",
+            "distance": None,
+            "angle": angle_deg,
+            "vec": None,
+            "norm": -1,
+            "merged": False,
+            "text": [description_text],
+            "translation": "", "rich_text": "",
+            "_bounding_rect": [x1, y1, w, h],
+            "src_is_vertical": is_vertical,
+            "det_model": "XAL_Import",
+            "region_mask": None, "region_inpaint_dict": None,
+            "fontformat": {
+                "font_family": "", "font_size": 24.0, "stroke_width": 0.0,
+                "frgb": [0, 0, 0], "srgb": [0, 0, 0], "bold": False,
+                "underline": False, "italic": False, "alignment": 0,
+                "vertical": is_vertical, "font_weight": 400, "line_spacing": 1.2,
+                "letter_spacing": 1.15, "opacity": 1.0, "shadow_radius": 0.0,
+                "shadow_strength": 1.0, "shadow_color": [0, 0, 0],
+                "shadow_offset": [0.0, 0.0], "gradient_enabled": False,
+                "gradient_start_color": [0, 0, 0], "gradient_end_color": [255, 255, 255],
+                "gradient_angle": 0.0, "gradient_size": 1.0, "_style_name": "",
+                "line_spacing_type": 0, "deprecated_attributes": {}
+            }
+        }
+        return obj
+
+    def custom_to_rotated_json(self, image_list, label_dir_path, output_file, excluded_labels=None):
+        if excluded_labels is None:
+            excluded_labels = []
+
+        all_data = {
+            "directory": label_dir_path,
+            "pages": {},
+            "current_img": ""
+        }
+
+        for i, image_file in enumerate(image_list):
+            image_name = osp.basename(image_file)
+            label_file_name = osp.splitext(image_name)[0] + ".json"
+            label_file_path = osp.join(label_dir_path, label_file_name)
+
+            if not osp.exists(label_file_path):
+                label_file_path = osp.join(osp.dirname(image_file), label_file_name)
+                if not osp.exists(label_file_path):
+                    continue
+
+            with open(label_file_path, 'r', encoding='utf-8') as f:
+                xal_data = json.load(f)
+
+            if 'shapes' not in xal_data:
+                continue
+
+            page_objects = []
+            for shape in xal_data['shapes']:
+                if shape.get('label') in excluded_labels:
+                    continue
+                balloon_obj = self._convert_shape_to_rotated_json_obj(shape)
+                if balloon_obj:
+                    page_objects.append(balloon_obj)
+            
+            if page_objects:
+                all_data["pages"][image_name] = page_objects
+                if not all_data["current_img"]:
+                    all_data["current_img"] = image_name
+        
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(all_data, f, indent=2, ensure_ascii=False)
 
     # Export functions
     def custom_to_yolo(  # noqa: C901

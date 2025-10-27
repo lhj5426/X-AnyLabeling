@@ -1654,11 +1654,11 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("Export Custom VLM-R1 OVD Annotations"),
         )
         export_ballontranslator_annotation = action(
-            "导出 Ballontranslator JSON",
+            "导出 Ballontranslator JSON (兼容旋转矩形)",
             lambda: utils.export_ballontranslator_annotation(self),
             None,
             icon="format_coco",
-            tip="导出为 Ballontranslator JSON 格式",
+            tip="导出为 Ballontranslator JSON 格式（同时支持旋转框）",
         )
         export_imagetrans_annotation = action(
             "导出 ImageTrans ipt",
@@ -1666,9 +1666,7 @@ class LabelingWidget(QtWidgets.QWidget):
             None,
             icon="format_coco",
             tip="导出 ImageTrans ipt 项目文件",
-        )
-
-        # Create action for zoom at mouse
+        )        # Create action for zoom at mouse
         zoom_at_mouse = action(
             self.tr("Zoom at Mouse"),
             self.zoom_at_mouse_shortcut_triggered,
@@ -6561,7 +6559,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.open_next_image()
 
-    def import_image_folder(self, dirpath, pattern=None, load=True, recursive=True):
+    def import_image_folder(self, dirpath, pattern=None, load=True, recursive=None):
+        if recursive is None:
+            recursive = self._config.get("load_subfolders", False)
         if not self.may_continue() or not dirpath:
             return
 

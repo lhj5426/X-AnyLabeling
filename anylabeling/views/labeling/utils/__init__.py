@@ -14,6 +14,7 @@ from .export import (
     export_pporc_annotation,
     export_vlm_r1_ovd_annotation,
     export_ballontranslator_annotation,
+    export_rotated_json_annotation,
     export_imagetrans_annotation,
 )
 from .general import (

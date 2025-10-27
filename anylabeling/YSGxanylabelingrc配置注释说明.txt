@@ -295,7 +295,7 @@ shortcuts: # 快捷键设置
   save_as: Ctrl+Shift+S # 另存为
   save_to: null # 保存到（未设置快捷键）
   select_all_labels: Alt+Q # 全选 (标签列表)
-  select_all_shapes: Alt+A # 全选 (对象列表)
+  select_all_shapes: Alt+T # 全选 (对象列表)
   show_attributes: Ctrl+Shift+L # 显示属性
   show_hidden_polygons: W # 显示已隐藏的多边形
   show_labels: Ctrl+L # 显示/隐藏标签
