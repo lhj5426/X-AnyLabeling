@@ -396,6 +396,9 @@ https://github.com/user-attachments/assets/af946af7-c771-4fa7-a8c1-5bdd8884226c
 
 https://github.com/user-attachments/assets/c54469fb-6e8f-47ea-a20c-e9b0ac15476b
 
+61.增加 矩形对齐工具
+
+https://github.com/user-attachments/assets/427633c3-613f-47bb-b436-3df0f0902ca1
 
 
 
