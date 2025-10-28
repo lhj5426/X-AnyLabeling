@@ -88,6 +88,7 @@ class Canvas(
     auto_decode_finish_requested = QtCore.pyqtSignal()
     shape_hover_changed = QtCore.pyqtSignal()  # 新增信号：形状hover状态变化
     drawing_cancelled = QtCore.pyqtSignal()
+    reference_selected = QtCore.pyqtSignal(object)
 
     CREATE, EDIT = 0, 1
 
@@ -183,6 +184,12 @@ class Canvas(
         self.current = None
         self.selected_shapes = []  # save the selected shapes here
         self.selected_shapes_copy = []
+
+        # Alignment tool state
+        self.is_reference_selection_mode = False
+        self.reference_shape = None
+        self.is_alignment_target_mode = False
+        self.alignment_mode_active = False
 
         # Alt+drag selection box state
         self.selection_box_mode = False
@@ -627,6 +634,24 @@ class Canvas(
             # 发射hover状态变化信号
             self.shape_hover_changed.emit()
 
+    def set_reference_selection_mode(self, is_active):
+        """Enable or disable the reference shape selection mode."""
+        self.is_reference_selection_mode = is_active
+        if is_active:
+            self.override_cursor(CURSOR_POINT)
+        else:
+            self.restore_cursor()
+
+    def set_reference_shape(self, shape):
+        """Set the reference shape to be highlighted."""
+        self.reference_shape = shape
+        self.update()
+
+    def set_alignment_target_mode(self, is_active):
+        """Enable or disable the alignment target selection mode."""
+        self.is_alignment_target_mode = is_active
+        self.alignment_mode_active = is_active
+
     def un_highlight(self):
         """Unhighlight shape/vertex/edge"""
         if self.h_hape:
@@ -837,9 +862,9 @@ class Canvas(
                 self.repaint()
             return
 
-        # Polygon/Vertex moving.
+        # Polygon/Vertex moving and canvas panning.
         if QtCore.Qt.LeftButton & ev.buttons():
-            if self.selected_vertex():
+            if self.selected_vertex() and not self.alignment_mode_active:
                 self.is_move_editing = False
                 try:
                     self.bounded_move_vertex(pos)
@@ -853,7 +878,7 @@ class Canvas(
                     shape_width = int(abs(p2.x() - p1.x()))
                     shape_height = int(abs(p2.y() - p1.y()))
                     self.show_shape.emit(shape_width, shape_height, pos)
-            elif self.selected_shapes and self.prev_point:
+            elif self.selected_shapes and self.prev_point and not self.alignment_mode_active:
                 self.override_cursor(CURSOR_MOVE)
                 self.bounded_move_shapes(self.selected_shapes, pos)
                 self.repaint()
@@ -871,7 +896,9 @@ class Canvas(
                     and self.pixmap.height()
                 ):
                     self.override_cursor(CURSOR_MOVE)
+                    # Anchor pan to the initial press position so the image moves under the cursor
                     delta = ev.localPos() - self.prev_pan_point
+                    # Use normalized deltas consistent with original implementation
                     self.scroll_request.emit(
                         delta.x() / (self.pixmap.width() * self.scale),
                         Qt.Horizontal,
@@ -1063,6 +1090,41 @@ class Canvas(
         if self.is_loading:
             return
         pos = self.transform_pos(ev.localPos())
+
+        # Record the pan baseline on left-button press only when not clicking a shape (to avoid jumps)
+        if ev.button() == QtCore.Qt.LeftButton:
+            self.prev_pan_point = ev.localPos()
+
+        # --- Alignment Tool: Reference Selection Mode ---
+        if self.is_reference_selection_mode and ev.button() == QtCore.Qt.LeftButton:
+            shape = None
+            for s in reversed(self.shapes):
+                if self.is_visible(s) and s.contains_point(pos) and s.shape_type in ["rectangle", "rotation"]:
+                    shape = s
+                    break
+            if shape:
+                self.reference_selected.emit(shape)
+            return # Intercept click
+
+        # --- Alignment Tool: Target Selection Mode (Single Click) ---
+        if self.is_alignment_target_mode and ev.button() == QtCore.Qt.LeftButton:
+            has_modifier = (ev.modifiers() & QtCore.Qt.AltModifier) or (ev.modifiers() & QtCore.Qt.ShiftModifier)
+            if not has_modifier:
+                shape = None
+                for s in reversed(self.shapes):
+                    if self.is_visible(s) and s.contains_point(pos) and s.shape_type in ["rectangle", "rotation"]:
+                        shape = s
+                        break
+                
+                if shape and shape is not self.reference_shape:
+                    current_selection = self.selected_shapes[:]
+                    if shape in current_selection:
+                        current_selection.remove(shape)
+                    else:
+                        current_selection.append(shape)
+                    self.selection_changed.emit(current_selection)
+                return # Intercept click regardless to avoid starting move/drag on shapes
+
 
         # Alt+drag selection box mode
         if (ev.button() == QtCore.Qt.LeftButton and
@@ -1310,14 +1372,24 @@ class Canvas(
         selection_rect = QtCore.QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
 
         # Find shapes that intersect with the selection box AND are visible
-        selected_shapes = []
+        newly_selected = []
         for shape in self.shapes:
             # Only select visible shapes
             if shape.visible and self.shape_intersects_rect(shape, selection_rect):
-                selected_shapes.append(shape)
+                newly_selected.append(shape)
 
         # Update selected shapes
-        self.selected_shapes = selected_shapes
+        if self.is_alignment_target_mode:
+            # Additive mode for alignment tool
+            existing_selection = set(self.selected_shapes)
+            for shape in newly_selected:
+                if shape is not self.reference_shape:
+                    existing_selection.add(shape)
+            self.selected_shapes = list(existing_selection)
+        else:
+            # Normal replacement mode
+            self.selected_shapes = newly_selected
+        
         self.selection_changed.emit(self.selected_shapes)
 
         # Reset selection box mode
@@ -1451,13 +1523,23 @@ class Canvas(
             return
 
         # Select all highlighted shapes
-        selected_shapes = []
+        newly_selected = []
         for shape in self.path_highlighted_shapes:
             if shape.visible:
-                selected_shapes.append(shape)
+                newly_selected.append(shape)
 
         # Update selected shapes
-        self.selected_shapes = selected_shapes
+        if self.is_alignment_target_mode:
+            # Additive mode for alignment tool
+            existing_selection = set(self.selected_shapes)
+            for shape in newly_selected:
+                if shape is not self.reference_shape:
+                    existing_selection.add(shape)
+            self.selected_shapes = list(existing_selection)
+        else:
+            # Normal replacement mode
+            self.selected_shapes = newly_selected
+
         self.selection_changed.emit(self.selected_shapes)
 
         # Reset path selection mode
@@ -2232,6 +2314,22 @@ class Canvas(
                     shape.selected or shape == self.h_hape
                 )
                 shape.paint(p)
+
+                # --- Alignment Tool Highlighting ---
+                if self.is_alignment_target_mode or self.is_reference_selection_mode or self.reference_shape:
+                    is_reference = (shape == self.reference_shape)
+                    is_target = (shape in self.selected_shapes) and (shape is not self.reference_shape)
+
+                    if is_reference:
+                        pen = QtGui.QPen(QtGui.QColor(255, 0, 255)) # Magenta
+                        pen.setWidth(max(4, int(round(4.0 / Shape.scale))))
+                        p.setPen(pen)
+                        p.drawRect(shape.bounding_rect())
+                    elif is_target:
+                        pen = QtGui.QPen(QtGui.QColor(255, 165, 0)) # Orange
+                        pen.setWidth(max(2, int(round(2.0 / Shape.scale))))
+                        p.setPen(pen)
+                        p.drawRect(shape.bounding_rect())
 
         # 绘制重叠区域
         if overlap_regions and self.show_overlap:

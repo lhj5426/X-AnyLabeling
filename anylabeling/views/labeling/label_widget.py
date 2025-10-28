@@ -77,6 +77,7 @@ from .widgets import (
     TagSortDialog,
     AngleCorrectionDialog,
     KeymapDialog,
+    AlignmentDialog,
 )
 from ...services import merger, tag_sorting
 
@@ -178,6 +179,11 @@ class LabelingWidget(QtWidgets.QWidget):
         self.attributes = {}
         self.current_category = None
         self.selected_polygon_stack = []
+
+        # Alignment tool state
+        self.alignment_dialog = None
+        self.reference_shape = None
+        self.is_reference_selection_mode = False
         self.supported_shape = Shape.get_supported_shape()
         self.label_info = {}
         self.image_flags = []
@@ -1053,6 +1059,13 @@ class LabelingWidget(QtWidgets.QWidget):
             self.open_angle_correction_dialog,
             icon="rotation",
             tip=self.tr("批量修正旋转框的角度"),
+        )
+
+        alignment_tool = action(
+            self.tr("矩形对齐工具"),
+            self.open_alignment_dialog,
+            icon="edit",
+            tip=self.tr("对齐或统一多个矩形的尺寸和位置"),
         )
         merge_shapes = action(
             self.tr("区域合并工具"),
@@ -2003,6 +2016,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 expand_margins,
                 tag_sort_tool,
                 angle_correction_tool,
+                alignment_tool,
                 merge_shapes,
                 None,
                 dual_color_label_tool,
@@ -3580,6 +3594,236 @@ class LabelingWidget(QtWidgets.QWidget):
             self.angle_correction_dialog.activateWindow()
         else:
             self.angle_correction_dialog.show()
+
+    def open_alignment_dialog(self):
+        """Open the alignment tool dialog."""
+        if self.alignment_dialog is None:
+            self.alignment_dialog = AlignmentDialog(parent=self)
+            self.alignment_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+            # Connect signals
+            self.alignment_dialog.select_reference.connect(self.on_select_reference_mode)
+            self.alignment_dialog.closing.connect(self.on_alignment_dialog_finished)
+            self.alignment_dialog.reset_mode.connect(self.on_alignment_dialog_finished) # Also clean up on reset
+            self.alignment_dialog.select_all_same_label.connect(self.on_select_all_same_label)
+            self.alignment_dialog.align_left.connect(lambda: self._perform_alignment('left'))
+            self.alignment_dialog.align_h_center.connect(lambda: self._perform_alignment('h_center'))
+            self.alignment_dialog.align_right.connect(lambda: self._perform_alignment('right'))
+            self.alignment_dialog.align_top.connect(lambda: self._perform_alignment('top'))
+            self.alignment_dialog.align_v_center.connect(lambda: self._perform_alignment('v_center'))
+            self.alignment_dialog.align_bottom.connect(lambda: self._perform_alignment('bottom'))
+            self.alignment_dialog.unify_height.connect(lambda: self._perform_alignment('unify_height'))
+            self.alignment_dialog.unify_width.connect(lambda: self._perform_alignment('unify_width'))
+            # Connect canvas signal
+            self.canvas.reference_selected.connect(self.on_reference_shape_selected)
+
+        if self.alignment_dialog.isVisible():
+            self.alignment_dialog.raise_()
+            self.alignment_dialog.activateWindow()
+        else:
+            self.alignment_dialog.show()
+
+    def on_alignment_dialog_finished(self):
+        """Cleanup when the alignment dialog is closed or reset."""
+        self.canvas.set_alignment_target_mode(False)
+        self.canvas.set_reference_selection_mode(False)
+        if self.alignment_dialog:
+            self.alignment_dialog.set_reference_mode(False)
+        self.reference_shape = None
+        self.canvas.set_reference_shape(None)
+        self.canvas.deselect_shape()
+        self.canvas.update()
+
+    # --- Alignment Tool Handlers ---
+    def on_select_reference_mode(self, is_active):
+        """Enter/Exit the reference shape selection mode."""
+        self.is_reference_selection_mode = is_active
+        self.canvas.set_reference_selection_mode(is_active)
+        if self.alignment_dialog:
+            if is_active:
+                self.alignment_dialog.log(self.tr("请在画布上单击一个矩形作为参照物。"))
+                self.reference_shape = None
+                self.canvas.set_reference_shape(None)
+            else:
+                pass
+
+    def on_reference_shape_selected(self, shape):
+        """Callback when a reference shape is selected on the canvas."""
+        self.reference_shape = shape
+        self.canvas.set_reference_shape(shape)
+        if self.alignment_dialog:
+            self.alignment_dialog.log(self.tr("已选定 '{label}' 为参照物。").format(label=shape.label))
+            self.alignment_dialog.log(self.tr("请单击或多选需要对齐的矩形。"))
+            self.alignment_dialog.set_reference_mode(False)
+            # Switch button to orange target-selection prompt
+            self.alignment_dialog.set_button_to_target_selection_mode()
+            self.canvas.set_alignment_target_mode(True)
+
+    def on_select_all_same_label(self):
+        """Select all shapes on the canvas with the same label as the reference shape."""
+        if not self.reference_shape:
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr("错误: 请先选择一个参照物。"))
+            return
+
+        ref_label = self.reference_shape.label
+        current_selection = set(self.canvas.selected_shapes)
+        
+        for shape in self.canvas.shapes:
+            if shape.label == ref_label and shape is not self.reference_shape:
+                current_selection.add(shape)
+
+        self.canvas.select_shapes(list(current_selection))
+        if self.alignment_dialog:
+            self.alignment_dialog.log(self.tr("已选中所有 '{label}' 标签的矩形。").format(label=ref_label))
+
+    def _perform_alignment(self, mode):
+        """Generic helper to perform all alignment and unify actions."""
+        if not self.alignment_dialog:
+            return
+
+        self.alignment_dialog.log_widget.clear()
+
+        if not self.reference_shape:
+            self.alignment_dialog.log(self.tr("错误: 未指定参照物。"))
+            return
+
+        targets = [s for s in self.canvas.selected_shapes if s is not self.reference_shape]
+        if not targets:
+            self.alignment_dialog.log(self.tr("错误: 没有选中任何需要对齐的矩形。"))
+            return
+
+        filter_text = self.alignment_dialog.label_filter_input.text().strip()
+        target_labels = {label.strip() for label in filter_text.split(',') if label.strip()}
+        mode_display_map = {
+            'left': self.tr('左对齐'),
+            'right': self.tr('右对齐'),
+            'h_center': self.tr('水平居中'),
+            'top': self.tr('上对齐'),
+            'bottom': self.tr('下对齐'),
+            'v_center': self.tr('垂直居中'),
+            'unify_width': self.tr('统一宽度'),
+            'unify_height': self.tr('统一高度'),
+        }
+        display_mode = mode_display_map.get(mode, mode)
+        self.alignment_dialog.log(self.tr("开始执行: {mode}").format(mode=display_mode))
+        if target_labels:
+            self.alignment_dialog.log(self.tr("目标标签: {labels}").format(labels=target_labels))
+
+        ref_rect = self.reference_shape.bounding_rect()
+        self.canvas.store_shapes()
+        
+        processed_count = 0
+        for shape in targets:
+            if target_labels and shape.label not in target_labels:
+                self.alignment_dialog.log(self.tr("跳过 '{label}': 标签不匹配").format(label=shape.label))
+                continue
+
+            shape_rect = shape.bounding_rect()
+            delta = QtCore.QPointF(0, 0)
+            action_taken = False
+
+            if mode == 'left':
+                delta.setX(ref_rect.left() - shape_rect.left())
+            elif mode == 'right':
+                delta.setX(ref_rect.right() - shape_rect.right())
+            elif mode == 'h_center':
+                delta.setX(ref_rect.center().x() - shape_rect.center().x())
+            elif mode == 'top':
+                delta.setY(ref_rect.top() - shape_rect.top())
+            elif mode == 'bottom':
+                delta.setY(ref_rect.bottom() - shape_rect.bottom())
+            elif mode == 'v_center':
+                delta.setY(ref_rect.center().y() - shape_rect.center().y())
+            
+            if not delta.isNull():
+                shape.move_by(delta)
+                action_taken = True
+            
+            # Unify size
+            if mode == 'unify_width' or mode == 'unify_height':
+                if shape.shape_type == 'rectangle':
+                    # Rebuild rectangle points explicitly from a QRectF to avoid
+                    # unintended coupling between width/height changes due to point ordering
+                    target_rect = shape.bounding_rect()
+                    new_left = target_rect.left()
+                    new_top = target_rect.top()
+                    new_right = target_rect.right()
+                    new_bottom = target_rect.bottom()
+
+                    if mode == 'unify_width':
+                        ref_width = ref_rect.width()
+                        new_right = new_left + ref_width
+                        action_taken = True
+                    elif mode == 'unify_height':
+                        ref_height = ref_rect.height()
+                        new_bottom = new_top + ref_height
+                        action_taken = True
+
+                    # Apply the new rectangle with canonical TL, TR, BR, BL order
+                    shape.points = [
+                        QtCore.QPointF(new_left, new_top),
+                        QtCore.QPointF(new_right, new_top),
+                        QtCore.QPointF(new_right, new_bottom),
+                        QtCore.QPointF(new_left, new_bottom),
+                    ]
+                elif shape.shape_type == 'rotation':
+                    # Get intrinsic center and dimensions of the target rotated rectangle
+                    target_center_x = (shape.points[0].x() + shape.points[1].x() + shape.points[2].x() + shape.points[3].x()) / 4.0
+                    target_center_y = (shape.points[0].y() + shape.points[1].y() + shape.points[2].y() + shape.points[3].y()) / 4.0
+                    target_center = QtCore.QPointF(target_center_x, target_center_y)
+
+                    target_intrinsic_width = utils.distance(shape.points[1] - shape.points[0])
+                    target_intrinsic_height = utils.distance(shape.points[2] - shape.points[1])
+
+                    # Get intrinsic dimensions of the reference shape
+                    if self.reference_shape.shape_type == 'rotation':
+                        ref_intrinsic_width = utils.distance(self.reference_shape.points[1] - self.reference_shape.points[0])
+                        ref_intrinsic_height = utils.distance(self.reference_shape.points[2] - self.reference_shape.points[1])
+                    else:  # rectangle
+                        ref_intrinsic_width = ref_rect.width()
+                        ref_intrinsic_height = ref_rect.height()
+
+                    new_intrinsic_width = target_intrinsic_width
+                    new_intrinsic_height = target_intrinsic_height
+
+                    if mode == 'unify_width':
+                        new_intrinsic_width = ref_intrinsic_width
+                    elif mode == 'unify_height':
+                        new_intrinsic_height = ref_intrinsic_height
+
+                    # Reconstruct the rotated rectangle's points using math rotation
+                    half_w = new_intrinsic_width / 2.0
+                    half_h = new_intrinsic_height / 2.0
+                    angle = shape.direction
+
+                    cos_a = math.cos(angle)
+                    sin_a = math.sin(angle)
+
+                    # Local, centered at (0,0)
+                    p0_local = QtCore.QPointF(-half_w, -half_h)
+                    p1_local = QtCore.QPointF(half_w, -half_h)
+                    p2_local = QtCore.QPointF(half_w, half_h)
+                    p3_local = QtCore.QPointF(-half_w, half_h)
+
+                    def rot(pt):
+                        return QtCore.QPointF(
+                            pt.x() * cos_a - pt.y() * sin_a + target_center.x(),
+                            pt.x() * sin_a + pt.y() * cos_a + target_center.y(),
+                        )
+
+                    shape.points = [rot(p0_local), rot(p1_local), rot(p2_local), rot(p3_local)]
+                    action_taken = True
+            
+            if action_taken:
+                processed_count += 1
+
+        self.set_dirty()
+        self.canvas.repaint()
+        
+        if processed_count > 0:
+            self.alignment_dialog.log(self.tr("操作完成，共处理了 {count} 个矩形。").format(count=processed_count))
+        else:
+            self.alignment_dialog.log(self.tr("操作完成，未找到符合条件的矩形进行处理。"))
 
     def open_keymap_dialog(self):
         """Open or toggle the keymap dialog window, restoring if minimized."""
