@@ -400,6 +400,11 @@ https://github.com/user-attachments/assets/c54469fb-6e8f-47ea-a20c-e9b0ac15476b
 
 https://github.com/user-attachments/assets/427633c3-613f-47bb-b436-3df0f0902ca1
 
+62.增加 颜色管理工具 实时修改颜色 和跟颜色有关的设置
+
+https://github.com/user-attachments/assets/550a2a1e-34ff-4fe7-b693-c1570f1e269b
+
+
 
 
 
