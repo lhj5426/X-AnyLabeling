@@ -78,6 +78,7 @@ from .widgets import (
     AngleCorrectionDialog,
     KeymapDialog,
     AlignmentDialog,
+    ColorManagerDialog,
 )
 from ...services import merger, tag_sorting
 
@@ -1095,6 +1096,13 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         self.addAction(keymap_tool) # Explicitly add action to widget for shortcut recognition
 
+        color_manager_tool = action(
+            self.tr("颜色管理工具"),
+            self.open_color_manager_dialog,
+            icon="color",
+            tip=self.tr("管理标签颜色和线条宽度"),
+        )
+
         open_chatbot = action(
             self.tr("ChatBot"),
             self.open_chatbot,
@@ -2002,11 +2010,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 None,
                 save_crop,
                 None,
-                digit_shortcut_manager,
-                label_toggle_shortcut_manager,
-                label_manager,
-                object_manager,
-                gid_manager,
+                toggle_auto_labeling_widget,
                 None,
                 hbb_to_obb,
                 obb_to_hbb,
@@ -2018,11 +2022,15 @@ class LabelingWidget(QtWidgets.QWidget):
                 angle_correction_tool,
                 alignment_tool,
                 merge_shapes,
-                None,
                 dual_color_label_tool,
                 mask_generator_tool,
                 None,
+                label_manager,
+                gid_manager,
+                digit_shortcut_manager,
+                label_toggle_shortcut_manager,
                 keymap_tool,
+                color_manager_tool,
             ),
         )
         utils.add_actions(
@@ -3826,38 +3834,103 @@ class LabelingWidget(QtWidgets.QWidget):
             self.alignment_dialog.log(self.tr("操作完成，未找到符合条件的矩形进行处理。"))
 
     def open_keymap_dialog(self):
-        """Open or toggle the keymap dialog window, restoring if minimized."""
-        # No labels check needed for keymap dialog
+        if not self.keymap_dialog:
+            self.keymap_dialog = KeymapDialog(self, config=self._config)
+        self.keymap_dialog.exec_()
 
-        if self.keymap_dialog is None:
-            self.keymap_dialog = KeymapDialog(
-                parent=self,
-                config=self._config,
-                shortcut_key=self._config["shortcuts"].get("keymap_dialog"), # Pass the shortcut key
-            )
-            self.keymap_dialog.accepted.connect(self._save_keymap_config)
-            self.keymap_dialog.rejected.connect(self._cancel_keymap_config)
-            self.keymap_dialog.config_saved.connect(self._update_canvas_speed_settings)
-            self.keymap_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
-        # No else block for updating labels/colors needed for keymap dialog
+    def open_color_manager_dialog(self):
+        if not hasattr(self, 'color_manager_dialog') or not self.color_manager_dialog.isVisible():
+            self.color_manager_dialog = ColorManagerDialog(self, self._config)
+            self.color_manager_dialog.setting_changed.connect(self.update_single_setting)
+            self.color_manager_dialog.show()
 
-        # No current page number setting needed for keymap dialog
-
-        if self.keymap_dialog.isVisible():
-            # If visible, check if it's minimized
-            if self.keymap_dialog.isMinimized():
-                # If minimized, restore to normal state
-                self.keymap_dialog.showNormal()
-                self.keymap_dialog.raise_()
-                self.keymap_dialog.activateWindow()
-            else:
-                # If visible and not minimized, hide it (toggle off)
-                self.keymap_dialog.hide()
+    def update_single_setting(self, key_str, value):
+        try:
+            key = eval(key_str)
+        except NameError:
+            key = key_str
+        
+        # Update in-memory config
+        if isinstance(key, list):
+            self._config[key[0]][key[1]] = value
         else:
-            # If not visible, show it (toggle on)
-            self.keymap_dialog.show()
-            self.keymap_dialog.raise_()
-            self.keymap_dialog.activateWindow()
+            self._config[key] = value
+
+        # Update Shape attributes for real-time canvas update
+        is_color = 'color' in (key[1] if isinstance(key, list) else key) and not key[1].endswith('alpha')
+        
+        if is_color:
+            color = QtGui.QColor(value) if isinstance(value, str) else QtGui.QColor(*value)
+            if key == ['shape', 'navigator_hover_line_color']:
+                self.navigator_dialog.navigator.set_colors(
+                    hover_line_color=color,
+                    select_line_color=QtGui.QColor(*self._config["shape"]["navigator_select_line_color"])
+                )
+                self.navigator_dialog.navigator.update()
+            elif key == ['shape', 'navigator_select_line_color']:
+                self.navigator_dialog.navigator.set_colors(
+                    select_line_color=color,
+                    hover_line_color=QtGui.QColor(*self._config["shape"]["navigator_hover_line_color"])
+                )
+                self.navigator_dialog.navigator.update()
+            elif key == ['shape', 'overlap_color']:
+                self.canvas.overlap_color = color
+            elif key == ['shape', 'overlap_color_alpha']:
+                # Directly modify the alpha of the QColor object the canvas is using
+                new_color = self.canvas.overlap_color
+                new_color.setAlpha(value)
+                self.canvas.overlap_color = new_color
+                # Also update the config list
+                self._config['shape']['overlap_color'][3] = value
+
+            elif key == ['shape', 'line_color']:
+                Shape.line_color = color
+            elif key == ['shape', 'fill_color']:
+                Shape.fill_color = color
+            elif key == ['shape', 'select_line_color']:
+                Shape.select_line_color = color
+            elif key == ['shape', 'canvas_select_line_color']:
+                Shape.canvas_select_line_color = color
+            elif key == ['shape', 'canvas_hover_line_color']:
+                Shape.canvas_hover_line_color = color
+            elif key == ['shape', 'select_fill_color']:
+                Shape.select_fill_color = color
+            elif key == ['shape', 'vertex_fill_color']:
+                Shape.vertex_fill_color = color
+            elif key == ['shape', 'hvertex_fill_color']:
+                Shape.hvertex_fill_color = color
+            elif key == 'manually_edited_color':
+                pass
+        else:
+            # Handle non-color values and color components like alpha
+            if key == ['shape', 'overlap_color_alpha']:
+                # Directly modify the alpha of the QColor object the canvas is using
+                new_color = self.canvas.overlap_color
+                new_color.setAlpha(value)
+                self.canvas.overlap_color = new_color
+                # Also update the config list
+                self._config['shape']['overlap_color'][3] = value
+            elif key == ['shape', 'point_size']:
+                Shape.point_size = value
+            elif key == ['shape', 'line_width']:
+                Shape.line_width = value
+            elif key == ['shape', 'select_line_width']:
+                Shape.select_line_width = value
+            elif key == ['shape', 'canvas_select_line_width']:
+                Shape.canvas_select_line_width = value
+            elif key == ['shape', 'canvas_hover_line_width']:
+                Shape.canvas_hover_line_width = value
+            elif key == ['shape', 'shape_fill_alpha_idle']:
+                Shape.alpha_idle = value
+            elif key == ['shape', 'shape_fill_alpha_highlight']:
+                Shape.alpha_highlight = value
+
+        self.canvas.update()
+        # Auto-save on every change
+        save_config(self._config)
+
+
+
 
 
     def open_vqa(self):

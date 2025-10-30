@@ -429,10 +429,6 @@ class NavigatorWidget(QWidget):
             Selected shapes use their select_line_color if available.
             Normal shapes use their line_color property.
         """
-        # Hover highlighting takes precedence - use bright yellow
-        if hasattr(shape, '_is_highlighted') and shape._is_highlighted:
-            return QColor(255, 255, 0)  # Bright yellow for hover state
-        
         # 优先处理鼠标单击选中
         # 其次处理鼠标单击选中
         if getattr(shape, "is_mouse_selected", False):

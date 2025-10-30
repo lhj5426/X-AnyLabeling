@@ -405,7 +405,9 @@ class Shape:
             vrtx_path = QtGui.QPainterPath()
 
             if self.shape_type == "rectangle":
-                assert len(self.points) in [1, 2, 4]
+                if len(self.points) not in [1, 2, 4]:
+                    logger.warning(f"Skipping painting of invalid rectangle with {len(self.points)} points.")
+                    return
                 if len(self.points) == 2:
                     rectangle = self.get_rect_from_line(*self.points)
                     line_path.addRect(rectangle)

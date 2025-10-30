@@ -148,9 +148,9 @@ def get_config(
 
     # 5. Persist the merged configuration back to user's file, filling missing keys
     #    while preserving any existing user-specified values.
-    # try:
-    #     save_config(config)
-    # except Exception:  # noqa
-    #     pass
+    try:
+        save_config(config)
+    except Exception:  # noqa
+        pass
 
     return config

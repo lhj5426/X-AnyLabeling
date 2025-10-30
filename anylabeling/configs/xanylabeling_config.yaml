@@ -122,82 +122,79 @@ canvas:
   zoom_at_mouse_shortcut: Ctrl+B
 
 shortcuts:
+  add_point_to_edge: Ctrl+Shift+P
+  auto_label: Ctrl+A
+  auto_run: Ctrl+M
   close: Ctrl+W
-  open: Ctrl+I
-  open_video: Ctrl+O
-  open_dir: Ctrl+U
-  open_chatbot: null
-  open_vqa: Ctrl+1
-  quit: Ctrl+Q
-  save: Ctrl+S
-  save_as: Ctrl+Shift+S
-  save_to: null
-  delete_file: Ctrl+Delete
-  delete_image_file: Ctrl+Shift+Delete
-
-  open_next: D
-  open_prev: A
-  open_next_unchecked: Ctrl+Shift+D
-  open_prev_unchecked: Ctrl+Shift+A
-
-  zoom_in: [Ctrl++, Ctrl+=]
-  zoom_out: Ctrl+-
-  zoom_to_original: Ctrl+0
-  fit_window: Ctrl+F
-  fit_width: Ctrl+Shift+F
-  show_navigator: F9
-
+  copy_polygon: Ctrl+C
+  create_circle: null
+  create_line: null
+  create_linestrip: null
+  create_point: null
   create_polygon: [P, Ctrl+N]
   create_rectangle: [R, Ctrl+R]
   create_rotation: O
   create_rotation3: H
-  create_circle: null
-  create_line: null
-  create_point: null
-  create_linestrip: null
-  edit_polygon: Ctrl+J
+  delete_file: Ctrl+Delete
+  delete_image_file: Ctrl+Shift+Delete
   delete_polygon: Delete
+  deselect_all_labels: Alt+W
+  deselect_all_shapes: Alt+S
   duplicate_polygon: Ctrl+D
-  copy_polygon: Ctrl+C
-  paste_polygon: Ctrl+V
-  undo: Ctrl+Z
-  undo_last_point: Ctrl+Z
-  add_point_to_edge: Ctrl+Shift+P
-  edit_label: Ctrl+E
-  edit_group_id: Alt+G
   edit_digit_shortcut: Alt+D
-  toggle_keep_prev_mode: Ctrl+P
-  remove_selected_point: Backspace
+  edit_group_id: Alt+G
+  edit_label: Ctrl+E
+  edit_polygon: Ctrl+J
+  expand_margins: Ctrl+Shift+M
+  fit_width: Ctrl+Shift+F
+  fit_window: Ctrl+F
   group_selected_shapes: G
-  ungroup_selected_shapes: U
   hide_selected_polygons: S
-  show_hidden_polygons: W
-  show_overview: Ctrl+G
-  show_texts: Ctrl+T
-  show_wh: Ctrl+Shift+W
-  show_labels: Ctrl+L
-  show_linking: Ctrl+K
+  invert_selection_labels: Alt+E
+  invert_selection_shapes: Alt+I
+  keymap_dialog: Ctrl+Shift+U
+  loop_thru_labels: N
+  object_manager: Ctrl+T
+  open: Ctrl+I
+  open_chatbot: null
+  open_dir: Ctrl+U
+  open_next: [D, Ctrl+Shift+D]
+  open_next_unchecked: Ctrl+Shift+D
+  open_prev: [A, Ctrl+Shift+A]
+  open_prev_unchecked: Ctrl+Shift+A
+  open_video: Ctrl+O
+  open_vqa: null
+  paste_polygon: Ctrl+V
+  quit: Ctrl+Q
+  remove_selected_point: Backspace
+  save: Ctrl+S
+  save_as: Ctrl+Shift+S
+  save_to: null
+  select_all_labels: Alt+Q
+  select_all_shapes: Alt+T
   show_attributes: Ctrl+Shift+L
-  union_selected_shapes: Ctrl+Shift+M
-  toggle_auto_use_last_label: Ctrl+Y
-  toggle_visibility_shapes: Ctrl+H
+  show_hidden_polygons: W
+  show_labels: Ctrl+L
+  show_linking: null
+  show_navigator: Alt+Z
+  show_order: Ctrl+Shift+O
+  show_overview: Ctrl+G
+  show_texts: null
+  show_wh: Ctrl+Shift+W
+  toggle_auto_use_last_label: Ctrl+K
   toggle_crosshair: Ctrl+Shift+H
   toggle_degrees: Ctrl+Alt+D
-
-  show_order: Ctrl+Shift+O
-  auto_label: Ctrl+A
-  auto_run: Ctrl+M
-  loop_thru_labels: Ctrl+Shift+N
-
-  select_all_labels: Alt+Q
-  deselect_all_labels: Alt+W
-  invert_selection_labels: Alt+E
-  toggle_overlap: Alt+R
-  select_all_shapes: Alt+T
-  deselect_all_shapes: Alt+S
-  invert_selection_shapes: Alt+I
   toggle_highlight: Alt+F
-  keymap_dialog: K
+  toggle_keep_prev_mode: Ctrl+P
+  toggle_overlap: Alt+R
+  toggle_visibility_shapes: Ctrl+H
+  undo: Ctrl+Z
+  undo_last_point: Ctrl+Z
+  ungroup_selected_shapes: U
+  union_selected_shapes: M
+  zoom_in: [Ctrl++, Ctrl+=]
+  zoom_out: Ctrl+-
+  zoom_to_original: Ctrl+0
 
 # Auto labeling
 custom_models: []
