@@ -404,6 +404,48 @@ https://github.com/user-attachments/assets/427633c3-613f-47bb-b436-3df0f0902ca1
 
 https://github.com/user-attachments/assets/550a2a1e-34ff-4fe7-b693-c1570f1e269b
 
+63.矩形对齐工具 增加 统一角度 并且 增强交互逻辑
+
+https://github.com/user-attachments/assets/830fb593-21e7-4d59-81a6-83da12d25ab7
+
+64.颜色管理工具 增加 矩形对齐工具 对齐模式的颜色实时设置
+
+https://github.com/user-attachments/assets/74dea623-417e-4a04-b13c-13597268023d
+
+65.增加 快捷键管理器 实时修改生效 不需要重启
+
+<img width="1013" height="647" alt="image" src="https://github.com/user-attachments/assets/ce5683bb-3354-47dc-8b14-d94a2fd767c0" />
+
+66.增加 矩形 水平垂直分割工具
+
+https://github.com/user-attachments/assets/327d5d37-1683-4396-84f5-59a8c546652b
+
+67.增加 滚轮调整工具 实时调整生效
+
+https://github.com/user-attachments/assets/1f6cec25-e2a6-4d8a-baa4-e60337016fc5
+
+68.新增的旋转标注模式 优化 对齐参考线的长度50改成500像素
+
+https://github.com/user-attachments/assets/017bfd59-f04a-4a70-8316-1d3b5a3477a9
+
+69.增加 掩膜生成工具 可以生成文字掩膜和矩形掩膜 并可以将开源项目 https://github.com/dmMaze/BallonsTranslator 的CTD模型生成的掩膜转换为多边形显示在画布上用于基础文字掩膜数据
+
+https://github.com/user-attachments/assets/1e5d54b6-d044-4949-b478-c12ece4cdd2b
+
+70.增加 全选功能 并 设置快捷键CTRL+A window的全选习惯直觉化操作 并对标签页管理器增加全选按钮优化布局
+
+https://github.com/user-attachments/assets/74d2c2c4-ffec-421d-90cc-11505d538c46
+
+71,子图导出优化 可以 导出完整的 矩形区块 原版只能导出 水平 不支持倾斜矩形的区块 而且导出会很卡 
+
+https://github.com/user-attachments/assets/ab349951-140d-41c9-9fab-1a2ae6765b56
+
+
+
+
+
+
+
 
 
 
