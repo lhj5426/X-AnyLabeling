@@ -440,6 +440,11 @@ https://github.com/user-attachments/assets/74d2c2c4-ffec-421d-90cc-11505d538c46
 
 https://github.com/user-attachments/assets/ab349951-140d-41c9-9fab-1a2ae6765b56
 
+72.新增 三点式 水平矩形标注模式 
+
+https://github.com/user-attachments/assets/df7cf602-b29a-488d-9f42-5dccd2238334
+
+
 
 
 
