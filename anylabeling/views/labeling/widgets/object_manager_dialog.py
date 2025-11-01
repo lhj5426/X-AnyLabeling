@@ -20,7 +20,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         super(ObjectManagerDialog, self).__init__(parent)
         self.main_window = parent
         self.setWindowTitle(self.tr("标签页管理器"))
-        self.resize(520, 420)
+        self.resize(355, 452)
         # 设置窗口标志：移除帮助按钮，添加最小化按钮
         self.setWindowFlags(
             QtCore.Qt.Window |
@@ -44,6 +44,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_delete_by_category.setStyleSheet("color: red;")
         self.btn_edit_label = QtWidgets.QPushButton(self.tr("修改标签"))
         self.apply_all_checkbox = QtWidgets.QCheckBox(self.tr("应用到全部"))
+        self.btn_select_all = QtWidgets.QPushButton(self.tr("全选标签"))
 
         # Right side: Full object list with drag-drop
         self.list_widget = ObjectListWidget()
@@ -60,24 +61,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
             new_item.setFlags(item.flags() & ~QtCore.Qt.ItemIsUserCheckable) # No checkbox
             self.list_widget.addItem(new_item)
 
-        # Layouts
-        v_layout_left = QtWidgets.QVBoxLayout()
-        v_layout_left.addWidget(QtWidgets.QLabel(self.tr("分类整体排序")))
-        v_layout_left.addWidget(self.category_list)
-        
-        h_button_layout_left = QtWidgets.QHBoxLayout()
-        h_button_layout_left.addWidget(self.btn_move_category_top)
-        h_button_layout_left.addWidget(self.btn_move_category_bottom)
-        v_layout_left.addLayout(h_button_layout_left)
-        v_layout_left.addWidget(self.btn_delete_by_category)
-        v_layout_left.addWidget(self.btn_edit_label)
-        v_layout_left.addWidget(self.apply_all_checkbox, 0, QtCore.Qt.AlignRight)
-        v_layout_left.addStretch()
-
-        v_layout_right = QtWidgets.QVBoxLayout()
-        v_layout_right.addWidget(QtWidgets.QLabel(self.tr("对象列表 (可拖拽排序)")))
-        v_layout_right.addWidget(self.list_widget)
-
+        # Create buttons for object list operations
         self.btn_move_up = QtWidgets.QPushButton(self.tr("上移"))
         self.btn_move_down = QtWidgets.QPushButton(self.tr("下移"))
         self.btn_delete_selected = QtWidgets.QPushButton(self.tr("删除选中"))
@@ -85,17 +69,51 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_top = QtWidgets.QPushButton(self.tr("置顶"))
         self.btn_move_bottom = QtWidgets.QPushButton(self.tr("置底"))
 
-        h_button_layout_right = QtWidgets.QHBoxLayout()
-        h_button_layout_right.addWidget(self.btn_move_up)
-        h_button_layout_right.addWidget(self.btn_move_down)
-        h_button_layout_right.addWidget(self.btn_delete_selected)
-        h_button_layout_right.addStretch()
-        h_button_layout_right.addWidget(self.btn_move_top)
-        h_button_layout_right.addWidget(self.btn_move_bottom)
-        v_layout_right.addLayout(h_button_layout_right)
+        # Layouts
+        v_layout_left = QtWidgets.QVBoxLayout()
+        v_layout_left.addWidget(QtWidgets.QLabel(self.tr("分类整体排序")))
+        v_layout_left.addWidget(self.category_list)
+
+        # 10个按钮，2个一排，排成5排
+        # 第1排：置顶分类 | 置底分类
+        h_button_layout_1 = QtWidgets.QHBoxLayout()
+        h_button_layout_1.addWidget(self.btn_move_category_top)
+        h_button_layout_1.addWidget(self.btn_move_category_bottom)
+        v_layout_left.addLayout(h_button_layout_1)
+
+        # 第2排：修改标签 | 按分类删除
+        h_button_layout_2 = QtWidgets.QHBoxLayout()
+        h_button_layout_2.addWidget(self.btn_edit_label)
+        h_button_layout_2.addWidget(self.btn_delete_by_category)
+        v_layout_left.addLayout(h_button_layout_2)
+
+        # 第3排：全选标签 | 删除选中
+        h_button_layout_3 = QtWidgets.QHBoxLayout()
+        h_button_layout_3.addWidget(self.btn_select_all)
+        h_button_layout_3.addWidget(self.btn_delete_selected)
+        v_layout_left.addLayout(h_button_layout_3)
+
+        # 第4排：上移 | 下移
+        h_button_layout_4 = QtWidgets.QHBoxLayout()
+        h_button_layout_4.addWidget(self.btn_move_up)
+        h_button_layout_4.addWidget(self.btn_move_down)
+        v_layout_left.addLayout(h_button_layout_4)
+
+        # 第5排：置顶 | 置底
+        h_button_layout_5 = QtWidgets.QHBoxLayout()
+        h_button_layout_5.addWidget(self.btn_move_top)
+        h_button_layout_5.addWidget(self.btn_move_bottom)
+        v_layout_left.addLayout(h_button_layout_5)
+
+        v_layout_left.addWidget(self.apply_all_checkbox, 0, QtCore.Qt.AlignRight)
+        v_layout_left.addStretch()
+
+        v_layout_right = QtWidgets.QVBoxLayout()
+        v_layout_right.addWidget(QtWidgets.QLabel(self.tr("对象列表 (可拖拽排序)")))
+        v_layout_right.addWidget(self.list_widget)
 
         main_layout = QtWidgets.QHBoxLayout(self)
-        main_layout.addLayout(v_layout_left, 1)
+        main_layout.addLayout(v_layout_left, 3)
         main_layout.addLayout(v_layout_right, 2)
 
         # Connections
@@ -109,6 +127,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_category_bottom.clicked.connect(lambda: self.reorder_by_category(move_to_top=False))
         self.btn_delete_by_category.clicked.connect(self.delete_by_category)
 
+        self.btn_select_all.clicked.connect(self.select_all_items)
         self.btn_move_up.clicked.connect(lambda: self.move_items(-1))
         self.btn_move_down.clicked.connect(lambda: self.move_items(1))
         self.btn_delete_selected.clicked.connect(self.delete_requested.emit)
@@ -121,6 +140,10 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         # Add shortcut for closing the dialog
         self.close_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+T"), self)
         self.close_shortcut.activated.connect(self.close)
+
+        # Add shortcut for selecting all items
+        self.select_all_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+A"), self)
+        self.select_all_shortcut.activated.connect(self.select_all_items)
 
     def eventFilter(self, source, event):
         if source is self.list_widget and event.type() == QtCore.QEvent.KeyPress:
@@ -401,6 +424,15 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         """Handle the window hide event."""
         self.save_window_position()
         super(ObjectManagerDialog, self).hideEvent(event)
+
+    def select_all_items(self):
+        """Select all items in the list widget and all shapes on canvas."""
+        # Select all items in the list widget
+        self.list_widget.selectAll()
+
+        # Also select all shapes on canvas if main_window is available
+        if self.main_window and hasattr(self.main_window, 'canvas'):
+            self.main_window.canvas.select_all_visible_shapes()
 
     def _on_category_selection_changed(self, category_name, is_checked):
         """Select/deselect all shapes of a given category in the list widget and on the canvas."""

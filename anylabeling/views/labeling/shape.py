@@ -256,6 +256,7 @@ class Shape:
         return [
             "polygon",
             "rectangle",
+            "rectangle3",
             "rotation",
             "rotation3",
             "point",
@@ -266,7 +267,7 @@ class Shape:
 
     def close(self):
         """Close the shape"""
-        if self.shape_type in ["rotation", "rotation3"] and len(self.points) == 4:
+        if self.shape_type in ["rotation", "rotation3", "rectangle3"] and len(self.points) == 4:
             cx = (self.points[0].x() + self.points[2].x()) / 2
             cy = (self.points[0].y() + self.points[2].y()) / 2
             self.center = QtCore.QPointF(cx, cy)

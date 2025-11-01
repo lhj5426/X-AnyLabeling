@@ -3,18 +3,39 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 from datetime import datetime
 
+
+class AlignmentButton(QtWidgets.QPushButton):
+    """Custom button that emits different signals for left and right click."""
+
+    left_clicked = QtCore.pyqtSignal()  # Left click: execute and exit
+    right_clicked = QtCore.pyqtSignal()  # Right click: execute only
+
+    def __init__(self, text, parent=None):
+        super(AlignmentButton, self).__init__(text, parent)
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.left_clicked.emit()
+        elif event.button() == QtCore.Qt.RightButton:
+            self.right_clicked.emit()
+        # Call parent to maintain button visual feedback
+        super(AlignmentButton, self).mousePressEvent(event)
+
+
 class AlignmentDialog(QtWidgets.QDialog):
     """A non-modal dialog for aligning shapes."""
 
-    align_left = QtCore.pyqtSignal()
-    align_h_center = QtCore.pyqtSignal()
-    align_right = QtCore.pyqtSignal()
-    align_top = QtCore.pyqtSignal()
-    align_v_center = QtCore.pyqtSignal()
-    align_bottom = QtCore.pyqtSignal()
-    unify_height = QtCore.pyqtSignal()
-    unify_width = QtCore.pyqtSignal()
-    
+    # Signals now carry a boolean: True = auto exit, False = stay in mode
+    align_left = QtCore.pyqtSignal(bool)
+    align_h_center = QtCore.pyqtSignal(bool)
+    align_right = QtCore.pyqtSignal(bool)
+    align_top = QtCore.pyqtSignal(bool)
+    align_v_center = QtCore.pyqtSignal(bool)
+    align_bottom = QtCore.pyqtSignal(bool)
+    unify_height = QtCore.pyqtSignal(bool)
+    unify_width = QtCore.pyqtSignal(bool)
+    unify_angle = QtCore.pyqtSignal(bool)
+
     select_reference = QtCore.pyqtSignal(bool)
     reset_mode = QtCore.pyqtSignal()
     select_all_same_label = QtCore.pyqtSignal()
@@ -138,14 +159,27 @@ class AlignmentDialog(QtWidgets.QDialog):
         # --- Alignment buttons ---
         alignment_group = QtWidgets.QGroupBox(self.tr("对齐"))
         alignment_layout = QtWidgets.QGridLayout(alignment_group)
-        
-        self.btn_align_left = QtWidgets.QPushButton(self.tr("左对齐"))
-        self.btn_align_h_center = QtWidgets.QPushButton(self.tr("水平居中"))
-        self.btn_align_right = QtWidgets.QPushButton(self.tr("右对齐"))
-        self.btn_align_top = QtWidgets.QPushButton(self.tr("上对齐"))
-        self.btn_align_v_center = QtWidgets.QPushButton(self.tr("垂直居中"))
-        self.btn_align_bottom = QtWidgets.QPushButton(self.tr("下对齐"))
-        
+
+        tooltip_text = self.tr("左键: 执行后自动退出模式\n右键: 执行后保持模式")
+
+        self.btn_align_left = AlignmentButton(self.tr("左对齐"))
+        self.btn_align_left.setToolTip(tooltip_text)
+
+        self.btn_align_h_center = AlignmentButton(self.tr("水平居中"))
+        self.btn_align_h_center.setToolTip(tooltip_text)
+
+        self.btn_align_right = AlignmentButton(self.tr("右对齐"))
+        self.btn_align_right.setToolTip(tooltip_text)
+
+        self.btn_align_top = AlignmentButton(self.tr("上对齐"))
+        self.btn_align_top.setToolTip(tooltip_text)
+
+        self.btn_align_v_center = AlignmentButton(self.tr("垂直居中"))
+        self.btn_align_v_center.setToolTip(tooltip_text)
+
+        self.btn_align_bottom = AlignmentButton(self.tr("下对齐"))
+        self.btn_align_bottom.setToolTip(tooltip_text)
+
         alignment_layout.addWidget(self.btn_align_left, 0, 0)
         alignment_layout.addWidget(self.btn_align_h_center, 0, 1)
         alignment_layout.addWidget(self.btn_align_right, 0, 2)
@@ -153,16 +187,23 @@ class AlignmentDialog(QtWidgets.QDialog):
         alignment_layout.addWidget(self.btn_align_v_center, 1, 1)
         alignment_layout.addWidget(self.btn_align_bottom, 1, 2)
         main_layout.addWidget(alignment_group)
-        
+
         # --- Unify Size buttons ---
         unify_group = QtWidgets.QGroupBox(self.tr("统一尺寸"))
         unify_layout = QtWidgets.QHBoxLayout(unify_group)
-        
-        self.btn_unify_height = QtWidgets.QPushButton(self.tr("统一高度"))
-        self.btn_unify_width = QtWidgets.QPushButton(self.tr("统一宽度"))
-        
+
+        self.btn_unify_height = AlignmentButton(self.tr("统一高度"))
+        self.btn_unify_height.setToolTip(tooltip_text)
+
+        self.btn_unify_width = AlignmentButton(self.tr("统一宽度"))
+        self.btn_unify_width.setToolTip(tooltip_text)
+
+        self.btn_unify_angle = AlignmentButton(self.tr("统一角度"))
+        self.btn_unify_angle.setToolTip(tooltip_text)
+
         unify_layout.addWidget(self.btn_unify_height)
         unify_layout.addWidget(self.btn_unify_width)
+        unify_layout.addWidget(self.btn_unify_angle)
         main_layout.addWidget(unify_group)
 
         # --- Log GroupBox ---
@@ -177,14 +218,35 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.select_ref_button.toggled.connect(self.set_reference_mode)
         self.exit_button.clicked.connect(self._on_exit_alignment_mode)
         self.select_same_button.clicked.connect(self.select_all_same_label.emit)
-        self.btn_align_left.clicked.connect(self.align_left.emit)
-        self.btn_align_h_center.clicked.connect(self.align_h_center.emit)
-        self.btn_align_right.clicked.connect(self.align_right.emit)
-        self.btn_align_top.clicked.connect(self.align_top.emit)
-        self.btn_align_v_center.clicked.connect(self.align_v_center.emit)
-        self.btn_align_bottom.clicked.connect(self.align_bottom.emit)
-        self.btn_unify_height.clicked.connect(self.unify_height.emit)
-        self.btn_unify_width.clicked.connect(self.unify_width.emit)
+
+        # Connect alignment buttons: left click = auto exit, right click = stay
+        self.btn_align_left.left_clicked.connect(lambda: self.align_left.emit(True))
+        self.btn_align_left.right_clicked.connect(lambda: self.align_left.emit(False))
+
+        self.btn_align_h_center.left_clicked.connect(lambda: self.align_h_center.emit(True))
+        self.btn_align_h_center.right_clicked.connect(lambda: self.align_h_center.emit(False))
+
+        self.btn_align_right.left_clicked.connect(lambda: self.align_right.emit(True))
+        self.btn_align_right.right_clicked.connect(lambda: self.align_right.emit(False))
+
+        self.btn_align_top.left_clicked.connect(lambda: self.align_top.emit(True))
+        self.btn_align_top.right_clicked.connect(lambda: self.align_top.emit(False))
+
+        self.btn_align_v_center.left_clicked.connect(lambda: self.align_v_center.emit(True))
+        self.btn_align_v_center.right_clicked.connect(lambda: self.align_v_center.emit(False))
+
+        self.btn_align_bottom.left_clicked.connect(lambda: self.align_bottom.emit(True))
+        self.btn_align_bottom.right_clicked.connect(lambda: self.align_bottom.emit(False))
+
+        # Connect unify buttons: left click = auto exit, right click = stay
+        self.btn_unify_height.left_clicked.connect(lambda: self.unify_height.emit(True))
+        self.btn_unify_height.right_clicked.connect(lambda: self.unify_height.emit(False))
+
+        self.btn_unify_width.left_clicked.connect(lambda: self.unify_width.emit(True))
+        self.btn_unify_width.right_clicked.connect(lambda: self.unify_width.emit(False))
+
+        self.btn_unify_angle.left_clicked.connect(lambda: self.unify_angle.emit(True))
+        self.btn_unify_angle.right_clicked.connect(lambda: self.unify_angle.emit(False))
 
     def _on_exit_alignment_mode(self):
         """Handle exit alignment mode button click."""

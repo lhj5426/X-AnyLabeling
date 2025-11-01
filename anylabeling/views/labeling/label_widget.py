@@ -79,6 +79,9 @@ from .widgets import (
     KeymapDialog,
     AlignmentDialog,
     ColorManagerDialog,
+    ShortcutManagerDialog,
+    SegmentationDialog,
+    Rectangle3WidthDialog,
 )
 from ...services import merger, tag_sorting
 
@@ -185,6 +188,15 @@ class LabelingWidget(QtWidgets.QWidget):
         self.alignment_dialog = None
         self.reference_shape = None
         self.is_reference_selection_mode = False
+
+        # Segmentation tool state
+        self.segmentation_dialog = None
+        self.segmentation_mode = None  # 'vertical', 'horizontal', or None
+
+        # Wheel settings dialog
+        self.wheel_settings_dialog = None
+        self.rectangle3_width_dialog = None
+
         self.supported_shape = Shape.get_supported_shape()
         self.label_info = {}
         self.image_flags = []
@@ -750,6 +762,14 @@ class LabelingWidget(QtWidgets.QWidget):
             "三次点击绘制旋转框（绿点 → 红色箭头 → 宽度）",
             enabled=False,
         )
+        create_rectangle3_mode = action(
+            "创建水平矩形（三次点击）",
+            lambda: self.toggle_draw_mode(False, create_mode="rectangle3"),
+            shortcuts.get("create_rectangle3", "J"),  # 默认快捷键 J
+            "rectangle",  # 使用 rectangle 图标
+            "三次点击绘制水平矩形（顶部中心 → 底部中心 → T字头宽度）",
+            enabled=False,
+        )
         create_circle_mode = action(
             self.tr("Create Circle"),
             lambda: self.toggle_draw_mode(False, create_mode="circle"),
@@ -951,6 +971,16 @@ class LabelingWidget(QtWidgets.QWidget):
             enabled=True,
         )
 
+        select_all_shapes_canvas = action(
+            self.tr("Select All Shapes"),
+            self.select_all_shapes_on_canvas,
+            shortcuts.get("select_all_shapes_canvas", "Ctrl+A"),
+            None,
+            self.tr("Select all visible shapes on canvas"),
+            enabled=True,
+        )
+        self.addAction(select_all_shapes_canvas)  # Explicitly add action to widget for shortcut recognition
+
         overview = action(
             self.tr("&Overview"),
             self.overview,
@@ -1065,8 +1095,29 @@ class LabelingWidget(QtWidgets.QWidget):
         alignment_tool = action(
             self.tr("矩形对齐工具"),
             self.open_alignment_dialog,
+            shortcuts["alignment_tool"],
             icon="edit",
             tip=self.tr("对齐或统一多个矩形的尺寸和位置"),
+        )
+        segmentation_tool = action(
+            self.tr("矩形分割工具"),
+            self.toggle_segmentation_dialog,
+            shortcuts["segmentation_tool"],
+            icon="edit",
+            tip=self.tr("手动分割矩形标注框"),
+        )
+        wheel_settings_tool = action(
+            self.tr("鼠标滚轮设置"),
+            self.open_wheel_settings_dialog,
+            icon="convert",
+            tip=self.tr("配置鼠标滚轮矩形编辑功能"),
+        )
+
+        rectangle3_width_tool = action(
+            self.tr("Rectangle3 宽度设置"),
+            self.open_rectangle3_width_dialog,
+            icon="rectangle",
+            tip=self.tr("配置三次点击水平矩形的宽度"),
         )
         merge_shapes = action(
             self.tr("区域合并工具"),
@@ -1081,7 +1132,7 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("转换或还原双色标签"),
         )
         mask_generator_tool = action(
-            self.tr("MASK生成"),
+            self.tr("掩膜生成"),
             self.open_mask_generator,
             icon="edit",
             tip=self.tr("使用CTD模型生成文字区域掩膜"),
@@ -1101,6 +1152,13 @@ class LabelingWidget(QtWidgets.QWidget):
             self.open_color_manager_dialog,
             icon="color",
             tip=self.tr("管理标签颜色和线条宽度"),
+        )
+
+        shortcut_manager_tool = action(
+            self.tr("快捷键管理器"),
+            self.open_shortcut_manager_dialog,
+            icon="edit",
+            tip=self.tr("管理所有快捷键配置"),
         )
 
         open_chatbot = action(
@@ -1795,6 +1853,8 @@ class LabelingWidget(QtWidgets.QWidget):
             create_rectangle_mode=create_rectangle_mode,
             create_rotation_mode=create_rotation_mode,
             create_rotation3_mode=create_rotation3_mode,
+            create_rectangle3_mode=create_rectangle3_mode,
+            rectangle3_width_tool=rectangle3_width_tool,
             create_circle_mode=create_circle_mode,
             create_line_mode=create_line_mode,
             create_point_mode=create_point_mode,
@@ -1957,6 +2017,7 @@ class LabelingWidget(QtWidgets.QWidget):
             on_shapes_present=(save_as, delete),
             hide_selected_polygons=hide_selected_polygons,
             show_hidden_polygons=show_hidden_polygons,
+            select_all_shapes_canvas=select_all_shapes_canvas,
             group_selected_shapes=group_selected_shapes,
             ungroup_selected_shapes=ungroup_selected_shapes,
         )
@@ -2006,31 +2067,40 @@ class LabelingWidget(QtWidgets.QWidget):
         utils.add_actions(
             self.menus.tool,
             (
+                # === 统计与导出 ===
                 overview,
-                None,
                 save_crop,
                 None,
+                # === 自动标注 ===
                 toggle_auto_labeling_widget,
                 None,
+                # === 格式转换 ===
                 hbb_to_obb,
                 obb_to_hbb,
                 polygon_to_hbb,
                 polygon_to_obb,
                 None,
+                # === 标注编辑工具 ===
                 expand_margins,
                 tag_sort_tool,
                 angle_correction_tool,
                 alignment_tool,
+                segmentation_tool,
                 merge_shapes,
                 dual_color_label_tool,
                 mask_generator_tool,
                 None,
+                # === 管理器工具 ===
                 label_manager,
+                object_manager,
                 gid_manager,
                 digit_shortcut_manager,
                 label_toggle_shortcut_manager,
                 keymap_tool,
                 color_manager_tool,
+                shortcut_manager_tool,
+                wheel_settings_tool,
+                rectangle3_width_tool,
             ),
         )
         utils.add_actions(
@@ -2184,6 +2254,7 @@ class LabelingWidget(QtWidgets.QWidget):
             None,
             create_mode,
             self.actions.create_rectangle_mode,
+            self.actions.create_rectangle3_mode,  # 新增的三次点击水平矩形
             self.actions.create_rotation_mode,
             self.actions.create_rotation3_mode,  # 新增的三次点击旋转矩形
             self.actions.create_circle_mode,
@@ -2691,6 +2762,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.actions.union_selection.setEnabled(False)
         self.actions.create_mode.setEnabled(True)
         self.actions.create_rectangle_mode.setEnabled(True)
+        self.actions.create_rectangle3_mode.setEnabled(True)
         self.actions.create_rotation_mode.setEnabled(True)
         self.actions.create_rotation3_mode.setEnabled(True)
         self.actions.create_circle_mode.setEnabled(True)
@@ -3072,7 +3144,6 @@ class LabelingWidget(QtWidgets.QWidget):
         if digit_shortcut_dialog.exec_():
             self._config["digit_shortcuts"] = self.drawing_digit_shortcuts
             save_config(self._config)
-            self.load_digit_shortcuts()
 
     def open_label_toggle_shortcut_manager(self):
         if not self.label_file:
@@ -3613,14 +3684,15 @@ class LabelingWidget(QtWidgets.QWidget):
             self.alignment_dialog.closing.connect(self.on_alignment_dialog_finished)
             self.alignment_dialog.reset_mode.connect(self.on_alignment_dialog_finished) # Also clean up on reset
             self.alignment_dialog.select_all_same_label.connect(self.on_select_all_same_label)
-            self.alignment_dialog.align_left.connect(lambda: self._perform_alignment('left'))
-            self.alignment_dialog.align_h_center.connect(lambda: self._perform_alignment('h_center'))
-            self.alignment_dialog.align_right.connect(lambda: self._perform_alignment('right'))
-            self.alignment_dialog.align_top.connect(lambda: self._perform_alignment('top'))
-            self.alignment_dialog.align_v_center.connect(lambda: self._perform_alignment('v_center'))
-            self.alignment_dialog.align_bottom.connect(lambda: self._perform_alignment('bottom'))
-            self.alignment_dialog.unify_height.connect(lambda: self._perform_alignment('unify_height'))
-            self.alignment_dialog.unify_width.connect(lambda: self._perform_alignment('unify_width'))
+            self.alignment_dialog.align_left.connect(lambda auto_exit: self._perform_alignment('left', auto_exit))
+            self.alignment_dialog.align_h_center.connect(lambda auto_exit: self._perform_alignment('h_center', auto_exit))
+            self.alignment_dialog.align_right.connect(lambda auto_exit: self._perform_alignment('right', auto_exit))
+            self.alignment_dialog.align_top.connect(lambda auto_exit: self._perform_alignment('top', auto_exit))
+            self.alignment_dialog.align_v_center.connect(lambda auto_exit: self._perform_alignment('v_center', auto_exit))
+            self.alignment_dialog.align_bottom.connect(lambda auto_exit: self._perform_alignment('bottom', auto_exit))
+            self.alignment_dialog.unify_height.connect(lambda auto_exit: self._perform_alignment('unify_height', auto_exit))
+            self.alignment_dialog.unify_width.connect(lambda auto_exit: self._perform_alignment('unify_width', auto_exit))
+            self.alignment_dialog.unify_angle.connect(lambda auto_exit: self._perform_alignment('unify_angle', auto_exit))
             # Connect canvas signal
             self.canvas.reference_selected.connect(self.on_reference_shape_selected)
 
@@ -3684,8 +3756,13 @@ class LabelingWidget(QtWidgets.QWidget):
         if self.alignment_dialog:
             self.alignment_dialog.log(self.tr("已选中所有 '{label}' 标签的矩形。").format(label=ref_label))
 
-    def _perform_alignment(self, mode):
-        """Generic helper to perform all alignment and unify actions."""
+    def _perform_alignment(self, mode, auto_exit=True):
+        """Generic helper to perform all alignment and unify actions.
+
+        Args:
+            mode: The alignment mode (e.g., 'left', 'right', 'unify_width')
+            auto_exit: If True, exit alignment mode after execution. If False, stay in mode.
+        """
         if not self.alignment_dialog:
             return
 
@@ -3711,6 +3788,7 @@ class LabelingWidget(QtWidgets.QWidget):
             'v_center': self.tr('垂直居中'),
             'unify_width': self.tr('统一宽度'),
             'unify_height': self.tr('统一高度'),
+            'unify_angle': self.tr('统一角度'),
         }
         display_mode = mode_display_map.get(mode, mode)
         self.alignment_dialog.log(self.tr("开始执行: {mode}").format(mode=display_mode))
@@ -3821,17 +3899,68 @@ class LabelingWidget(QtWidgets.QWidget):
 
                     shape.points = [rot(p0_local), rot(p1_local), rot(p2_local), rot(p3_local)]
                     action_taken = True
-            
+
+            # Unify angle (only for rotation shapes)
+            if mode == 'unify_angle':
+                if shape.shape_type == 'rotation' and self.reference_shape.shape_type == 'rotation':
+                    # Get the reference angle
+                    ref_angle = self.reference_shape.direction
+
+                    # Get current shape's center and dimensions
+                    target_center_x = (shape.points[0].x() + shape.points[1].x() + shape.points[2].x() + shape.points[3].x()) / 4.0
+                    target_center_y = (shape.points[0].y() + shape.points[1].y() + shape.points[2].y() + shape.points[3].y()) / 4.0
+                    target_center = QtCore.QPointF(target_center_x, target_center_y)
+
+                    target_intrinsic_width = utils.distance(shape.points[1] - shape.points[0])
+                    target_intrinsic_height = utils.distance(shape.points[2] - shape.points[1])
+
+                    # Update the shape's direction
+                    shape.direction = ref_angle
+
+                    # Reconstruct the rotated rectangle's points with the new angle
+                    half_w = target_intrinsic_width / 2.0
+                    half_h = target_intrinsic_height / 2.0
+
+                    cos_a = math.cos(ref_angle)
+                    sin_a = math.sin(ref_angle)
+
+                    # Local, centered at (0,0)
+                    p0_local = QtCore.QPointF(-half_w, -half_h)
+                    p1_local = QtCore.QPointF(half_w, -half_h)
+                    p2_local = QtCore.QPointF(half_w, half_h)
+                    p3_local = QtCore.QPointF(-half_w, half_h)
+
+                    def rot(pt):
+                        return QtCore.QPointF(
+                            pt.x() * cos_a - pt.y() * sin_a + target_center.x(),
+                            pt.x() * sin_a + pt.y() * cos_a + target_center.y(),
+                        )
+
+                    shape.points = [rot(p0_local), rot(p1_local), rot(p2_local), rot(p3_local)]
+                    action_taken = True
+                elif shape.shape_type != 'rotation':
+                    self.alignment_dialog.log(self.tr("跳过 '{label}': 不是旋转矩形").format(label=shape.label))
+                elif self.reference_shape.shape_type != 'rotation':
+                    self.alignment_dialog.log(self.tr("错误: 参照物不是旋转矩形"))
+                    continue
+
             if action_taken:
                 processed_count += 1
 
         self.set_dirty()
         self.canvas.repaint()
-        
+
         if processed_count > 0:
             self.alignment_dialog.log(self.tr("操作完成，共处理了 {count} 个矩形。").format(count=processed_count))
         else:
             self.alignment_dialog.log(self.tr("操作完成，未找到符合条件的矩形进行处理。"))
+
+        # Auto exit mode if requested (left click)
+        if auto_exit:
+            self.alignment_dialog.log(self.tr("自动退出对齐模式"))
+            self.on_alignment_dialog_finished()
+        else:
+            self.alignment_dialog.log(self.tr("保持对齐模式，可继续执行其他操作"))
 
     def open_keymap_dialog(self):
         if not self.keymap_dialog:
@@ -3843,6 +3972,439 @@ class LabelingWidget(QtWidgets.QWidget):
             self.color_manager_dialog = ColorManagerDialog(self, self._config)
             self.color_manager_dialog.setting_changed.connect(self.update_single_setting)
             self.color_manager_dialog.show()
+
+    def open_shortcut_manager_dialog(self):
+        """Open the shortcut manager dialog."""
+        if not hasattr(self, 'shortcut_manager_dialog') or not self.shortcut_manager_dialog.isVisible():
+            self.shortcut_manager_dialog = ShortcutManagerDialog(self, self._config)
+            self.shortcut_manager_dialog.shortcuts_saved.connect(self.reload_all_shortcuts)
+            self.shortcut_manager_dialog.show()
+
+    def open_segmentation_dialog(self):
+        """Open the segmentation tool dialog (for menu action)."""
+        if self.segmentation_dialog is None:
+            # Get shortcut key from config
+            shortcut_key = self._config.get("shortcuts", {}).get("segmentation_tool", "Ctrl+Shift+X")
+            self.segmentation_dialog = SegmentationDialog(parent=self, shortcut_key=shortcut_key)
+            self.segmentation_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+            # Connect signals
+            self.segmentation_dialog.enter_vertical_cut_mode.connect(self.on_enter_vertical_cut_mode)
+            self.segmentation_dialog.enter_horizontal_cut_mode.connect(self.on_enter_horizontal_cut_mode)
+            self.segmentation_dialog.exit_segmentation_mode.connect(self.on_exit_segmentation_mode)
+            self.segmentation_dialog.closing.connect(self.on_segmentation_dialog_closed)
+            # Connect crosshair length adjustment signals
+            self.segmentation_dialog.horizontal_length_changed.connect(self.canvas.set_crosshair_horizontal_length)
+            self.segmentation_dialog.vertical_length_changed.connect(self.canvas.set_crosshair_vertical_length)
+            # Connect canvas signal for split execution
+            self.canvas.split_requested.connect(self.on_split_requested)
+            # Connect canvas signal for middle-click exit
+            self.canvas.segmentation_mode_exit_requested.connect(self.on_segmentation_mode_exit_requested)
+
+        if self.segmentation_dialog.isVisible():
+            self.segmentation_dialog.raise_()
+            self.segmentation_dialog.activateWindow()
+        else:
+            self.segmentation_dialog.show()
+
+    def toggle_segmentation_dialog(self):
+        """Toggle segmentation tool dialog (for shortcut).
+
+        Behavior:
+        - If dialog doesn't exist or is hidden: show it
+        - If dialog is minimized: restore and activate it
+        - If dialog is visible and normal: close it
+        """
+        if self.segmentation_dialog is None:
+            # First time: create and show
+            self.open_segmentation_dialog()
+            return
+
+        if not self.segmentation_dialog.isVisible():
+            # Hidden: show it
+            self.segmentation_dialog.show()
+            self.segmentation_dialog.raise_()
+            self.segmentation_dialog.activateWindow()
+        elif self.segmentation_dialog.isMinimized():
+            # Minimized: restore it
+            self.segmentation_dialog.setWindowState(
+                self.segmentation_dialog.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive
+            )
+            self.segmentation_dialog.raise_()
+            self.segmentation_dialog.activateWindow()
+        else:
+            # Visible and normal: close it
+            self.segmentation_dialog.close()
+
+    def on_enter_vertical_cut_mode(self):
+        """Enter vertical cut mode."""
+        self.segmentation_mode = 'vertical'
+        self.canvas.set_segmentation_mode('vertical')
+        # 保存原来的十字线状态
+        if not hasattr(self, '_saved_crosshair_state'):
+            self._saved_crosshair_state = self.canvas.cross_line_show
+        # 开启十字线并设置为仅垂直线
+        self.canvas.cross_line_show = True
+        self.canvas.set_crosshair_style('vertical_only')
+
+    def on_enter_horizontal_cut_mode(self):
+        """Enter horizontal cut mode."""
+        self.segmentation_mode = 'horizontal'
+        self.canvas.set_segmentation_mode('horizontal')
+        # 保存原来的十字线状态
+        if not hasattr(self, '_saved_crosshair_state'):
+            self._saved_crosshair_state = self.canvas.cross_line_show
+        # 开启十字线并设置为仅水平线
+        self.canvas.cross_line_show = True
+        self.canvas.set_crosshair_style('horizontal_only')
+
+    def on_exit_segmentation_mode(self):
+        """Exit segmentation mode."""
+        self.segmentation_mode = None
+        self.canvas.set_segmentation_mode(None)
+        self.canvas.set_crosshair_style('default')
+        # 恢复原来的十字线状态
+        if hasattr(self, '_saved_crosshair_state'):
+            self.canvas.cross_line_show = self._saved_crosshair_state
+            delattr(self, '_saved_crosshair_state')
+        self.canvas.deselect_shape()
+        self.canvas.update()
+
+    def on_segmentation_dialog_closed(self):
+        """Cleanup when segmentation dialog is closed."""
+        self.on_exit_segmentation_mode()
+
+    def on_segmentation_mode_exit_requested(self):
+        """Handle middle-click exit request from canvas."""
+        if self.segmentation_dialog:
+            # Trigger the exit button in the dialog to keep UI in sync
+            self.segmentation_dialog.on_exit_mode()
+
+    def open_wheel_settings_dialog(self):
+        """Open the mouse wheel settings dialog."""
+        from anylabeling.views.labeling.widgets.wheel_settings_dialog import WheelSettingsDialog
+
+        if self.wheel_settings_dialog is None:
+            self.wheel_settings_dialog = WheelSettingsDialog(parent=self, config=self._config)
+            self.wheel_settings_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        if self.wheel_settings_dialog.isVisible():
+            self.wheel_settings_dialog.raise_()
+            self.wheel_settings_dialog.activateWindow()
+        else:
+            self.wheel_settings_dialog.show()
+
+
+
+    def open_rectangle3_width_dialog(self):
+        """Open the rectangle3 width settings dialog."""
+        if self.rectangle3_width_dialog is None:
+            self.rectangle3_width_dialog = Rectangle3WidthDialog(parent=self, initial_width=self.canvas.rectangle3_width)
+            self.rectangle3_width_dialog.width_changed.connect(self.on_rectangle3_width_changed)
+            self.rectangle3_width_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        if self.rectangle3_width_dialog.isVisible():
+            self.rectangle3_width_dialog.raise_()
+            self.rectangle3_width_dialog.activateWindow()
+        else:
+            self.rectangle3_width_dialog.show()
+
+    def on_rectangle3_width_changed(self, width):
+        """Slot for when the rectangle3 width changes."""
+        self.canvas.set_rectangle3_width(width)
+        self._config["rectangle3_width"] = width
+        save_config(self._config)
+
+    def on_split_requested(self, shape, cut_pos, cut_mode):
+        """Handle split request from canvas.
+
+        Args:
+            shape: The shape to split
+            cut_pos: (x, y) position where the cut should occur
+            cut_mode: 'vertical' or 'horizontal'
+        """
+        if not self.segmentation_dialog:
+            return
+
+        # Validate shape type
+        if shape.shape_type not in ["rectangle", "rotation"]:
+            self.segmentation_dialog.log_message(
+                self.tr("错误: 只能分割矩形或旋转矩形")
+            )
+            return
+
+        # Get shape bounds
+        points = shape.points
+        if len(points) < 4:
+            self.segmentation_dialog.log_message(
+                self.tr("错误: 形状点数不足")
+            )
+            return
+
+        # Calculate split
+        if cut_mode == 'vertical':
+            # Split vertically (left and right)
+            new_shape1_points, new_shape2_points = self._split_rectangle_vertically(
+                points, cut_pos[0]
+            )
+            split_desc = self.tr("垂直分割")
+        else:
+            # Split horizontally (top and bottom)
+            new_shape1_points, new_shape2_points = self._split_rectangle_horizontally(
+                points, cut_pos[1]
+            )
+            split_desc = self.tr("水平分割")
+
+        if not new_shape1_points or not new_shape2_points:
+            self.segmentation_dialog.log_message(
+                self.tr("错误: 切割位置无效")
+            )
+            return
+
+        # Create two new shapes
+        new_shape1 = Shape(
+            label=shape.label,
+            shape_type=shape.shape_type,
+            flags=shape.flags.copy() if shape.flags else {},
+            group_id=shape.group_id,
+            description=shape.description,
+            difficult=shape.difficult,
+            direction=shape.direction,
+            attributes=shape.attributes.copy() if shape.attributes else {},
+            kie_linking=shape.kie_linking[:] if shape.kie_linking else []
+        )
+        new_shape1.points = new_shape1_points
+        new_shape1.close()
+
+        new_shape2 = Shape(
+            label=shape.label,
+            shape_type=shape.shape_type,
+            flags=shape.flags.copy() if shape.flags else {},
+            group_id=shape.group_id,
+            description=shape.description,
+            difficult=shape.difficult,
+            direction=shape.direction,
+            attributes=shape.attributes.copy() if shape.attributes else {},
+            kie_linking=shape.kie_linking[:] if shape.kie_linking else []
+        )
+        new_shape2.points = new_shape2_points
+        new_shape2.close()
+
+        # Remove original shape and add new shapes
+        self.canvas.shapes.remove(shape)
+        self.canvas.shapes.append(new_shape1)
+        self.canvas.shapes.append(new_shape2)
+
+        # Update UI
+        self.set_dirty()
+        self.canvas.deselect_shape()
+        self.canvas.update()
+        self.load_shapes(self.canvas.shapes)
+
+        # Log success
+        self.segmentation_dialog.log_message(
+            self.tr("{mode}完成: 标签 '{label}' 已分割为两个矩形").format(
+                mode=split_desc,
+                label=shape.label
+            )
+        )
+
+    def _split_rectangle_vertically(self, points, cut_x):
+        """Split rectangle vertically at cut_x position."""
+        xs = [p.x() for p in points]
+        ys = [p.y() for p in points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+
+        if cut_x <= min_x or cut_x >= max_x:
+            return None, None
+
+        left_points = [
+            QtCore.QPointF(min_x, min_y),
+            QtCore.QPointF(cut_x, min_y),
+            QtCore.QPointF(cut_x, max_y),
+            QtCore.QPointF(min_x, max_y)
+        ]
+
+        right_points = [
+            QtCore.QPointF(cut_x, min_y),
+            QtCore.QPointF(max_x, min_y),
+            QtCore.QPointF(max_x, max_y),
+            QtCore.QPointF(cut_x, max_y)
+        ]
+
+        return left_points, right_points
+
+    def _split_rectangle_horizontally(self, points, cut_y):
+        """Split rectangle horizontally at cut_y position."""
+        xs = [p.x() for p in points]
+        ys = [p.y() for p in points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+
+        if cut_y <= min_y or cut_y >= max_y:
+            return None, None
+
+        top_points = [
+            QtCore.QPointF(min_x, min_y),
+            QtCore.QPointF(max_x, min_y),
+            QtCore.QPointF(max_x, cut_y),
+            QtCore.QPointF(min_x, cut_y)
+        ]
+
+        bottom_points = [
+            QtCore.QPointF(min_x, cut_y),
+            QtCore.QPointF(max_x, cut_y),
+            QtCore.QPointF(max_x, max_y),
+            QtCore.QPointF(min_x, max_y)
+        ]
+
+        return top_points, bottom_points
+
+    def reload_all_shortcuts(self):
+        """Reload all shortcuts after they have been changed."""
+        # Reload config to get updated shortcuts
+        self._config = get_config()
+        shortcuts = self._config.get("shortcuts", {})
+
+        # Create a mapping from shortcut key to action
+        shortcut_action_map = {
+            # File operations
+            "open": self.actions.open,
+            "open_dir": getattr(self.actions, 'opendir', None),
+            "open_video": getattr(self.actions, 'openvideo', None),
+            "open_next": self.actions.open_next_image,
+            "open_prev": self.actions.open_prev_image,
+            "open_next_unchecked": self.actions.open_next_unchecked_image,
+            "open_prev_unchecked": self.actions.open_prev_unchecked_image,
+            "save": self.actions.save,
+            "save_as": self.actions.save_as,
+            "save_to": getattr(self.actions, 'change_output_dir', None),
+            "close": self.actions.close,
+            "delete_file": self.actions.delete_file,
+            "delete_image_file": self.actions.delete_image_file,
+            "quit": getattr(self.actions, 'quit', None),
+            "auto_run": self.actions.run_all_images,
+            # Drawing tools
+            "create_polygon": self.actions.create_mode,
+            "create_rectangle": self.actions.create_rectangle_mode,
+            "create_rectangle3": self.actions.create_rectangle3_mode,
+            "create_rotation": self.actions.create_rotation_mode,
+            "create_rotation3": self.actions.create_rotation3_mode,
+            "create_circle": self.actions.create_circle_mode,
+            "create_line": self.actions.create_line_mode,
+            "create_linestrip": self.actions.create_line_strip_mode,
+            "create_point": self.actions.create_point_mode,
+            # Edit operations
+            "edit_label": self.actions.edit,
+            "edit_polygon": self.actions.edit_mode,
+            "copy_polygon": self.actions.copy,
+            "paste_polygon": self.actions.paste,
+            "duplicate_polygon": self.actions.duplicate,
+            "delete_polygon": self.actions.delete,
+            "undo": self.actions.undo,
+            "undo_last_point": self.actions.undo_last_point,
+            "remove_selected_point": self.actions.remove_point,
+            "group_selected_shapes": getattr(self.actions, 'group_selected_shapes', None),
+            "ungroup_selected_shapes": getattr(self.actions, 'ungroup_selected_shapes', None),
+            "union_selected_shapes": getattr(self.actions, 'union_selection', None),
+            "hide_selected_polygons": getattr(self.actions, 'hide_selected_polygons', None),
+            "show_hidden_polygons": getattr(self.actions, 'show_hidden_polygons', None),
+            "select_all_shapes_canvas": getattr(self.actions, 'select_all_shapes_canvas', None),
+            # View controls
+            "fit_window": self.actions.fit_window,
+            "fit_width": self.actions.fit_width,
+            "zoom_in": self.actions.zoom_in,
+            "zoom_out": self.actions.zoom_out,
+            "zoom_to_original": self.actions.zoom_org,
+            # Display controls
+            "show_labels": self.actions.show_labels,
+            "show_texts": self.actions.show_texts,
+            "show_linking": self.actions.show_linking,
+            "show_attributes": self.actions.show_attributes,
+            "show_order": self.actions.show_order,
+            "show_wh": self.actions.show_wh,
+            "show_navigator": self.actions.show_navigator,
+            "show_overview": getattr(self.actions, 'show_overview', None),
+            "toggle_degrees": self.actions.show_degrees,
+            "toggle_crosshair": self.actions.toggle_cross_line,
+            "toggle_visibility_shapes": self.actions.visibility_shapes_mode,
+            "toggle_keep_prev_mode": self.actions.keep_prev_mode,
+            "toggle_auto_use_last_label": self.actions.auto_use_last_label_mode,
+            # Tool functions (these are not stored in self.actions, need to find them)
+            "auto_label": None,  # Will be handled separately
+            "expand_margins": None,  # Will be handled separately
+            "alignment_tool": None,  # Will be handled separately
+            "segmentation_tool": None,  # Will be handled separately
+            "object_manager": None,  # Will be handled separately
+            "edit_group_id": None,  # Will be handled separately
+            "edit_digit_shortcut": self.actions.digit_shortcut_manager,
+            "keymap_dialog": None,  # Will be handled separately
+            # Other operations
+            "loop_thru_labels": None,  # Will be handled separately
+        }
+
+        # Find actions that are not in self.actions by searching through all actions
+        # These actions are created but not stored in self.actions
+        for action_obj in self.findChildren(QtWidgets.QAction):
+            action_text = action_obj.text().replace("&", "")
+            # Map action text to shortcut key
+            if "Auto Labeling" in action_text or "自动标注" in action_text:
+                shortcut_action_map["auto_label"] = action_obj
+            elif "标注框边距扩展工具" in action_text:
+                shortcut_action_map["expand_margins"] = action_obj
+            elif "矩形对齐工具" in action_text:
+                shortcut_action_map["alignment_tool"] = action_obj
+            elif "矩形分割工具" in action_text:
+                shortcut_action_map["segmentation_tool"] = action_obj
+            elif "标签页管理器" in action_text:
+                shortcut_action_map["object_manager"] = action_obj
+            elif "Group ID Manager" in action_text or "群组编号管理器" in action_text:
+                shortcut_action_map["edit_group_id"] = action_obj
+            elif "旋转标签快捷键管理器" in action_text:
+                shortcut_action_map["keymap_dialog"] = action_obj
+            elif "Loop through labels" in action_text or "循环标签" in action_text:
+                shortcut_action_map["loop_thru_labels"] = action_obj
+
+        # Update shortcuts for all mapped actions
+        for key, action in shortcut_action_map.items():
+            if action and key in shortcuts:
+                shortcut_value = shortcuts[key]
+                # Handle both string and list formats
+                if isinstance(shortcut_value, list):
+                    shortcut_str = shortcut_value[0] if shortcut_value else ""
+                else:
+                    shortcut_str = shortcut_value
+
+                # Update the action's shortcut
+                if shortcut_str:
+                    action.setShortcut(QtGui.QKeySequence(shortcut_str))
+                else:
+                    action.setShortcut(QtGui.QKeySequence())
+
+        # Update button shortcuts
+        if hasattr(self, 'btn_select_all_shapes'):
+            self.btn_select_all_shapes.setShortcut(shortcuts.get("select_all_shapes", ""))
+        if hasattr(self, 'btn_invert_selection_shapes'):
+            self.btn_invert_selection_shapes.setShortcut(shortcuts.get("invert_selection_shapes", ""))
+        if hasattr(self, 'btn_deselect_all_shapes'):
+            self.btn_deselect_all_shapes.setShortcut(shortcuts.get("deselect_all_shapes", ""))
+        if hasattr(self, 'btn_highlight'):
+            self.btn_highlight.setShortcut(shortcuts.get("toggle_highlight", ""))
+        if hasattr(self, 'btn_select_all'):
+            self.btn_select_all.setShortcut(shortcuts.get("select_all_labels", ""))
+        if hasattr(self, 'btn_invert_selection'):
+            self.btn_invert_selection.setShortcut(shortcuts.get("invert_selection_labels", ""))
+        if hasattr(self, 'btn_deselect_all'):
+            self.btn_deselect_all.setShortcut(shortcuts.get("deselect_all_labels", ""))
+        if hasattr(self, 'btn_overlap'):
+            self.btn_overlap.setShortcut(shortcuts.get("toggle_overlap", ""))
+
+        # Update segmentation dialog shortcut if it exists
+        if self.segmentation_dialog is not None:
+            segmentation_shortcut = shortcuts.get("segmentation_tool", "Ctrl+Shift+X")
+            self.segmentation_dialog.update_shortcut(segmentation_shortcut)
+
+        # 不显示弹窗，静默更新即可
 
     def update_single_setting(self, key_str, value):
         try:
@@ -3899,6 +4461,10 @@ class LabelingWidget(QtWidgets.QWidget):
                 Shape.vertex_fill_color = color
             elif key == ['shape', 'hvertex_fill_color']:
                 Shape.hvertex_fill_color = color
+            elif key == ['shape', 'alignment_reference_color']:
+                self.canvas.alignment_reference_color = color
+            elif key == ['shape', 'alignment_target_color']:
+                self.canvas.alignment_target_color = color
             elif key == 'manually_edited_color':
                 pass
         else:
@@ -3924,6 +4490,10 @@ class LabelingWidget(QtWidgets.QWidget):
                 Shape.alpha_idle = value
             elif key == ['shape', 'shape_fill_alpha_highlight']:
                 Shape.alpha_highlight = value
+            elif key == ['shape', 'alignment_reference_line_width']:
+                self.canvas.alignment_reference_line_width = value
+            elif key == ['shape', 'alignment_target_line_width']:
+                self.canvas.alignment_target_line_width = value
 
         self.canvas.update()
         # Auto-save on every change
@@ -4085,6 +4655,7 @@ class LabelingWidget(QtWidgets.QWidget):
         if create_mode not in [
             "polygon",
             "rectangle",
+            "rectangle3",
             "rotation",
             "rotation3",
             "circle",
@@ -4125,6 +4696,7 @@ class LabelingWidget(QtWidgets.QWidget):
         if edit:
             self.actions.create_mode.setEnabled(True)
             self.actions.create_rectangle_mode.setEnabled(True)
+            self.actions.create_rectangle3_mode.setEnabled(True)
             self.actions.create_rotation_mode.setEnabled(True)
             self.actions.create_rotation3_mode.setEnabled(True)
             self.actions.create_circle_mode.setEnabled(True)
@@ -4152,6 +4724,7 @@ class LabelingWidget(QtWidgets.QWidget):
             if create_mode == "polygon":
                 self.actions.create_mode.setEnabled(False)
                 self.actions.create_rectangle_mode.setEnabled(True)
+                self.actions.create_rectangle3_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
                 self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
@@ -4161,6 +4734,17 @@ class LabelingWidget(QtWidgets.QWidget):
             elif create_mode == "rectangle":
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(False)
+                self.actions.create_rectangle3_mode.setEnabled(True)
+                self.actions.create_rotation_mode.setEnabled(True)
+                self.actions.create_rotation3_mode.setEnabled(True)
+                self.actions.create_circle_mode.setEnabled(True)
+                self.actions.create_line_mode.setEnabled(True)
+                self.actions.create_point_mode.setEnabled(True)
+                self.actions.create_line_strip_mode.setEnabled(True)
+            elif create_mode == "rectangle3":
+                self.actions.create_mode.setEnabled(True)
+                self.actions.create_rectangle_mode.setEnabled(True)
+                self.actions.create_rectangle3_mode.setEnabled(False)
                 self.actions.create_rotation_mode.setEnabled(True)
                 self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
@@ -4170,6 +4754,7 @@ class LabelingWidget(QtWidgets.QWidget):
             elif create_mode == "line":
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
+                self.actions.create_rectangle3_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
                 self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
@@ -4179,6 +4764,7 @@ class LabelingWidget(QtWidgets.QWidget):
             elif create_mode == "point":
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
+                self.actions.create_rectangle3_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
                 self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
@@ -4188,6 +4774,7 @@ class LabelingWidget(QtWidgets.QWidget):
             elif create_mode == "circle":
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
+                self.actions.create_rectangle3_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
                 self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(False)
@@ -4197,6 +4784,7 @@ class LabelingWidget(QtWidgets.QWidget):
             elif create_mode == "linestrip":
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
+                self.actions.create_rectangle3_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
                 self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
@@ -4206,6 +4794,7 @@ class LabelingWidget(QtWidgets.QWidget):
             elif create_mode == "rotation":
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
+                self.actions.create_rectangle3_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(False)
                 self.actions.create_rotation3_mode.setEnabled(True)
                 self.actions.create_circle_mode.setEnabled(True)
@@ -4215,6 +4804,7 @@ class LabelingWidget(QtWidgets.QWidget):
             elif create_mode == "rotation3":
                 self.actions.create_mode.setEnabled(True)
                 self.actions.create_rectangle_mode.setEnabled(True)
+                self.actions.create_rectangle3_mode.setEnabled(True)
                 self.actions.create_rotation_mode.setEnabled(True)
                 self.actions.create_rotation3_mode.setEnabled(False)
                 self.actions.create_circle_mode.setEnabled(True)
@@ -4890,6 +5480,17 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.label_list.select_item(item)
                 self.label_list.scroll_to_item(item)
         self._no_selection_slot = False
+
+        # Log target selection count in alignment mode
+        if self.canvas.is_alignment_target_mode and hasattr(self, 'alignment_dialog') and self.alignment_dialog:
+            # Count targets (exclude reference shape)
+            target_count = 0
+            for shape in selected_shapes:
+                if shape is not self.canvas.reference_shape:
+                    target_count += 1
+
+            if target_count > 0:
+                self.alignment_dialog.log(self.tr("已选择 {count} 个目标矩形").format(count=target_count))
         n_selected = len(selected_shapes)
         same_type = (
             len(set(shape.shape_type for shape in selected_shapes)) <= 1
@@ -6285,6 +6886,11 @@ class LabelingWidget(QtWidgets.QWidget):
         if event.key() == Qt.Key_Escape:
             event.accept()
             return
+        if event.key() == Qt.Key_Backspace:
+            if self.canvas.drawing():
+                self.canvas.undo_last_point()
+            event.accept()
+            return
         super(LabelingWidget, self).keyPressEvent(event)
 
     def resizeEvent(self, _):
@@ -6766,6 +7372,10 @@ class LabelingWidget(QtWidgets.QWidget):
         self._config["show_shapes"] = value
         # 更新导航器显示
         self.update_navigator_shapes()
+
+    def select_all_shapes_on_canvas(self):
+        """Select all visible shapes on canvas (Ctrl+A functionality)"""
+        self.canvas.select_all_visible_shapes()
 
     def remove_selected_point(self):
         self.canvas.remove_selected_point()
@@ -7847,7 +8457,7 @@ class LabelingWidget(QtWidgets.QWidget):
             self.label_tool_dialog = LabelToolDialog(self.last_open_dir, self)
 
     def open_mask_generator(self):
-        """打开MASK生成对话框"""
+        """打开掩膜生成对话框"""
         if self.mask_generator_dialog is None:
             from anylabeling.views.labeling.widgets.mask_generator_dialog import MaskGeneratorDialog
             self.mask_generator_dialog = MaskGeneratorDialog(self)

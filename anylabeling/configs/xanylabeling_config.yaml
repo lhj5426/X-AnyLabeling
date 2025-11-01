@@ -57,6 +57,11 @@ shape:
   hvertex_fill_color: [255, 255, 255, 255]
   # overlap visualization
   overlap_color: [255, 165, 0, 120]
+  # alignment tool
+  alignment_reference_color: [255, 0, 255, 255]  # Magenta for reference shape
+  alignment_target_color: [255, 165, 0, 255]     # Orange for target shapes
+  alignment_reference_line_width: 4.0
+  alignment_target_line_width: 2.0
   point_size: 10
   line_width: 4
 
@@ -108,10 +113,16 @@ canvas:
   # The max number of edits we can undo
   num_backups: 10
   wheel_rectangle_editing:
-    enable: false
-    adjust_step: 2.0
-    scale_step: 2.0
-    fast_adjust_step: 10.0
+    # Edge adjustment (mouse outside rectangle)
+    adjust_step_h: 1.0          # Normal scroll - horizontal edge
+    adjust_step_v: 1.0          # Normal scroll - vertical edge
+    shift_adjust_step_h: 5.0    # Shift+scroll - horizontal edge
+    shift_adjust_step_v: 5.0    # Shift+scroll - vertical edge
+    fast_adjust_step_h: 10.0    # Ctrl+scroll - horizontal edge
+    fast_adjust_step_v: 10.0    # Ctrl+scroll - vertical edge
+    # Inner scale (mouse inside rectangle)
+    scale_step_h: 3.0           # Normal scroll - expand width
+    scale_step_v: 3.0           # Ctrl+scroll - expand height
   crosshair:
     show: true
     style: dash  # "dash" or "solid"
@@ -123,7 +134,8 @@ canvas:
 
 shortcuts:
   add_point_to_edge: Ctrl+Shift+P
-  auto_label: Ctrl+A
+  alignment_tool: Ctrl+Shift+R
+  auto_label: Ctrl+Shift+A
   auto_run: Ctrl+M
   close: Ctrl+W
   copy_polygon: Ctrl+C
@@ -170,8 +182,10 @@ shortcuts:
   save: Ctrl+S
   save_as: Ctrl+Shift+S
   save_to: null
+  segmentation_tool: Ctrl+Shift+X
   select_all_labels: Alt+Q
   select_all_shapes: Alt+T
+  select_all_shapes_canvas: Ctrl+A
   show_attributes: Ctrl+Shift+L
   show_hidden_polygons: W
   show_labels: Ctrl+L

@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
@@ -40,6 +40,25 @@ from anylabeling.views.labeling.utils.style import (
 __all__ = ["save_crop"]
 
 
+class CropWorker(QThread):
+    """Worker thread for cropping images without blocking UI"""
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, process_args):
+        super().__init__()
+        self.process_args = process_args
+
+    def run(self):
+        try:
+            for i, args in enumerate(self.process_args):
+                process_single_image(args)
+                self.progress.emit(i + 1)
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
 def crop_and_save(
     image_file,
     label,
@@ -67,12 +86,6 @@ def crop_and_save(
     image_path = Path(image_file)
     orig_filename = image_path.stem
 
-    # Calculate crop coordinates
-    x, y, w, h = cv2.boundingRect(points)
-    if w < min_width or h < min_height:
-        return
-    xmin, ymin, xmax, ymax = x, y, x + w, y + h
-
     # Read image safely handling non-ASCII paths
     try:
         image = cv2.imdecode(
@@ -84,18 +97,68 @@ def crop_and_save(
         logger.error(f"Error reading image: {str(e)}")
         return
 
-    # Crop image with bounds checking
     height, width = image.shape[:2]
-    xmin, ymin = max(0, xmin), max(0, ymin)
-    xmax, ymax = min(width, xmax), min(height, ymax)
 
-    if xmin >= xmax or ymin >= ymax:
-        logger.warning(
-            f"Invalid crop region: xmin={xmin}, xmax={xmax}, ymin={ymin}, ymax={ymax}"
-        )
-        return
+    # Handle rotation shape type - crop bounding box with mask
+    if shape_type == "rotation" and len(points) >= 4:
+        # Get the bounding box of the rotated rectangle
+        x_coords = points[:, 0]
+        y_coords = points[:, 1]
+        x_min, x_max = int(np.floor(x_coords.min())), int(np.ceil(x_coords.max()))
+        y_min, y_max = int(np.floor(y_coords.min())), int(np.ceil(y_coords.max()))
 
-    cropped_image = image[ymin:ymax, xmin:xmax]
+        # Ensure bounds are within image
+        x_min = max(0, x_min)
+        y_min = max(0, y_min)
+        x_max = min(image.shape[1], x_max)
+        y_max = min(image.shape[0], y_max)
+
+        rect_width = x_max - x_min
+        rect_height = y_max - y_min
+
+        # Check minimum size
+        if rect_width < min_width or rect_height < min_height:
+            return
+
+        # Crop the bounding box region
+        cropped_image = image[y_min:y_max, x_min:x_max].copy()
+
+        # Create mask for the rotated rectangle
+        mask = np.zeros((rect_height, rect_width), dtype=np.uint8)
+
+        # Adjust points to the cropped region coordinate system
+        adjusted_points = points[:4].copy()
+        adjusted_points[:, 0] -= x_min
+        adjusted_points[:, 1] -= y_min
+
+        # Fill the rotated rectangle area in the mask
+        cv2.fillPoly(mask, [adjusted_points.astype(np.int32)], 255)
+
+        # Apply mask to cropped image (set outside area to white/transparent)
+        if cropped_image.shape[2] == 4:  # RGBA
+            cropped_image[:, :, 3] = mask
+        else:  # RGB
+            # Set outside area to white
+            cropped_image[mask == 0] = [255, 255, 255]
+    else:
+        # For rectangle and polygon, use bounding rect
+        x, y, w, h = cv2.boundingRect(points)
+        if w < min_width or h < min_height:
+            return
+        xmin, ymin, xmax, ymax = x, y, x + w, y + h
+
+        # Crop image with bounds checking
+        xmin, ymin = max(0, xmin), max(0, ymin)
+        xmax, ymax = min(width, xmax), min(height, ymax)
+
+        if xmin >= xmax or ymin >= ymax:
+            logger.warning(
+                f"Invalid crop region: xmin={xmin}, xmax={xmax}, ymin={ymin}, ymax={ymax}"
+            )
+            return
+
+        cropped_image = image[ymin:ymax, xmin:xmax]
+
     if cropped_image.size == 0:
         logger.warning(f"Empty cropped image, skipping save")
         return
@@ -177,21 +240,134 @@ def process_single_image(args):
             current_index = label_start_indices[label]
             label_start_indices[label] += 1
 
-            x, y, w, h = cv2.boundingRect(points)
-            if w < min_width or h < min_height:
-                continue
-
             height, width = image.shape[:2]
-            xmin, ymin = max(0, x), max(0, y)
-            xmax, ymax = min(width, x + w), min(height, y + h)
 
-            if xmin >= xmax or ymin >= ymax:
-                logger.warning(
-                    f"Invalid crop region: xmin={xmin}, xmax={xmax}, ymin={ymin}, ymax={ymax}"
+            # Handle rotation shape type
+            if shape_type == "rotation" and len(points) >= 4:
+                # Use the original 4 points directly
+                src_pts = points[:4].astype(np.float32)
+
+                # Calculate the angle of the rotated rectangle
+                # Use the top edge (point 0 to point 1) to determine angle
+                dx = src_pts[1][0] - src_pts[0][0]
+                dy = src_pts[1][1] - src_pts[0][1]
+                angle = np.degrees(np.arctan2(dy, dx))
+
+                # Normalize angle to [0, 360)
+                angle = angle % 360
+
+                # Check if the rectangle is axis-aligned (horizontal/vertical)
+                # Allow small tolerance for floating point errors
+                tolerance = 2.0  # degrees
+                is_axis_aligned = (
+                    abs(angle) < tolerance or
+                    abs(angle - 90) < tolerance or
+                    abs(angle - 180) < tolerance or
+                    abs(angle - 270) < tolerance or
+                    abs(angle - 360) < tolerance
                 )
-                continue
 
-            cropped_image = image[ymin:ymax, xmin:xmax]
+                if is_axis_aligned:
+                    # For axis-aligned rectangles, use simple bounding box crop
+                    x_coords = src_pts[:, 0]
+                    y_coords = src_pts[:, 1]
+                    x_min = int(np.floor(np.min(x_coords)))
+                    y_min = int(np.floor(np.min(y_coords)))
+                    x_max = int(np.ceil(np.max(x_coords)))
+                    y_max = int(np.ceil(np.max(y_coords)))
+
+                    # Ensure coordinates are within image bounds
+                    x_min = max(0, x_min)
+                    y_min = max(0, y_min)
+                    x_max = min(image.shape[1], x_max)
+                    y_max = min(image.shape[0], y_max)
+
+                    rect_width = x_max - x_min
+                    rect_height = y_max - y_min
+
+                    # Check minimum size
+                    if rect_width < min_width or rect_height < min_height:
+                        continue
+
+                    # Direct crop without transformation
+                    cropped_image = image[y_min:y_max, x_min:x_max].copy()
+                else:
+                    # For tilted rectangles, draw on white background preserving angle
+                    # Find bounding box of the rotated rectangle
+                    x_coords = src_pts[:, 0]
+                    y_coords = src_pts[:, 1]
+                    x_min = np.min(x_coords)
+                    y_min = np.min(y_coords)
+                    x_max = np.max(x_coords)
+                    y_max = np.max(y_coords)
+
+                    # Calculate canvas size
+                    canvas_width = int(np.ceil(x_max - x_min))
+                    canvas_height = int(np.ceil(y_max - y_min))
+
+                    # Check minimum size
+                    if canvas_width < min_width or canvas_height < min_height:
+                        continue
+
+                    # Create white canvas
+                    cropped_image = np.ones((canvas_height, canvas_width, 3), dtype=np.uint8) * 255
+
+                    # Translate points to canvas coordinates
+                    translated_pts = src_pts.copy()
+                    translated_pts[:, 0] -= x_min
+                    translated_pts[:, 1] -= y_min
+
+                    # Create mask for the rotated rectangle
+                    mask = np.zeros((canvas_height, canvas_width), dtype=np.uint8)
+                    cv2.fillPoly(mask, [translated_pts.astype(np.int32)], 255)
+
+                    # Calculate source region to extract from original image
+                    src_x_min = int(np.floor(x_min))
+                    src_y_min = int(np.floor(y_min))
+                    src_x_max = int(np.ceil(x_max))
+                    src_y_max = int(np.ceil(y_max))
+
+                    # Ensure source coordinates are within image bounds
+                    src_x_min = max(0, src_x_min)
+                    src_y_min = max(0, src_y_min)
+                    src_x_max = min(image.shape[1], src_x_max)
+                    src_y_max = min(image.shape[0], src_y_max)
+
+                    # Extract source region
+                    src_region = image[src_y_min:src_y_max, src_x_min:src_x_max]
+
+                    # Calculate destination region on canvas
+                    dst_x_offset = src_x_min - int(np.floor(x_min))
+                    dst_y_offset = src_y_min - int(np.floor(y_min))
+                    dst_x_end = dst_x_offset + src_region.shape[1]
+                    dst_y_end = dst_y_offset + src_region.shape[0]
+
+                    # Copy source region to canvas using mask
+                    if src_region.shape[0] > 0 and src_region.shape[1] > 0:
+                        mask_region = mask[dst_y_offset:dst_y_end, dst_x_offset:dst_x_end]
+                        for c in range(3):
+                            cropped_image[dst_y_offset:dst_y_end, dst_x_offset:dst_x_end, c] = np.where(
+                                mask_region > 0,
+                                src_region[:, :, c],
+                                cropped_image[dst_y_offset:dst_y_end, dst_x_offset:dst_x_end, c]
+                            )
+            else:
+                # For rectangle and polygon, use bounding rect
+                x, y, w, h = cv2.boundingRect(points)
+                if w < min_width or h < min_height:
+                    continue
+
+                xmin, ymin = max(0, x), max(0, y)
+                xmax, ymax = min(width, x + w), min(height, y + h)
+
+                if xmin >= xmax or ymin >= ymax:
+                    logger.warning(
+                        f"Invalid crop region: xmin={xmin}, xmax={xmax}, ymin={ymin}, ymax={ymax}"
+                    )
+                    continue
+
+                cropped_image = image[ymin:ymax, xmin:xmax]
+
             if cropped_image.size == 0:
                 logger.warning(f"Empty cropped image for {dst_file}")
                 continue
@@ -417,44 +593,39 @@ def save_crop(self):
             for image_file in image_file_list
         ]
 
-        is_frozen = getattr(sys, "frozen", False)
+        # Use QThread to avoid UI freezing
+        worker = CropWorker(process_args)
 
-        if is_frozen:
-            logger.info(
-                "Running in PyInstaller environment, using single-thread processing"
-            )
-            for i, args in enumerate(process_args):
-                process_single_image(args)
-                progress_dialog.setValue(i + 1)
-                QApplication.processEvents()
+        def on_progress(value):
+            progress_dialog.setValue(value)
+            if progress_dialog.wasCanceled():
+                worker.terminate()
+                worker.wait()
 
-                if progress_dialog.wasCanceled():
-                    return
-        else:
-            # Use multiprocessing to process images in parallel in the dev environment only.
-            num_cores = max(1, int(multiprocessing.cpu_count() * 0.9))
-            with multiprocessing.Pool(processes=num_cores) as pool:
-                for i, _ in enumerate(
-                    pool.imap(process_single_image, process_args)
-                ):
-                    progress_dialog.setValue(i + 1)
-                    QApplication.processEvents()
+        def on_finished(success, error_msg):
+            progress_dialog.close()
+            if success:
+                popup = Popup(
+                    self.tr(
+                        f"图片裁剪成功！\n结果已保存到：\n{save_path}"
+                    ),
+                    self,
+                    msec=3000,
+                    icon=new_icon_path("copy-green", "svg"),
+                )
+                popup.show_popup(self, popup_height=65, position="center")
+            else:
+                popup = Popup(
+                    self.tr(f"裁剪失败: {error_msg}"),
+                    self,
+                    msec=3000,
+                    icon=new_icon_path("error", "svg"),
+                )
+                popup.show_popup(self, position="center")
 
-                    if progress_dialog.wasCanceled():
-                        pool.terminate()
-                        pool.join()
-                        return
-
-        progress_dialog.close()
-        popup = Popup(
-            self.tr(
-                f"图片裁剪成功！\n结果已保存到：\n{save_path}"
-            ),
-            self,
-            msec=3000,
-            icon=new_icon_path("copy-green", "svg"),
-        )
-        popup.show_popup(self, popup_height=65, position="center")
+        worker.progress.connect(on_progress)
+        worker.finished.connect(on_finished)
+        worker.start()
 
     except Exception as e:
         logger.error(f"Error occurred while exporting cropped images: {e}")

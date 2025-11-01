@@ -89,6 +89,8 @@ class Canvas(
     shape_hover_changed = QtCore.pyqtSignal()  # 新增信号：形状hover状态变化
     drawing_cancelled = QtCore.pyqtSignal()
     reference_selected = QtCore.pyqtSignal(object)
+    split_requested = QtCore.pyqtSignal(object, tuple, str)  # (shape, cut_pos, cut_mode)
+    segmentation_mode_exit_requested = QtCore.pyqtSignal()  # Request to exit segmentation mode
 
     CREATE, EDIT = 0, 1
 
@@ -140,17 +142,31 @@ class Canvas(
         self.wheel_rectangle_editing = kwargs.pop(
             "wheel_rectangle_editing", {}
         )
-        self.enable_wheel_rectangle_editing = self.wheel_rectangle_editing.get(
-            "enable", False
+        # Edge adjustment steps (horizontal and vertical)
+        self.rect_adjust_step_h = self.wheel_rectangle_editing.get(
+            "adjust_step_h", 1.0
         )
-        self.rect_adjust_step = self.wheel_rectangle_editing.get(
-            "adjust_step", 2.0
+        self.rect_adjust_step_v = self.wheel_rectangle_editing.get(
+            "adjust_step_v", 1.0
         )
-        self.rect_scale_step = self.wheel_rectangle_editing.get(
-            "scale_step", 2.0
+        self.rect_shift_adjust_step_h = self.wheel_rectangle_editing.get(
+            "shift_adjust_step_h", 5.0
         )
-        self.fast_rect_adjust_step = self.wheel_rectangle_editing.get(
-            "fast_adjust_step", 10.0
+        self.rect_shift_adjust_step_v = self.wheel_rectangle_editing.get(
+            "shift_adjust_step_v", 5.0
+        )
+        self.rect_fast_adjust_step_h = self.wheel_rectangle_editing.get(
+            "fast_adjust_step_h", 10.0
+        )
+        self.rect_fast_adjust_step_v = self.wheel_rectangle_editing.get(
+            "fast_adjust_step_v", 10.0
+        )
+        # Inner scale steps (width and height)
+        self.rect_scale_step_h = self.wheel_rectangle_editing.get(
+            "scale_step_h", 3.0
+        )
+        self.rect_scale_step_v = self.wheel_rectangle_editing.get(
+            "scale_step_v", 3.0
         )
         self.parent = kwargs.pop("parent")
         
@@ -172,7 +188,18 @@ class Canvas(
         self.overlap_color = get_overlap_color(self._config)
         # Initialize overlap display toggle (default: enabled)
         self.show_overlap = True
-        
+
+        # Initialize alignment tool colors and line widths from configuration
+        shape_config = self._config.get("shape", {})
+        self.alignment_reference_color = QtGui.QColor(*shape_config.get("alignment_reference_color", [255, 0, 255, 255]))
+        self.alignment_target_color = QtGui.QColor(*shape_config.get("alignment_target_color", [255, 165, 0, 255]))
+        self.alignment_reference_line_width = shape_config.get("alignment_reference_line_width", 4.0)
+        self.alignment_target_line_width = shape_config.get("alignment_target_line_width", 2.0)
+
+
+
+        self.rectangle3_width = self._config.get("rectangle3_width", 200)
+
         super().__init__(*args, **kwargs)
         # Initialise local state.
         self.mode = self.EDIT
@@ -190,6 +217,13 @@ class Canvas(
         self.reference_shape = None
         self.is_alignment_target_mode = False
         self.alignment_mode_active = False
+
+        # Segmentation tool state
+        self.segmentation_mode = None  # 'vertical', 'horizontal', or None
+        self.crosshair_style = 'default'  # 'default', 'vertical_only', 'horizontal_only'
+        self.preview_cut_line = None  # (x1, y1, x2, y2) for preview line
+        self.crosshair_horizontal_length = 2000  # Horizontal line length in pixels
+        self.crosshair_vertical_length = 2000  # Vertical line length in pixels
 
         # Alt+drag selection box state
         self.selection_box_mode = False
@@ -390,6 +424,7 @@ class Canvas(
         if value not in [
             "polygon",
             "rectangle",
+            "rectangle3",
             "rotation",
             "rotation3",
             "circle",
@@ -590,6 +625,46 @@ class Canvas(
         self.overlap_color = get_overlap_color(config)
         self.update()  # Trigger repaint with new color
 
+    def update_alignment_colors(self, config: dict) -> None:
+        """
+        Update the alignment tool colors and line widths from new configuration settings.
+
+        This method updates the canvas alignment tool visualization when configuration changes,
+        allowing real-time customization without requiring application restart.
+
+        Args:
+            config (dict): Updated configuration dictionary containing shape settings.
+                Should have structure:
+                config['shape']['alignment_reference_color'] = [R, G, B, A]
+                config['shape']['alignment_target_color'] = [R, G, B, A]
+                config['shape']['alignment_reference_line_width'] = float
+                config['shape']['alignment_target_line_width'] = float
+
+        Returns:
+            None
+
+        Examples:
+            >>> new_config = {
+            ...     'shape': {
+            ...         'alignment_reference_color': [255, 0, 255, 255],
+            ...         'alignment_target_color': [255, 165, 0, 255],
+            ...         'alignment_reference_line_width': 4.0,
+            ...         'alignment_target_line_width': 2.0
+            ...     }
+            ... }
+            >>> canvas.update_alignment_colors(new_config)
+
+        Note:
+            Automatically triggers a canvas repaint to apply the new colors and widths.
+            Should be called when user changes alignment tool settings.
+        """
+        shape_config = config.get("shape", {})
+        self.alignment_reference_color = QtGui.QColor(*shape_config.get("alignment_reference_color", [255, 0, 255, 255]))
+        self.alignment_target_color = QtGui.QColor(*shape_config.get("alignment_target_color", [255, 165, 0, 255]))
+        self.alignment_reference_line_width = shape_config.get("alignment_reference_line_width", 4.0)
+        self.alignment_target_line_width = shape_config.get("alignment_target_line_width", 2.0)
+        self.update()  # Trigger repaint with new colors and widths
+
     def toggle_overlap_display(self) -> None:
         """
         Toggle the display of overlap regions on/off.
@@ -651,6 +726,110 @@ class Canvas(
         """Enable or disable the alignment target selection mode."""
         self.is_alignment_target_mode = is_active
         self.alignment_mode_active = is_active
+
+    def set_segmentation_mode(self, mode):
+        """Set the segmentation mode.
+
+        Args:
+            mode: 'vertical', 'horizontal', or None
+        """
+        self.segmentation_mode = mode
+        self.preview_cut_line = None
+        if mode:
+            self.override_cursor(CURSOR_DRAW)
+        else:
+            self.restore_cursor()
+        self.update()
+
+    def set_crosshair_style(self, style):
+        """Set the crosshair display style.
+
+        Args:
+            style: 'default', 'vertical_only', or 'horizontal_only'
+        """
+        self.crosshair_style = style
+        self.update()
+
+    def set_crosshair_horizontal_length(self, length):
+        """Set the horizontal crosshair line length."""
+        self.crosshair_horizontal_length = length
+        self.update()
+
+    def set_crosshair_vertical_length(self, length):
+        """Set the vertical crosshair line length."""
+        self.crosshair_vertical_length = length
+        self.update()
+
+    def set_rectangle3_width(self, width):
+        """Set the width for rectangle3 mode."""
+        self.rectangle3_width = width
+
+    def _find_shapes_on_crosshair_line(self, pos):
+        """Find all rectangle shapes that intersect with the crosshair line.
+
+        Args:
+            pos: Current mouse position (QPointF)
+
+        Returns:
+            List of shapes that intersect with the crosshair line
+        """
+        shapes_on_line = []
+
+        if self.segmentation_mode == 'vertical':
+            # Vertical line: check if rectangles intersect with vertical line
+            half_length = self.crosshair_vertical_length / 2
+            line_x = pos.x()
+            line_y1 = pos.y() - half_length
+            line_y2 = pos.y() + half_length
+
+            for shape in self.shapes:
+                if not self.is_visible(shape) or shape.shape_type not in ["rectangle", "rotation"]:
+                    continue
+
+                # Get bounding box
+                points = shape.points
+                if len(points) < 4:
+                    continue
+
+                xs = [p.x() for p in points]
+                ys = [p.y() for p in points]
+                min_x, max_x = min(xs), max(xs)
+                min_y, max_y = min(ys), max(ys)
+
+                # Check if vertical line intersects with rectangle
+                if min_x <= line_x <= max_x:
+                    # Check if line segment overlaps with rectangle's y range
+                    if not (line_y2 < min_y or line_y1 > max_y):
+                        shapes_on_line.append(shape)
+
+        elif self.segmentation_mode == 'horizontal':
+            # Horizontal line: check if rectangles intersect with horizontal line
+            half_length = self.crosshair_horizontal_length / 2
+            line_y = pos.y()
+            line_x1 = pos.x() - half_length
+            line_x2 = pos.x() + half_length
+
+            for shape in self.shapes:
+                if not self.is_visible(shape) or shape.shape_type not in ["rectangle", "rotation"]:
+                    continue
+
+                # Get bounding box
+                points = shape.points
+                if len(points) < 4:
+                    continue
+
+                xs = [p.x() for p in points]
+                ys = [p.y() for p in points]
+                min_x, max_x = min(xs), max(xs)
+                min_y, max_y = min(ys), max(ys)
+
+                # Check if horizontal line intersects with rectangle
+                if min_y <= line_y <= max_y:
+                    # Check if line segment overlaps with rectangle's x range
+                    if not (line_x2 < min_x or line_x1 > max_x):
+                        shapes_on_line.append(shape)
+
+        return shapes_on_line
 
     def un_highlight(self):
         """Unhighlight shape/vertex/edge"""
@@ -835,6 +1014,69 @@ class Canvas(
                     # Draw width line from arrow to constrained position
                     self.line[0] = self.current[1]  # Start from arrow position
                     self.line[1] = constrained_pos  # End at perpendicular point
+                self.line.line_color = color
+            elif self.create_mode == "rectangle3":
+                # For rectangle3 mode with three clicks
+                if len(self.current.points) == 1:
+                    # Step 1: After first click (point 1 = center), draw line to cursor (point 2)
+                    # Constrain to 4 directions: up, down, left, right
+                    p0 = self.current[0]
+                    dx = pos.x() - p0.x()
+                    dy = pos.y() - p0.y()
+
+                    # Determine dominant direction
+                    if abs(dx) > abs(dy):
+                        # Horizontal: left or right
+                        constrained_pos = QtCore.QPointF(pos.x(), p0.y())
+                    else:
+                        # Vertical: up or down
+                        constrained_pos = QtCore.QPointF(p0.x(), pos.y())
+
+                    self.line[0] = p0
+                    self.line[1] = constrained_pos
+
+                elif len(self.current.points) == 2:
+                    # Step 2: After second click (point 2), draw line from point 1 to cursor (point 3)
+                    # Constrain to opposite direction of point 2
+                    p0 = self.current[0]  # Center point (point 1)
+                    p1 = self.current[1]  # Point 2
+
+                    # Calculate direction from p0 to p1
+                    dx1 = p1.x() - p0.x()
+                    dy1 = p1.y() - p0.y()
+
+                    # Constrain point 3 to opposite direction
+                    if abs(dx1) > abs(dy1):
+                        # Point 2 is horizontal, point 3 must be opposite horizontal
+                        if dx1 > 0:
+                            # Point 2 is to the right, point 3 must be to the left
+                            constrained_pos = QtCore.QPointF(
+                                min(pos.x(), p0.x()),
+                                p0.y()
+                            )
+                        else:
+                            # Point 2 is to the left, point 3 must be to the right
+                            constrained_pos = QtCore.QPointF(
+                                max(pos.x(), p0.x()),
+                                p0.y()
+                            )
+                    else:
+                        # Point 2 is vertical, point 3 must be opposite vertical
+                        if dy1 > 0:
+                            # Point 2 is below, point 3 must be above
+                            constrained_pos = QtCore.QPointF(
+                                p0.x(),
+                                min(pos.y(), p0.y())
+                            )
+                        else:
+                            # Point 2 is above, point 3 must be below
+                            constrained_pos = QtCore.QPointF(
+                                p0.x(),
+                                max(pos.y(), p0.y())
+                            )
+
+                    self.line[0] = p0
+                    self.line[1] = constrained_pos
                 self.line.line_color = color
             elif self.create_mode == "circle":
                 self.line.points = [self.current[0], pos]
@@ -1115,7 +1357,7 @@ class Canvas(
                     if self.is_visible(s) and s.contains_point(pos) and s.shape_type in ["rectangle", "rotation"]:
                         shape = s
                         break
-                
+
                 if shape and shape is not self.reference_shape:
                     current_selection = self.selected_shapes[:]
                     if shape in current_selection:
@@ -1125,6 +1367,34 @@ class Canvas(
                     self.selection_changed.emit(current_selection)
                 return # Intercept click regardless to avoid starting move/drag on shapes
 
+        # --- Segmentation Tool: Split Mode ---
+        if self.segmentation_mode:
+            if ev.button() == QtCore.Qt.LeftButton:
+                # Left click: single split
+                shape = None
+                for s in reversed(self.shapes):
+                    if self.is_visible(s) and s.contains_point(pos) and s.shape_type in ["rectangle", "rotation"]:
+                        shape = s
+                        break
+
+                if shape:
+                    # Emit split request with shape, position, and mode
+                    self.split_requested.emit(shape, (pos.x(), pos.y()), self.segmentation_mode)
+                return  # Intercept click
+
+            elif ev.button() == QtCore.Qt.RightButton:
+                # Right click: batch split all shapes intersecting with crosshair line
+                shapes_to_split = self._find_shapes_on_crosshair_line(pos)
+                if shapes_to_split:
+                    # Emit batch split request
+                    for shape in shapes_to_split:
+                        self.split_requested.emit(shape, (pos.x(), pos.y()), self.segmentation_mode)
+                return  # Intercept click
+
+            elif ev.button() == QtCore.Qt.MiddleButton:
+                # Middle click: exit segmentation mode
+                self.segmentation_mode_exit_requested.emit()
+                return  # Intercept click
 
         # Alt+drag selection box mode
         if (ev.button() == QtCore.Qt.LeftButton and
@@ -1232,6 +1502,70 @@ class Canvas(
 
                             self.current.close()
                             self.finalise()
+                    elif self.create_mode == "rectangle3":
+                        # Three-click horizontal rectangle creation
+                        # Click 1: Center point (point 1)
+                        # Click 2: First direction point (point 2) with T-head showing width
+                        # Click 3: Opposite direction point (point 3) with T-head, auto-close rectangle
+
+                        if len(self.current.points) == 1:
+                            # Second click: add point 2 (constrained to 4 directions)
+                            self.current.add_point(self.line[1])
+                            # Update line to start from center point for point 3
+                            self.line[0] = self.current[0]
+                            self.line[1] = self.current[0]
+                        elif len(self.current.points) == 2:
+                            # Third click: add point 3 and auto-close rectangle
+                            p1 = self.current[1]  # Point 2
+                            p2 = self.line[1]     # Point 3 (cursor position)
+
+                            # Add point 3
+                            self.current.add_point(p2)
+
+                            # Fixed width: 200 pixels (T-head total length)
+                            width = self.rectangle3_width
+
+                            # Direction vector of center line (from p1 to p2)
+                            dx = p2.x() - p1.x()
+                            dy = p2.y() - p1.y()
+                            length = (dx**2 + dy**2) ** 0.5
+
+                            if length > 0:
+                                # Normalize direction vector
+                                dx /= length
+                                dy /= length
+
+                                # Perpendicular vector (for width)
+                                perp_x = -dy
+                                perp_y = dx
+
+                                width_half = width / 2
+
+                                # Create horizontal rectangle
+                                # Calculate four corners
+                                corner1 = QtCore.QPointF(
+                                    p1.x() - perp_x * width_half,
+                                    p1.y() - perp_y * width_half
+                                )
+                                corner2 = QtCore.QPointF(
+                                    p1.x() + perp_x * width_half,
+                                    p1.y() + perp_y * width_half
+                                )
+                                corner3 = QtCore.QPointF(
+                                    p2.x() + perp_x * width_half,
+                                    p2.y() + perp_y * width_half
+                                )
+                                corner4 = QtCore.QPointF(
+                                    p2.x() - perp_x * width_half,
+                                    p2.y() - perp_y * width_half
+                                )
+
+                                # Set corners in order
+                                self.current.points = [corner1, corner2, corner3, corner4]
+                                self.current.shape_type = "rectangle"
+
+                                self.current.close()
+                                self.finalise()
                     elif self.create_mode == "linestrip":
                         self.current.add_point(self.line[1])
                         self.line[0] = self.current[-1]
@@ -1241,7 +1575,7 @@ class Canvas(
                     # when the cursor moves over an object
                     if (
                         self.create_mode
-                        in ["rectangle", "rotation", "rotation3", "circle", "line", "point"]
+                        in ["rectangle", "rectangle3", "rotation", "rotation3", "circle", "line", "point"]
                         and not self.is_auto_labeling
                         and not self.current
                     ):
@@ -1334,7 +1668,13 @@ class Canvas(
         if self.path_selection_mode and ev.button() == QtCore.Qt.LeftButton:
             self.complete_path_selection()
             return
+
+        # Handle right button release
         if ev.button() == QtCore.Qt.RightButton:
+            # Block context menu in special modes
+            if self.segmentation_mode or self.is_reference_selection_mode:
+                return  # Don't show context menu in these modes
+
             menu = self.menus[len(self.selected_shapes_copy) > 0]
             self.restore_cursor()
             if (
@@ -1797,6 +2137,12 @@ class Canvas(
         self.set_hiding()
         self.selection_changed.emit(shapes)
         self.update()
+
+    def select_all_visible_shapes(self):
+        """Select all visible shapes on canvas"""
+        visible_shapes = [shape for shape in self.shapes if self.is_visible(shape)]
+        if visible_shapes:
+            self.select_shapes(visible_shapes)
 
     def select_shape_point(self, point, multiple_selection_mode):
         """Select the first shape created which contains this point."""
@@ -2321,15 +2667,35 @@ class Canvas(
                     is_target = (shape in self.selected_shapes) and (shape is not self.reference_shape)
 
                     if is_reference:
-                        pen = QtGui.QPen(QtGui.QColor(255, 0, 255)) # Magenta
-                        pen.setWidth(max(4, int(round(4.0 / Shape.scale))))
+                        pen = QtGui.QPen(self.alignment_reference_color)
+                        pen.setWidth(max(1, int(round(self.alignment_reference_line_width / Shape.scale))))
                         p.setPen(pen)
-                        p.drawRect(shape.bounding_rect())
+                        p.setBrush(QtCore.Qt.NoBrush)
+                        # Draw actual shape outline for rotation, bounding rect for others
+                        if shape.shape_type == 'rotation' and len(shape.points) == 4:
+                            path = QtGui.QPainterPath()
+                            path.moveTo(shape.points[0])
+                            for pt in shape.points[1:]:
+                                path.lineTo(pt)
+                            path.closeSubpath()
+                            p.drawPath(path)
+                        else:
+                            p.drawRect(shape.bounding_rect())
                     elif is_target:
-                        pen = QtGui.QPen(QtGui.QColor(255, 165, 0)) # Orange
-                        pen.setWidth(max(2, int(round(2.0 / Shape.scale))))
+                        pen = QtGui.QPen(self.alignment_target_color)
+                        pen.setWidth(max(1, int(round(self.alignment_target_line_width / Shape.scale))))
                         p.setPen(pen)
-                        p.drawRect(shape.bounding_rect())
+                        p.setBrush(QtCore.Qt.NoBrush)
+                        # Draw actual shape outline for rotation, bounding rect for others
+                        if shape.shape_type == 'rotation' and len(shape.points) == 4:
+                            path = QtGui.QPainterPath()
+                            path.moveTo(shape.points[0])
+                            for pt in shape.points[1:]:
+                                path.lineTo(pt)
+                            path.closeSubpath()
+                            p.drawPath(path)
+                        else:
+                            p.drawRect(shape.bounding_rect())
 
         # 绘制重叠区域
         if overlap_regions and self.show_overlap:
@@ -2531,7 +2897,7 @@ class Canvas(
                         perp_y = dx
 
                         # Reference line length (adjust as needed)
-                        ref_line_length = 50 / self.scale
+                        ref_line_length = 500 / self.scale
 
                         # Reference line at start point (green dot)
                         ref_start_begin = QtCore.QPointF(
@@ -2720,6 +3086,138 @@ class Canvas(
                         p.drawLine(p2, p3)
 
                 p.restore()
+
+            # Draw visual feedback for rectangle3 mode
+            if (self.create_mode == "rectangle3"
+                and len(self.current.points) >= 1
+                and len(self.line.points) == 2):
+
+                p.save()
+
+                # Sizes should be constant in screen pixels
+                circle_radius = 6 / self.scale
+                pen_width = 2 / self.scale
+                t_head_length = self.rectangle3_width / 2
+
+                # First step: draw line from point 1 to point 2 with T-head at point 2
+                if len(self.current.points) == 1:
+                    p0 = self.line.points[0]  # Point 1 (center)
+                    p1 = self.line.points[1]  # Point 2 (cursor)
+
+                    # Draw blue dot at point 1
+                    p.setBrush(QtGui.QBrush(QtGui.QColor(0, 100, 255)))
+                    p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), pen_width))
+                    p.drawEllipse(p0, circle_radius, circle_radius)
+
+                    # Draw blue dot at point 2
+                    p.drawEllipse(p1, circle_radius, circle_radius)
+
+                    # Draw T-head at point 2
+                    dx = p1.x() - p0.x()
+                    dy = p1.y() - p0.y()
+                    length = (dx**2 + dy**2) ** 0.5
+
+                    if length > 0:
+                        # Normalize
+                        dx /= length
+                        dy /= length
+
+                        # Perpendicular vector
+                        perp_x = -dy
+                        perp_y = dx
+
+                        # Draw T-head at point 2
+                        t_left = QtCore.QPointF(
+                            p1.x() - perp_x * t_head_length,
+                            p1.y() - perp_y * t_head_length
+                        )
+                        t_right = QtCore.QPointF(
+                            p1.x() + perp_x * t_head_length,
+                            p1.y() + perp_y * t_head_length
+                        )
+                        p.setPen(QtGui.QPen(QtGui.QColor(255, 0, 0), pen_width, QtCore.Qt.SolidLine))
+                        p.drawLine(t_left, t_right)
+
+                # Second step: draw line from point 1 to point 3 with T-heads at both point 2 and point 3
+                elif len(self.current.points) == 2:
+                    p0 = self.current[0]  # Point 1 (center)
+                    p1 = self.current[1]  # Point 2
+                    p2 = self.line.points[1]  # Point 3 (cursor)
+
+                    # Draw blue dots at all three points
+                    p.setBrush(QtGui.QBrush(QtGui.QColor(0, 100, 255)))
+                    p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), pen_width))
+                    p.drawEllipse(p0, circle_radius, circle_radius)
+                    p.drawEllipse(p1, circle_radius, circle_radius)
+                    p.drawEllipse(p2, circle_radius, circle_radius)
+
+                    # Calculate perpendicular direction
+                    dx = p2.x() - p1.x()
+                    dy = p2.y() - p1.y()
+                    length = (dx**2 + dy**2) ** 0.5
+
+                    if length > 0:
+                        # Normalize
+                        dx /= length
+                        dy /= length
+
+                        # Perpendicular vector
+                        perp_x = -dy
+                        perp_y = dx
+
+                        # Draw T-head at point 2
+                        t2_left = QtCore.QPointF(
+                            p1.x() - perp_x * t_head_length,
+                            p1.y() - perp_y * t_head_length
+                        )
+                        t2_right = QtCore.QPointF(
+                            p1.x() + perp_x * t_head_length,
+                            p1.y() + perp_y * t_head_length
+                        )
+                        p.setPen(QtGui.QPen(QtGui.QColor(255, 0, 0), pen_width, QtCore.Qt.SolidLine))
+                        p.drawLine(t2_left, t2_right)
+
+                        # Draw T-head at point 3
+                        t3_left = QtCore.QPointF(
+                            p2.x() - perp_x * t_head_length,
+                            p2.y() - perp_y * t_head_length
+                        )
+                        t3_right = QtCore.QPointF(
+                            p2.x() + perp_x * t_head_length,
+                            p2.y() + perp_y * t_head_length
+                        )
+                        p.drawLine(t3_left, t3_right)
+
+                        # Draw preview rectangle with dashed lines
+                        width_half = t_head_length
+
+                        corner1 = QtCore.QPointF(
+                            p1.x() - perp_x * width_half,
+                            p1.y() - perp_y * width_half
+                        )
+                        corner2 = QtCore.QPointF(
+                            p1.x() + perp_x * width_half,
+                            p1.y() + perp_y * width_half
+                        )
+                        corner3 = QtCore.QPointF(
+                            p2.x() + perp_x * width_half,
+                            p2.y() + perp_y * width_half
+                        )
+                        corner4 = QtCore.QPointF(
+                            p2.x() - perp_x * width_half,
+                            p2.y() - perp_y * width_half
+                        )
+
+                        # Draw dashed preview rectangle
+                        dashed_pen = QtGui.QPen(QtGui.QColor(100, 100, 100), pen_width, QtCore.Qt.DashLine)
+                        p.setPen(dashed_pen)
+                        p.drawLine(corner1, corner2)
+                        p.drawLine(corner2, corner3)
+                        p.drawLine(corner3, corner4)
+                        p.drawLine(corner4, corner1)
+
+                p.restore()
+
         if self.selected_shapes_copy:
             for s in self.selected_shapes_copy:
                 s.paint(p)
@@ -2969,14 +3467,31 @@ class Canvas(
                     )
             else:
                 # Normal crosshair for other modes or initial state
-                p.drawLine(
-                    QtCore.QPointF(self.prev_move_point.x(), 0),
-                    QtCore.QPointF(self.prev_move_point.x(), self.pixmap.height()),
-                )
-                p.drawLine(
-                    QtCore.QPointF(0, self.prev_move_point.y()),
-                    QtCore.QPointF(self.pixmap.width(), self.prev_move_point.y()),
-                )
+                # Check crosshair style for segmentation mode
+                if self.crosshair_style == 'vertical_only':
+                    # Only draw vertical line with custom length
+                    half_length = self.crosshair_vertical_length / 2
+                    p.drawLine(
+                        QtCore.QPointF(self.prev_move_point.x(), self.prev_move_point.y() - half_length),
+                        QtCore.QPointF(self.prev_move_point.x(), self.prev_move_point.y() + half_length),
+                    )
+                elif self.crosshair_style == 'horizontal_only':
+                    # Only draw horizontal line with custom length
+                    half_length = self.crosshair_horizontal_length / 2
+                    p.drawLine(
+                        QtCore.QPointF(self.prev_move_point.x() - half_length, self.prev_move_point.y()),
+                        QtCore.QPointF(self.prev_move_point.x() + half_length, self.prev_move_point.y()),
+                    )
+                else:
+                    # Default: draw both lines (full screen)
+                    p.drawLine(
+                        QtCore.QPointF(self.prev_move_point.x(), 0),
+                        QtCore.QPointF(self.prev_move_point.x(), self.pixmap.height()),
+                    )
+                    p.drawLine(
+                        QtCore.QPointF(0, self.prev_move_point.y()),
+                        QtCore.QPointF(self.pixmap.width(), self.prev_move_point.y()),
+                    )
 
             # Restore painter state to prevent opacity from affecting other drawings
             p.restore()
@@ -3428,11 +3943,29 @@ class Canvas(
         """Mouse wheel event"""
         mods = ev.modifiers()
         delta = ev.angleDelta()
+
+        if self.drawing() and self.create_mode == "rectangle3":
+            wheel_up = delta.y() > 0
+            step = 5
+            if wheel_up:
+                self.rectangle3_width += step
+            else:
+                self.rectangle3_width -= step
+            
+            self.rectangle3_width = max(1, self.rectangle3_width)
+
+            if self.parent.rectangle3_width_dialog:
+                self.parent.rectangle3_width_dialog.width_spinbox.setValue(self.rectangle3_width)
+
+            self.update()
+            ev.accept()
+            return
+
         is_ctrl_pressed = (QtCore.Qt.ControlModifier & int(mods))
+        is_shift_pressed = (QtCore.Qt.ShiftModifier & int(mods))
 
         if (
             self.editing()
-            and self.enable_wheel_rectangle_editing
             and len(self.selected_shapes) == 1
             and self.selected_shapes[0].shape_type in ["rectangle", "rotation"]
         ):
@@ -3456,27 +3989,23 @@ class Canvas(
                 return
             # If cursor is outside, handle edge adjustment or canvas zooming
             else:
+                # Determine adjustment mode: normal, shift, or ctrl (fast)
                 if is_ctrl_pressed:
-                    # fast adjustment for edges
-                    if shape.shape_type == "rotation":
-                        self._adjust_rotation_edge(shape, pos, wheel_up, fast_mode=True)
-                    else:
-                        self._adjust_rectangle_edge(shape, pos, wheel_up, fast_mode=True)
-                    self.store_shapes()
-                    self.shape_moved.emit()
-                    self.update()
-                    ev.accept()
-                    return
-                else: # regular edge adjustment
-                    if shape.shape_type == "rotation":
-                        self._adjust_rotation_edge(shape, pos, wheel_up, fast_mode=False)
-                    else:
-                        self._adjust_rectangle_edge(shape, pos, wheel_up, fast_mode=False)
-                    self.store_shapes()
-                    self.shape_moved.emit()
-                    self.update()
-                    ev.accept()
-                    return
+                    adjust_mode = "fast"
+                elif is_shift_pressed:
+                    adjust_mode = "shift"
+                else:
+                    adjust_mode = "normal"
+
+                if shape.shape_type == "rotation":
+                    self._adjust_rotation_edge(shape, pos, wheel_up, adjust_mode=adjust_mode)
+                else:
+                    self._adjust_rectangle_edge(shape, pos, wheel_up, adjust_mode=adjust_mode)
+                self.store_shapes()
+                self.shape_moved.emit()
+                self.update()
+                ev.accept()
+                return
 
         # Default canvas scroll/zoom behavior
         if is_ctrl_pressed:
@@ -3499,7 +4028,12 @@ class Canvas(
 
         # Use scale_step as the pixel adjustment value.
         # Divided by 2 because we are adjusting from the center, moving each side.
-        adjustment = self.rect_scale_step / 2.0 if scale_up else -self.rect_scale_step / 2.0
+        # Choose the appropriate step based on whether we're adjusting width or height
+        if adjust_height:
+            scale_step = self.rect_scale_step_v
+        else:
+            scale_step = self.rect_scale_step_h
+        adjustment = scale_step / 2.0 if scale_up else -scale_step / 2.0
 
         if shape.shape_type == "rotation":
             # For rotated rectangles, the delta must be along the shape's width or height axis.
@@ -3589,8 +4123,15 @@ class Canvas(
         for i, new_point in enumerate(new_points):
             shape.points[i] = new_point
 
-    def _adjust_rotation_edge(self, shape, cursor_pos, move_outward, fast_mode=False):
-        """Adjust the rotated rectangle edge closest to the cursor position."""
+    def _adjust_rotation_edge(self, shape, cursor_pos, move_outward, adjust_mode="normal"):
+        """Adjust the rotated rectangle edge closest to the cursor position.
+
+        Args:
+            shape: The shape to adjust
+            cursor_pos: Current cursor position
+            move_outward: True to expand, False to shrink
+            adjust_mode: "normal", "shift", or "fast" (ctrl)
+        """
         if len(shape.points) < 4:
             return
 
@@ -3598,10 +4139,6 @@ class Canvas(
             return
         img_width = self.pixmap.width()
         img_height = self.pixmap.height()
-
-        # Determine the step size based on whether fast_mode is enabled
-        step_value = self.fast_rect_adjust_step if fast_mode else self.rect_adjust_step
-        step = step_value if move_outward else -step_value
 
         # Calculate distance to each edge (line segment)
         distances = {}
@@ -3627,15 +4164,37 @@ class Canvas(
             # Check if the perpendicular vector is pointing outward from the center
             center = (shape.points[0] + shape.points[2]) / 2
             edge_mid_point = QtCore.QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2)
-            
+
             # Vector from center to the edge's midpoint
             center_to_edge = edge_mid_point - center
-            
+
             # Dot product to check direction alignment
             dot_product = center_to_edge.x() * perp_dx + center_to_edge.y() * perp_dy
             if dot_product < 0:
                 # If the perpendicular vector is pointing inward, flip it
                 perp_dx, perp_dy = -perp_dx, -perp_dy
+
+            # Determine if this is a horizontal or vertical edge
+            # For rotated rectangles, we check the edge orientation
+            edge_angle = math.atan2(dy, dx)
+            # Normalize to [0, pi]
+            edge_angle = abs(edge_angle)
+            if edge_angle > math.pi / 2:
+                edge_angle = math.pi - edge_angle
+
+            # If edge is more horizontal (angle closer to 0), use horizontal step
+            # If edge is more vertical (angle closer to pi/2), use vertical step
+            is_horizontal_edge = edge_angle < math.pi / 4
+
+            # Determine the step size based on adjust_mode and edge orientation
+            if adjust_mode == "fast":
+                step_value = self.rect_fast_adjust_step_h if is_horizontal_edge else self.rect_fast_adjust_step_v
+            elif adjust_mode == "shift":
+                step_value = self.rect_shift_adjust_step_h if is_horizontal_edge else self.rect_shift_adjust_step_v
+            else:  # normal
+                step_value = self.rect_adjust_step_h if is_horizontal_edge else self.rect_adjust_step_v
+
+            step = step_value if move_outward else -step_value
 
             move_x = step * perp_dx
             move_y = step * perp_dy
@@ -3650,18 +4209,21 @@ class Canvas(
             shape.points[idx1] = QtCore.QPointF(new_x1, new_y1)
             shape.points[idx2] = QtCore.QPointF(new_x2, new_y2)
 
-    def _adjust_rectangle_edge(self, shape, cursor_pos, move_outward, fast_mode=False):
-        """Adjust the rectangle edge closest to cursor position within image boundaries"""
+    def _adjust_rectangle_edge(self, shape, cursor_pos, move_outward, adjust_mode="normal"):
+        """Adjust the rectangle edge closest to cursor position within image boundaries.
+
+        Args:
+            shape: The shape to adjust
+            cursor_pos: Current cursor position
+            move_outward: True to expand, False to shrink
+            adjust_mode: "normal", "shift", or "fast" (ctrl)
+        """
         if len(shape.points) < 4:
             return
 
         rect = shape.bounding_rect()
         min_x, max_x = rect.left(), rect.right()
         min_y, max_y = rect.top(), rect.bottom()
-
-        # Determine the step size based on whether fast_mode is enabled
-        step_value = self.fast_rect_adjust_step if fast_mode else self.rect_adjust_step
-        step = step_value if move_outward else -step_value
 
         if self.pixmap is None:
             return
@@ -3671,7 +4233,19 @@ class Canvas(
         # Original rectangle adjustment logic
         distances = self._calculate_edge_distances(cursor_pos, min_x, max_x, min_y, max_y)
         closest_edge = self._determine_closest_edge(cursor_pos, min_x, max_x, min_y, max_y, distances)
-        
+
+        # Determine the step size based on adjust_mode and edge orientation
+        is_horizontal_edge = closest_edge in ["left", "right"]
+
+        if adjust_mode == "fast":
+            step_value = self.rect_fast_adjust_step_h if is_horizontal_edge else self.rect_fast_adjust_step_v
+        elif adjust_mode == "shift":
+            step_value = self.rect_shift_adjust_step_h if is_horizontal_edge else self.rect_shift_adjust_step_v
+        else:  # normal
+            step_value = self.rect_adjust_step_h if is_horizontal_edge else self.rect_adjust_step_v
+
+        step = step_value if move_outward else -step_value
+
         for i, point in enumerate(shape.points):
             new_point = None
 

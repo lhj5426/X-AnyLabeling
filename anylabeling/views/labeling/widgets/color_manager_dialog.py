@@ -101,6 +101,23 @@ class ColorManagerDialog(QDialog):
         self.vertex_fill_color_button = self.create_color_button(['shape', 'vertex_fill_color'], self.config['shape']['vertex_fill_color'])
         form_layout.addRow(self.tr("顶点填充颜色:"), self.vertex_fill_color_button)
 
+        # Alignment tool settings
+        self.alignment_reference_color_button = self.create_color_button(['shape', 'alignment_reference_color'], self.config['shape'].get('alignment_reference_color', [255, 0, 255, 255]))
+        form_layout.addRow(self.tr("对齐工具参照颜色:"), self.alignment_reference_color_button)
+
+        self.alignment_target_color_button = self.create_color_button(['shape', 'alignment_target_color'], self.config['shape'].get('alignment_target_color', [255, 165, 0, 255]))
+        form_layout.addRow(self.tr("对齐工具被执行颜色:"), self.alignment_target_color_button)
+
+        self.alignment_reference_line_width_spinbox = QDoubleSpinBox()
+        self.alignment_reference_line_width_spinbox.setValue(self.config['shape'].get('alignment_reference_line_width', 4.0))
+        self.alignment_reference_line_width_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'alignment_reference_line_width'], value))
+        form_layout.addRow(self.tr("对齐工具参照线宽度:"), self.alignment_reference_line_width_spinbox)
+
+        self.alignment_target_line_width_spinbox = QDoubleSpinBox()
+        self.alignment_target_line_width_spinbox.setValue(self.config['shape'].get('alignment_target_line_width', 2.0))
+        self.alignment_target_line_width_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'alignment_target_line_width'], value))
+        form_layout.addRow(self.tr("对齐工具被执行线宽度:"), self.alignment_target_line_width_spinbox)
+
         layout.addLayout(form_layout)
 
     def tr(self, text):

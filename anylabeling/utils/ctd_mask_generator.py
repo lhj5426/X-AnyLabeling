@@ -78,21 +78,11 @@ def generate_mask_from_yolo(image_path, yolo_labels, model_path, output_path, pa
             width_px = int(width * img_w)
             height_px = int(height * img_h)
 
-            # 应用大小调整
-            width_px = int(width_px * size_scale)
-            height_px = int(height_px * size_scale)
-
-            # 计算矩形框
+            # 计算矩形框（不应用参数，让CTD检测原始区域）
             x1 = x_center_px - width_px // 2
             y1 = y_center_px - height_px // 2
             x2 = x_center_px + width_px // 2
             y2 = y_center_px + height_px // 2
-
-            # 应用方向延伸
-            x1 -= extend_left
-            x2 += extend_right
-            y1 -= extend_top
-            y2 += extend_bottom
 
             # 边界检查
             x1 = max(0, x1)
@@ -119,6 +109,63 @@ def generate_mask_from_yolo(image_path, yolo_labels, model_path, output_path, pa
             if mask_refined_crop is not None and mask_refined_crop.size > 0:
                 # 将crop区域的掩膜复制到全图掩膜的对应位置
                 mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], mask_refined_crop)
+
+        # 对掩膜进行后处理：应用膨胀操作来扩展掩膜区域
+        # 1. 根据size_scale计算膨胀量（使用独立工具的算法）
+        if size_scale != 1.0:
+            if size_scale > 1.0:
+                # 膨胀：kernel_size = int((factor - 1.0) * 10) + 1
+                kernel_size = int((size_scale - 1.0) * 10) + 1
+                print(f"[CTD] 整体大小 {int(size_scale*100)}%，膨胀核大小 {kernel_size}", flush=True)
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+                mask = cv2.dilate(mask, kernel, iterations=1)
+            else:
+                # 腐蚀：kernel_size = int((1.0 - factor) * 10) + 1
+                kernel_size = int((1.0 - size_scale) * 10) + 1
+                print(f"[CTD] 整体大小 {int(size_scale*100)}%，腐蚀核大小 {kernel_size}", flush=True)
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+                mask = cv2.erode(mask, kernel, iterations=1)
+
+        # 2. 应用方向延伸参数（使用像素移位方法）
+        if extend_top > 0 or extend_bottom > 0 or extend_left > 0 or extend_right > 0:
+            print(f"[CTD] 应用方向延伸: 上{extend_top} 下{extend_bottom} 左{extend_left} 右{extend_right}", flush=True)
+            h, w = mask.shape
+            result_mask = mask.copy()
+
+            # 向上单向延伸
+            if extend_top > 0:
+                for i in range(1, int(extend_top) + 1):
+                    shifted = np.zeros_like(mask)
+                    if i < h:
+                        shifted[:-i, :] = mask[i:, :]
+                        result_mask = np.maximum(result_mask, shifted)
+
+            # 向下单向延伸
+            if extend_bottom > 0:
+                for i in range(1, int(extend_bottom) + 1):
+                    shifted = np.zeros_like(mask)
+                    if i < h:
+                        shifted[i:, :] = mask[:-i, :]
+                        result_mask = np.maximum(result_mask, shifted)
+
+            # 向左单向延伸
+            if extend_left > 0:
+                for i in range(1, int(extend_left) + 1):
+                    shifted = np.zeros_like(mask)
+                    if i < w:
+                        shifted[:, :-i] = mask[:, i:]
+                        result_mask = np.maximum(result_mask, shifted)
+
+            # 向右单向延伸
+            if extend_right > 0:
+                for i in range(1, int(extend_right) + 1):
+                    shifted = np.zeros_like(mask)
+                    if i < w:
+                        shifted[:, i:] = mask[:, :-i]
+                        result_mask = np.maximum(result_mask, shifted)
+
+            mask = result_mask
+            print(f"[CTD] ✅ 方向延伸完成", flush=True)
 
         # 根据格式生成不同的掩膜图
         print(f"[CTD] 生成掩膜图...", flush=True)

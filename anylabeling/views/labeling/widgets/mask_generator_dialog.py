@@ -1,5 +1,5 @@
 """
-MASK生成对话框
+掩膜生成对话框
 用于配置和生成文字区域掩膜
 """
 
@@ -97,21 +97,11 @@ class MaskGeneratorWorker(QtCore.QThread):
                 width_px = int(width * img_w)
                 height_px = int(height * img_h)
 
-                # 应用大小调整
-                width_px = int(width_px * size_scale)
-                height_px = int(height_px * size_scale)
-
-                # 计算矩形框
+                # 计算矩形框（不应用参数，让CTD检测原始区域）
                 x1 = x_center_px - width_px // 2
                 y1 = y_center_px - height_px // 2
                 x2 = x_center_px + width_px // 2
                 y2 = y_center_px + height_px // 2
-
-                # 应用方向延伸
-                x1 -= extend_left
-                x2 += extend_right
-                y1 -= extend_top
-                y2 += extend_bottom
 
                 # 边界检查
                 x1 = max(0, x1)
@@ -134,6 +124,63 @@ class MaskGeneratorWorker(QtCore.QThread):
                 # 将检测到的掩膜合并到全图掩膜中
                 if mask_refined_crop is not None and mask_refined_crop.size > 0:
                     mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], mask_refined_crop)
+
+            # 对掩膜进行后处理：应用膨胀操作来扩展掩膜区域
+            # 1. 根据size_scale计算膨胀量（使用独立工具的算法）
+            if size_scale != 1.0:
+                if size_scale > 1.0:
+                    # 膨胀：kernel_size = int((factor - 1.0) * 10) + 1
+                    kernel_size = int((size_scale - 1.0) * 10) + 1
+                    self.progress.emit(f"[CTD] 整体大小 {int(size_scale*100)}%，膨胀核大小 {kernel_size}")
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+                    mask = cv2.dilate(mask, kernel, iterations=1)
+                else:
+                    # 腐蚀：kernel_size = int((1.0 - factor) * 10) + 1
+                    kernel_size = int((1.0 - size_scale) * 10) + 1
+                    self.progress.emit(f"[CTD] 整体大小 {int(size_scale*100)}%，腐蚀核大小 {kernel_size}")
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+                    mask = cv2.erode(mask, kernel, iterations=1)
+
+            # 2. 应用方向延伸参数（使用像素移位方法）
+            if extend_top > 0 or extend_bottom > 0 or extend_left > 0 or extend_right > 0:
+                self.progress.emit(f"[CTD] 应用方向延伸: 上{extend_top} 下{extend_bottom} 左{extend_left} 右{extend_right}")
+                h, w = mask.shape
+                result_mask = mask.copy()
+
+                # 向上单向延伸
+                if extend_top > 0:
+                    for i in range(1, int(extend_top) + 1):
+                        shifted = np.zeros_like(mask)
+                        if i < h:
+                            shifted[:-i, :] = mask[i:, :]
+                            result_mask = np.maximum(result_mask, shifted)
+
+                # 向下单向延伸
+                if extend_bottom > 0:
+                    for i in range(1, int(extend_bottom) + 1):
+                        shifted = np.zeros_like(mask)
+                        if i < h:
+                            shifted[i:, :] = mask[:-i, :]
+                            result_mask = np.maximum(result_mask, shifted)
+
+                # 向左单向延伸
+                if extend_left > 0:
+                    for i in range(1, int(extend_left) + 1):
+                        shifted = np.zeros_like(mask)
+                        if i < w:
+                            shifted[:, :-i] = mask[:, i:]
+                            result_mask = np.maximum(result_mask, shifted)
+
+                # 向右单向延伸
+                if extend_right > 0:
+                    for i in range(1, int(extend_right) + 1):
+                        shifted = np.zeros_like(mask)
+                        if i < w:
+                            shifted[:, i:] = mask[:, :-i]
+                            result_mask = np.maximum(result_mask, shifted)
+
+                mask = result_mask
+                self.progress.emit(f"[CTD] ✅ 方向延伸完成")
 
             # 根据格式生成掩膜图（仅在需要导出PNG时）
             if self.save_png:
@@ -165,16 +212,32 @@ class MaskGeneratorWorker(QtCore.QThread):
             self.progress.emit(f"[CTD] 提取多边形轮廓...")
             contours = []
             mask_binary = (mask > 127).astype(np.uint8)
+
+            # 膨胀掩膜以确保完全覆盖文字（可选）
+            dilate_kernel_size = self.params.get('dilate_kernel_size', 3)  # 默认3x3
+            if dilate_kernel_size > 0:
+                kernel = np.ones((dilate_kernel_size, dilate_kernel_size), np.uint8)
+                mask_binary = cv2.dilate(mask_binary, kernel, iterations=1)
+                self.progress.emit(f"[CTD] 应用 {dilate_kernel_size}x{dilate_kernel_size} 膨胀核")
+
+            # 统计掩膜覆盖率
+            mask_pixels = np.sum(mask_binary > 0)
+            total_pixels = mask_binary.size
+            coverage = (mask_pixels / total_pixels) * 100
+            self.progress.emit(f"[CTD] 掩膜覆盖率: {coverage:.2f}% ({mask_pixels}/{total_pixels} 像素)")
+
             contour_list, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             self.progress.emit(f"[CTD] 找到 {len(contour_list)} 个轮廓")
 
-            for cnt in contour_list:
-                epsilon = 0.01 * cv2.arcLength(cnt, True)
+            for idx, cnt in enumerate(contour_list):
+                # 使用更小的epsilon值以保留更多细节（0.01 → 0.002）
+                epsilon = 0.002 * cv2.arcLength(cnt, True)
                 approx = cv2.approxPolyDP(cnt, epsilon, True)
                 points = [[int(point[0][0]), int(point[0][1])] for point in approx]
                 if len(points) >= 3:
                     contours.append(points)
+                    self.progress.emit(f"[CTD] 轮廓 {idx+1}: {len(points)} 个顶点")
 
             self.progress.emit(f"[CTD] 提取了 {len(contours)} 个有效多边形轮廓")
             self.progress.emit(f"[CTD] ✅ 掩膜生成完成！")
@@ -208,11 +271,14 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         # 设置为非模态窗口
         self.setWindowModality(QtCore.Qt.NonModal)
 
+        # 添加最小化按钮
+        self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowMinimizeButtonHint)
+
         self.init_ui()
 
     def init_ui(self):
         """初始化用户界面"""
-        self.setWindowTitle(self.tr("MASK生成设置"))
+        self.setWindowTitle(self.tr("掩膜生成设置"))
         self.setMinimumWidth(650)
         self.setMinimumHeight(700)
         self.resize(650, 720)
@@ -259,12 +325,45 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         scope_layout.addWidget(self.current_page_radio)
         scope_layout.addWidget(self.all_pages_radio)
 
+        # 添加分隔线
+        scope_layout.addSpacing(10)
+        separator = QtWidgets.QFrame()
+        separator.setFrameShape(QtWidgets.QFrame.HLine)
+        separator.setFrameShadow(QtWidgets.QFrame.Sunken)
+        scope_layout.addWidget(separator)
+        scope_layout.addSpacing(5)
+
+        # 清空旧多边形选项
+        self.clear_old_polygons_checkbox = QtWidgets.QCheckBox(self.tr("生成前清空旧多边形"))
+        self.clear_old_polygons_checkbox.setChecked(True)  # 默认勾选
+        self.clear_old_polygons_checkbox.setToolTip(self.tr("勾选后，每次生成多边形前会自动删除画布上已有的多边形标注"))
+        scope_layout.addWidget(self.clear_old_polygons_checkbox)
+
+        # 排除标签设置
+        scope_layout.addSpacing(10)
+        exclude_label_layout = QtWidgets.QHBoxLayout()
+        exclude_label_layout.addWidget(QtWidgets.QLabel(self.tr("排除标签:")))
+        self.exclude_labels_edit = QtWidgets.QLineEdit()
+        self.exclude_labels_edit.setPlaceholderText(self.tr("例如: other,background (用逗号分隔)"))
+        self.exclude_labels_edit.setText("other")  # 默认排除other
+        self.exclude_labels_edit.setToolTip(self.tr("生成掩膜时会跳过这些标签的标注框，多个标签用英文逗号分隔"))
+        exclude_label_layout.addWidget(self.exclude_labels_edit, 1)
+        scope_layout.addLayout(exclude_label_layout)
+
         scope_group.setLayout(scope_layout)
         main_layout.addWidget(scope_group)
 
         # === 掩膜参数调整 ===
         param_group = QtWidgets.QGroupBox(self.tr("掩膜参数"))
-        param_layout = QtWidgets.QFormLayout()
+        param_layout = QtWidgets.QVBoxLayout()
+
+        # 添加说明文字
+        param_hint = QtWidgets.QLabel(self.tr("💡 提示：整体大小>100%膨胀掩膜，<100%收缩掩膜；方向延伸额外扩展边界"))
+        param_hint.setStyleSheet("color: #666; font-size: 11px; padding: 5px;")
+        param_hint.setWordWrap(True)
+        param_layout.addWidget(param_hint)
+
+        param_form = QtWidgets.QFormLayout()
 
         # 整体大小调整
         size_layout = QtWidgets.QHBoxLayout()
@@ -279,24 +378,42 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         self.size_label = QtWidgets.QLabel("100%")
         size_layout.addWidget(self.size_slider, 1)
         size_layout.addWidget(self.size_label)
-        param_layout.addRow(self.tr("整体大小:"), size_layout)
+        param_form.addRow(self.tr("整体大小:"), size_layout)
 
         # 方向延伸
         self.extend_top_spin = QtWidgets.QSpinBox()
-        self.extend_top_spin.setRange(0, 50)
-        param_layout.addRow(self.tr("向上延伸:"), self.extend_top_spin)
+        self.extend_top_spin.setRange(0, 100)
+        self.extend_top_spin.setSuffix(" px")
+        self.extend_top_spin.setToolTip(self.tr("向上扩展掩膜边界（像素）"))
+        param_form.addRow(self.tr("向上延伸:"), self.extend_top_spin)
 
         self.extend_bottom_spin = QtWidgets.QSpinBox()
-        self.extend_bottom_spin.setRange(0, 50)
-        param_layout.addRow(self.tr("向下延伸:"), self.extend_bottom_spin)
+        self.extend_bottom_spin.setRange(0, 100)
+        self.extend_bottom_spin.setSuffix(" px")
+        self.extend_bottom_spin.setToolTip(self.tr("向下扩展掩膜边界（像素）"))
+        param_form.addRow(self.tr("向下延伸:"), self.extend_bottom_spin)
 
         self.extend_left_spin = QtWidgets.QSpinBox()
-        self.extend_left_spin.setRange(0, 50)
-        param_layout.addRow(self.tr("向左延伸:"), self.extend_left_spin)
+        self.extend_left_spin.setRange(0, 100)
+        self.extend_left_spin.setSuffix(" px")
+        self.extend_left_spin.setToolTip(self.tr("向左扩展掩膜边界（像素）"))
+        param_form.addRow(self.tr("向左延伸:"), self.extend_left_spin)
 
         self.extend_right_spin = QtWidgets.QSpinBox()
-        self.extend_right_spin.setRange(0, 50)
-        param_layout.addRow(self.tr("向右延伸:"), self.extend_right_spin)
+        self.extend_right_spin.setRange(0, 100)
+        self.extend_right_spin.setSuffix(" px")
+        self.extend_right_spin.setToolTip(self.tr("向右扩展掩膜边界（像素）"))
+        param_form.addRow(self.tr("向右延伸:"), self.extend_right_spin)
+
+        # 膨胀核大小（用于轮廓提取）
+        self.dilate_kernel_spin = QtWidgets.QSpinBox()
+        self.dilate_kernel_spin.setRange(0, 15)
+        self.dilate_kernel_spin.setValue(3)
+        self.dilate_kernel_spin.setSuffix(" px")
+        self.dilate_kernel_spin.setToolTip(self.tr("膨胀核大小，用于扩展轮廓边界（0=不膨胀，推荐3-5）"))
+        param_form.addRow(self.tr("轮廓膨胀:"), self.dilate_kernel_spin)
+
+        param_layout.addLayout(param_form)
 
         param_group.setLayout(param_layout)
         main_layout.addWidget(param_group)
@@ -536,13 +653,31 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                 self.status_label.setText(self.tr("❌ 错误：JSON中没有标注"))
                 return
 
+            # 获取排除标签列表
+            exclude_labels_text = self.exclude_labels_edit.text().strip()
+            exclude_labels = []
+            if exclude_labels_text:
+                exclude_labels = [label.strip() for label in exclude_labels_text.split(',') if label.strip()]
+                self.append_log(f"[过滤] 排除标签: {exclude_labels}")
+
             # 提取rotation和rectangle类型的标注
             boxes = []
+            skipped_count = 0
             for shape in shapes:
+                shape_label = shape.get('label', '')
+
+                # 检查是否需要排除此标签
+                if exclude_labels and shape_label in exclude_labels:
+                    skipped_count += 1
+                    continue
+
                 if shape.get('shape_type') in ['rotation', 'rectangle']:
                     points = shape.get('points', [])
                     if len(points) >= 2:
                         boxes.append(points)
+
+            if skipped_count > 0:
+                self.append_log(f"[过滤] 已跳过 {skipped_count} 个排除标签的标注")
 
             if not boxes:
                 self.append_log("[错误] 没有找到矩形或旋转框标注！")
@@ -601,6 +736,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                 'format': 'imagetrans' if is_imagetrans else 'ballons',
                 'text_color': [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()],
                 'text_alpha': int(self.opacity_slider.value() * 2.55),
+                'dilate_kernel_size': self.dilate_kernel_spin.value(),  # 膨胀核大小
                 'direct_ctd': True  # 标记为直接CTD模式
             }
 
@@ -676,7 +812,8 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                 'extend_right': self.extend_right_spin.value(),
                 'format': 'imagetrans' if is_imagetrans else 'ballons',
                 'text_color': [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()],
-                'text_alpha': int(self.opacity_slider.value() * 2.55)
+                'text_alpha': int(self.opacity_slider.value() * 2.55),
+                'dilate_kernel_size': self.dilate_kernel_spin.value()  # 膨胀核大小
             }
 
             model_path = self.ctd_model_path or self.get_default_model_path()
@@ -805,13 +942,8 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                         x1, y1 = max(0, x1), max(0, y1)
                         x2, y2 = min(img_w, x2), min(img_h, y2)
 
-                        # 扩展边距
-                        x1_ext = max(0, x1 - params['extend_left'])
-                        y1_ext = max(0, y1 - params['extend_top'])
-                        x2_ext = min(img_w, x2 + params['extend_right'])
-                        y2_ext = min(img_h, y2 + params['extend_bottom'])
-
-                        crop = img[y1_ext:y2_ext, x1_ext:x2_ext]
+                        # 裁剪区域（不应用参数）
+                        crop = img[y1:y2, x1:x2]
 
                         if crop.size == 0:
                             continue
@@ -822,21 +954,58 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                         if mask_refined_crop is None or mask_refined_crop.size == 0:
                             continue
 
+                        # 应用参数（整体大小 + 方向延伸）
+                        size_scale = params.get('size_scale', 1.0)
+                        extend_top = params.get('extend_top', 0)
+                        extend_bottom = params.get('extend_bottom', 0)
+                        extend_left = params.get('extend_left', 0)
+                        extend_right = params.get('extend_right', 0)
+
+                        # 整体大小膨胀/腐蚀
+                        if size_scale != 1.0:
+                            if size_scale > 1.0:
+                                kernel_size = int((size_scale - 1.0) * 10) + 1
+                                kernel = (kernel_size, kernel_size)
+                                mask_refined_crop = cv2.dilate(mask_refined_crop, np.ones(kernel, np.uint8), iterations=1)
+                            else:
+                                kernel_size = int((1.0 - size_scale) * 10) + 1
+                                kernel = (kernel_size, kernel_size)
+                                mask_refined_crop = cv2.erode(mask_refined_crop, np.ones(kernel, np.uint8), iterations=1)
+
+                        # 方向延伸（像素移位方法）
+                        result_mask = mask_refined_crop.copy()
+                        for i in range(1, int(extend_top) + 1):
+                            shifted = np.zeros_like(mask_refined_crop)
+                            shifted[:-i, :] = mask_refined_crop[i:, :]
+                            result_mask = np.maximum(result_mask, shifted)
+                        for i in range(1, int(extend_bottom) + 1):
+                            shifted = np.zeros_like(mask_refined_crop)
+                            shifted[i:, :] = mask_refined_crop[:-i, :]
+                            result_mask = np.maximum(result_mask, shifted)
+                        for i in range(1, int(extend_left) + 1):
+                            shifted = np.zeros_like(mask_refined_crop)
+                            shifted[:, :-i] = mask_refined_crop[:, i:]
+                            result_mask = np.maximum(result_mask, shifted)
+                        for i in range(1, int(extend_right) + 1):
+                            shifted = np.zeros_like(mask_refined_crop)
+                            shifted[:, i:] = mask_refined_crop[:, :-i]
+                            result_mask = np.maximum(result_mask, shifted)
+
                         # 合并到总掩膜
                         if is_imagetrans:
                             text_color = params['text_color']
                             text_alpha = params['text_alpha']
                             # 将检测结果叠加到对应位置
-                            mask_indices = mask_refined_crop > 127
-                            mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 0][mask_indices] = text_color[2]  # B
-                            mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 1][mask_indices] = text_color[1]  # G
-                            mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 2][mask_indices] = text_color[0]  # R
-                            mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 3][mask_indices] = text_alpha     # A
+                            mask_indices = result_mask > 127
+                            mask_rgba[y1:y2, x1:x2, 0][mask_indices] = text_color[2]  # B
+                            mask_rgba[y1:y2, x1:x2, 1][mask_indices] = text_color[1]  # G
+                            mask_rgba[y1:y2, x1:x2, 2][mask_indices] = text_color[0]  # R
+                            mask_rgba[y1:y2, x1:x2, 3][mask_indices] = text_alpha     # A
                         else:
                             # BallonsTranslator格式：黑背景 + 白色文字
-                            mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext] = np.maximum(
-                                mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext],
-                                mask_refined_crop
+                            mask_rgba[y1:y2, x1:x2] = np.maximum(
+                                mask_rgba[y1:y2, x1:x2],
+                                result_mask
                             )
 
                     # 保存PNG（支持中文路径）
@@ -1148,6 +1317,13 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
 
             self.append_log(f"[标注] 找到 {len(shapes)} 个标注")
 
+            # 获取排除标签列表
+            exclude_labels_text = self.exclude_labels_edit.text().strip()
+            exclude_labels = []
+            if exclude_labels_text:
+                exclude_labels = [label.strip() for label in exclude_labels_text.split(',') if label.strip()]
+                self.append_log(f"[过滤] 排除标签: {exclude_labels}")
+
             # 读取图片尺寸（使用PIL支持中文路径）
             try:
                 from PIL import Image
@@ -1160,9 +1336,16 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
 
             # 将rotation和rectangle类型的标注转换为YOLO格式（归一化坐标）
             yolo_labels = []
+            skipped_count = 0
             for shape in shapes:
                 shape_type = shape.get('shape_type')
+                shape_label = shape.get('label', '')
                 points = shape.get('points', [])
+
+                # 检查是否需要排除此标签
+                if exclude_labels and shape_label in exclude_labels:
+                    skipped_count += 1
+                    continue
 
                 # 支持rotation（旋转框）和rectangle（水平框）
                 if (shape_type in ['rotation', 'rectangle']) and len(points) == 4:
@@ -1186,6 +1369,9 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
 
                     # YOLO格式: [class, x_center, y_center, width, height]
                     yolo_labels.append([0, x_center_norm, y_center_norm, width_norm, height_norm])
+
+            if skipped_count > 0:
+                self.append_log(f"[过滤] 已跳过 {skipped_count} 个排除标签的标注")
 
             if not yolo_labels:
                 self.append_log(f"[错误] JSON中没有可用的标注（需要rotation或rectangle类型）")
@@ -1226,6 +1412,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             'format': 'imagetrans' if is_imagetrans else 'ballons',
             'text_color': [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()],
             'text_alpha': int(self.opacity_slider.value() * 2.55),
+            'dilate_kernel_size': self.dilate_kernel_spin.value(),  # 膨胀核大小
         }
 
         # 获取模型路径
@@ -1348,10 +1535,41 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                 'extend_right': self.extend_right_spin.value(),
                 'format': 'imagetrans' if is_imagetrans else 'ballons',
                 'text_color': [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()],
-                'text_alpha': int(self.opacity_slider.value() * 2.55)
+                'text_alpha': int(self.opacity_slider.value() * 2.55),
+                'dilate_kernel_size': self.dilate_kernel_spin.value()  # 膨胀核大小
             }
 
             model_path = self.ctd_model_path or self.get_default_model_path()
+
+            # 获取排除标签列表
+            exclude_labels_text = self.exclude_labels_edit.text().strip()
+            exclude_labels = []
+            if exclude_labels_text:
+                exclude_labels = [label.strip() for label in exclude_labels_text.split(',') if label.strip()]
+                self.append_log(f"[过滤] 排除标签: {exclude_labels}")
+
+            # 🎯 在批量处理前加载一次CTD模型
+            self.append_log(f"[模型] 正在加载CTD模型...")
+            try:
+                import sys
+                import torch
+
+                # 添加BallonsTranslator路径
+                ballons_path = r"D:\BallonsTranslator\BallonsTranslator"
+                if ballons_path not in sys.path:
+                    sys.path.insert(0, ballons_path)
+
+                from modules.textdetector.ctd import CTDModel
+
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                ctd_model = CTDModel(model_path, detect_size=1024, device=device)
+                self.append_log(f"[模型] ✅ CTD模型加载完成 (设备: {device})")
+            except Exception as e:
+                self.append_log(f"[错误] 模型加载失败: {str(e)}")
+                self.status_label.setText(self.tr("❌ 模型加载失败"))
+                self.progress_bar.setVisible(False)
+                self.generate_btn.setEnabled(True)
+                return
 
             success_count = 0
             skip_count = 0
@@ -1383,11 +1601,22 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
 
                     # 提取rotation和rectangle类型的标注
                     boxes = []
+                    skipped_count = 0
                     for shape in shapes:
+                        shape_label = shape.get('label', '')
+
+                        # 检查是否需要排除此标签
+                        if exclude_labels and shape_label in exclude_labels:
+                            skipped_count += 1
+                            continue
+
                         if shape.get('shape_type') in ['rotation', 'rectangle']:
                             points = shape.get('points', [])
                             if len(points) >= 2:
                                 boxes.append(points)
+
+                    if skipped_count > 0:
+                        self.append_log(f"  [过滤] 已跳过 {skipped_count} 个排除标签的标注")
 
                     if not boxes:
                         self.append_log(f"  [跳过] 没有矩形或旋转框标注")
@@ -1434,8 +1663,8 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                         save_png=False
                     )
 
-                    # 直接运行（不启动线程）
-                    result = self._run_worker_sync(worker)
+                    # 直接运行（不启动线程），传入已加载的模型
+                    result = self._run_worker_sync(worker, ctd_model)
 
                     if result.get("success"):
                         contours = result.get("contours", [])
@@ -1753,6 +1982,42 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                 }
                 self.append_log(f"[保存] 创建新JSON: {json_path}")
 
+            # 如果勾选了"清空旧多边形"，则删除所有polygon类型的标注
+            if self.clear_old_polygons_checkbox.isChecked():
+                old_shapes = data.get("shapes", [])
+                old_total_count = len(old_shapes)
+
+                # 统计各类型标注数量
+                shape_types = {}
+                polygon_labels = {}  # 统计多边形的label
+                for shape in old_shapes:
+                    shape_type = shape.get("shape_type", "unknown")
+                    shape_types[shape_type] = shape_types.get(shape_type, 0) + 1
+
+                    # 如果是多边形，统计label
+                    if shape_type == "polygon":
+                        label = shape.get("label", "unknown")
+                        polygon_labels[label] = polygon_labels.get(label, 0) + 1
+
+                self.append_log(f"[清理] 原有标注总数: {old_total_count}")
+                for shape_type, count in shape_types.items():
+                    self.append_log(f"[清理]   - {shape_type}: {count} 个")
+
+                old_polygon_count = shape_types.get("polygon", 0)
+
+                if old_polygon_count > 0:
+                    # 显示多边形的label分布
+                    self.append_log(f"[清理] 多边形label分布:")
+                    for label, count in polygon_labels.items():
+                        self.append_log(f"[清理]   - label='{label}': {count} 个")
+
+                    # 保留非polygon类型的标注
+                    data["shapes"] = [shape for shape in old_shapes if shape.get("shape_type") != "polygon"]
+                    new_total_count = len(data["shapes"])
+                    self.append_log(f"[清理] ✅ 已删除所有 {old_polygon_count} 个多边形，保留 {new_total_count} 个其他标注")
+                else:
+                    self.append_log(f"[清理] 没有找到旧多边形，跳过清理")
+
             # 将轮廓转换为polygon shapes
             for idx, contour in enumerate(contours):
                 # contour是点列表: [[x1,y1], [x2,y2], ...]
@@ -1795,6 +2060,12 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             with open(json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
+            # 如果勾选了"清空旧多边形"，则删除所有polygon类型的标注
+            if self.clear_old_polygons_checkbox.isChecked():
+                old_polygon_count = sum(1 for shape in data.get("shapes", []) if shape.get("shape_type") == "polygon")
+                if old_polygon_count > 0:
+                    data["shapes"] = [shape for shape in data.get("shapes", []) if shape.get("shape_type") != "polygon"]
+
             # 将轮廓转换为polygon shapes
             for idx, contour in enumerate(contours):
                 points = [[float(pt[0]), float(pt[1])] for pt in contour]
@@ -1820,8 +2091,13 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         except Exception as e:
             raise e
 
-    def _run_worker_sync(self, worker):
-        """同步运行Worker（用于批量处理）"""
+    def _run_worker_sync(self, worker, ctd_model):
+        """同步运行Worker（用于批量处理）
+
+        Args:
+            worker: MaskGeneratorWorker对象
+            ctd_model: 已加载的CTD模型（避免重复加载）
+        """
         try:
             # 读取图片（使用PIL支持中文路径）
             from PIL import Image
@@ -1835,17 +2111,11 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
 
             img_h, img_w = img.shape[:2]
 
-            # 加载CTD模型
-            import sys
+            # 使用传入的已加载模型（不再重复加载）
+            model = ctd_model
+
+            # 获取设备信息（用于返回值）
             import torch
-            from pathlib import Path
-
-            ctd_path = Path(worker.model_path).parent.parent.parent
-            if str(ctd_path) not in sys.path:
-                sys.path.insert(0, str(ctd_path))
-
-            from detection import dispatch
-
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
             # 处理每个标注框
@@ -1868,36 +2138,64 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                 if box_w <= 0 or box_h <= 0:
                     continue
 
-                # 扩展边距
-                extend_left = int(worker.params['extend_left'])
-                extend_right = int(worker.params['extend_right'])
-                extend_top = int(worker.params['extend_top'])
-                extend_bottom = int(worker.params['extend_bottom'])
-
-                x1_ext = max(0, x1 - extend_left)
-                y1_ext = max(0, y1 - extend_top)
-                x2_ext = min(img_w, x2 + extend_right)
-                y2_ext = min(img_h, y2 + extend_bottom)
-
-                crop = img[y1_ext:y2_ext, x1_ext:x2_ext]
+                # 裁剪区域（不应用参数）
+                crop = img[y1:y2, x1:x2]
 
                 if crop.size == 0:
                     continue
 
-                # CTD检测
-                mask_raw, _ = dispatch(worker.model_path, crop, device)
+                # CTD检测 - 正确的调用方式
+                mask_crop, mask_refined_crop, blk_list = model(crop, refine_mode=0, keep_undetected_mask=False)
 
-                if mask_raw is None:
+                if mask_refined_crop is None or mask_refined_crop.size == 0:
                     continue
 
-                mask_resized = cv2.resize(mask_raw, (x2_ext - x1_ext, y2_ext - y1_ext))
+                # 调整掩膜大小
+                mask_resized = cv2.resize(mask_refined_crop, (box_w, box_h))
                 _, binary_mask = cv2.threshold(mask_resized, 127, 255, cv2.THRESH_BINARY)
 
+                # 应用参数（整体大小 + 方向延伸）
+                size_scale = worker.params.get('size_scale', 1.0)
+                extend_top = worker.params.get('extend_top', 0)
+                extend_bottom = worker.params.get('extend_bottom', 0)
+                extend_left = worker.params.get('extend_left', 0)
+                extend_right = worker.params.get('extend_right', 0)
+
+                # 整体大小膨胀/腐蚀
+                if size_scale != 1.0:
+                    if size_scale > 1.0:
+                        kernel_size = int((size_scale - 1.0) * 10) + 1
+                        kernel = (kernel_size, kernel_size)
+                        binary_mask = cv2.dilate(binary_mask, np.ones(kernel, np.uint8), iterations=1)
+                    else:
+                        kernel_size = int((1.0 - size_scale) * 10) + 1
+                        kernel = (kernel_size, kernel_size)
+                        binary_mask = cv2.erode(binary_mask, np.ones(kernel, np.uint8), iterations=1)
+
+                # 方向延伸（像素移位方法）
+                result_mask = binary_mask.copy()
+                for i in range(1, int(extend_top) + 1):
+                    shifted = np.zeros_like(binary_mask)
+                    shifted[:-i, :] = binary_mask[i:, :]
+                    result_mask = np.maximum(result_mask, shifted)
+                for i in range(1, int(extend_bottom) + 1):
+                    shifted = np.zeros_like(binary_mask)
+                    shifted[i:, :] = binary_mask[:-i, :]
+                    result_mask = np.maximum(result_mask, shifted)
+                for i in range(1, int(extend_left) + 1):
+                    shifted = np.zeros_like(binary_mask)
+                    shifted[:, :-i] = binary_mask[:, i:]
+                    result_mask = np.maximum(result_mask, shifted)
+                for i in range(1, int(extend_right) + 1):
+                    shifted = np.zeros_like(binary_mask)
+                    shifted[:, i:] = binary_mask[:, :-i]
+                    result_mask = np.maximum(result_mask, shifted)
+
                 # 提取轮廓
-                contours_raw, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                contours_raw, _ = cv2.findContours(result_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
                 for cnt in contours_raw:
-                    epsilon = 0.005 * cv2.arcLength(cnt, True)
+                    epsilon = 0.002 * cv2.arcLength(cnt, True)
                     approx = cv2.approxPolyDP(cnt, epsilon, True)
 
                     if len(approx) < 3:
@@ -1906,8 +2204,8 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                     # 转换坐标到原图
                     polygon = []
                     for pt in approx:
-                        x = int(pt[0][0]) + x1_ext
-                        y = int(pt[0][1]) + y1_ext
+                        x = int(pt[0][0]) + x1
+                        y = int(pt[0][1]) + y1
                         polygon.append([x, y])
 
                     all_contours.append(polygon)
