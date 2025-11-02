@@ -444,6 +444,17 @@ https://github.com/user-attachments/assets/ab349951-140d-41c9-9fab-1a2ae6765b56
 
 https://github.com/user-attachments/assets/df7cf602-b29a-488d-9f42-5dccd2238334
 
+73.增加 PS的对对齐辅助线
+
+https://github.com/user-attachments/assets/1f04ad80-7374-4595-b7b4-3d149537771f
+
+74.增加 PS的距离显示 间距线
+
+https://github.com/user-attachments/assets/e9898115-d830-4565-8a55-cc42ded57fb2
+
+75.增加 PS仿制图章式的 复制粘贴功能 虚影粘贴 并可在鼠标所在位置下直接粘贴 和原版在相同位置重叠粘贴功能可切换
+
+https://github.com/user-attachments/assets/183d7ca9-ce35-4442-977b-8d71b6d18ccd
 
 
 
