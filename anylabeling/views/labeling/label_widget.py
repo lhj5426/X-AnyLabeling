@@ -79,6 +79,7 @@ from .widgets import (
     KeymapDialog,
     AlignmentDialog,
     ColorManagerDialog,
+    SmartGuidesDialog,
     ShortcutManagerDialog,
     SegmentationDialog,
     Rectangle3WidthDialog,
@@ -905,14 +906,6 @@ class LabelingWidget(QtWidgets.QWidget):
             self.tr("Delete the selected polygons"),
             enabled=False,
         )
-        duplicate = action(
-            self.tr("Duplicate Polygons"),
-            self.duplicate_selected_shape,
-            shortcuts["duplicate_polygon"],
-            "copy",
-            self.tr("Create a duplicate of the selected polygons"),
-            enabled=False,
-        )
         copy = action(
             self.tr("Copy Object"),
             self.copy_selected_shape,
@@ -928,6 +921,14 @@ class LabelingWidget(QtWidgets.QWidget):
             "paste",
             self.tr("Paste copied polygons"),
             enabled=self._config["system_clipboard"],
+        )
+        cancel_paste_preview = action(
+            self.tr("Cancel Paste Preview"),
+            self.cancel_paste_preview,
+            "Ctrl+D",
+            None,
+            self.tr("Cancel paste preview mode"),
+            enabled=True,
         )
         undo_last_point = action(
             self.tr("Undo last point"),
@@ -1152,6 +1153,13 @@ class LabelingWidget(QtWidgets.QWidget):
             self.open_color_manager_dialog,
             icon="color",
             tip=self.tr("管理标签颜色和线条宽度"),
+        )
+
+        smart_guides_tool = action(
+            self.tr("辅助线工具"),
+            self.open_smart_guides_dialog,
+            icon="edit",
+            tip=self.tr("配置智能参考线和对齐辅助功能"),
         )
 
         shortcut_manager_tool = action(
@@ -1842,9 +1850,9 @@ class LabelingWidget(QtWidgets.QWidget):
             union_selection=union_selection,
             delete=delete,
             edit=edit,
-            duplicate=duplicate,
             copy=copy,
             paste=paste,
+            cancel_paste_preview=cancel_paste_preview,
             undo_last_point=undo_last_point,
             undo=undo,
             remove_point=remove_point,
@@ -1955,10 +1963,10 @@ class LabelingWidget(QtWidgets.QWidget):
             # XXX: need to add some actions here to activate the shortcut
             editMenu=(
                 edit,
-                duplicate,
                 delete,
                 copy,
                 paste,
+                cancel_paste_preview,
                 None,
                 undo,
                 undo_last_point,
@@ -1983,9 +1991,9 @@ class LabelingWidget(QtWidgets.QWidget):
                 edit_mode,
                 edit,
                 union_selection,
-                duplicate,
                 copy,
                 paste,
+                cancel_paste_preview,
                 delete,
                 undo,
                 undo_last_point,
@@ -2098,6 +2106,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 label_toggle_shortcut_manager,
                 keymap_tool,
                 color_manager_tool,
+                smart_guides_tool,
                 shortcut_manager_tool,
                 wheel_settings_tool,
                 rectangle3_width_tool,
@@ -3963,15 +3972,29 @@ class LabelingWidget(QtWidgets.QWidget):
             self.alignment_dialog.log(self.tr("保持对齐模式，可继续执行其他操作"))
 
     def open_keymap_dialog(self):
-        if not self.keymap_dialog:
+        if not hasattr(self, 'keymap_dialog') or self.keymap_dialog is None or not self.keymap_dialog.isVisible():
             self.keymap_dialog = KeymapDialog(self, config=self._config)
-        self.keymap_dialog.exec_()
+            self.keymap_dialog.config_saved.connect(self._save_keymap_config)
+            self.keymap_dialog.show()
+        else:
+            self.keymap_dialog.raise_()
+            self.keymap_dialog.activateWindow()
 
     def open_color_manager_dialog(self):
         if not hasattr(self, 'color_manager_dialog') or not self.color_manager_dialog.isVisible():
             self.color_manager_dialog = ColorManagerDialog(self, self._config)
             self.color_manager_dialog.setting_changed.connect(self.update_single_setting)
             self.color_manager_dialog.show()
+
+    def open_smart_guides_dialog(self):
+        """打开辅助线工具窗口"""
+        if not hasattr(self, 'smart_guides_dialog') or not self.smart_guides_dialog.isVisible():
+            self.smart_guides_dialog = SmartGuidesDialog(self, self._config)
+            self.smart_guides_dialog.setting_changed.connect(self.update_single_setting)
+            self.smart_guides_dialog.show()
+        else:
+            self.smart_guides_dialog.raise_()
+            self.smart_guides_dialog.activateWindow()
 
     def open_shortcut_manager_dialog(self):
         """Open the shortcut manager dialog."""
@@ -4299,7 +4322,7 @@ class LabelingWidget(QtWidgets.QWidget):
             "edit_polygon": self.actions.edit_mode,
             "copy_polygon": self.actions.copy,
             "paste_polygon": self.actions.paste,
-            "duplicate_polygon": self.actions.duplicate,
+            "cancel_paste_preview": self.actions.cancel_paste_preview,
             "delete_polygon": self.actions.delete,
             "undo": self.actions.undo,
             "undo_last_point": self.actions.undo_last_point,
@@ -4465,6 +4488,15 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.canvas.alignment_reference_color = color
             elif key == ['shape', 'alignment_target_color']:
                 self.canvas.alignment_target_color = color
+            elif key == 'paste_preview_line_color':
+                # 虚影线条颜色
+                self.canvas.paste_preview_line_color = value if isinstance(value, list) else [color.red(), color.green(), color.blue()]
+            elif key == 'smart_guides_line_color':
+                # 辅助线线条颜色
+                self.canvas.smart_guides_line_color = value if isinstance(value, list) else [color.red(), color.green(), color.blue()]
+            elif key == 'spacing_guide_line_color':
+                # 间距线线条颜色
+                self.canvas.spacing_guide_line_color = value if isinstance(value, list) else [color.red(), color.green(), color.blue()]
             elif key == 'manually_edited_color':
                 pass
         else:
@@ -4494,6 +4526,24 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.canvas.alignment_reference_line_width = value
             elif key == ['shape', 'alignment_target_line_width']:
                 self.canvas.alignment_target_line_width = value
+            elif key == 'paste_preview_line_width':
+                # 虚影线条粗细
+                self.canvas.paste_preview_line_width = value
+            elif key == 'paste_preview_opacity':
+                # 虚影透明度
+                self.canvas.paste_preview_opacity = value
+            elif key == 'smart_guides_line_width':
+                # 辅助线线条粗细
+                self.canvas.smart_guides_line_width = value
+            elif key == 'smart_guides_opacity':
+                # 辅助线透明度
+                self.canvas.smart_guides_opacity = value
+            elif key == 'spacing_guide_line_width':
+                # 间距线线条粗细
+                self.canvas.spacing_guide_line_width = value
+            elif key == 'spacing_guide_opacity':
+                # 间距线透明度
+                self.canvas.spacing_guide_opacity = value
 
         self.canvas.update()
         # Auto-save on every change
@@ -5496,7 +5546,6 @@ class LabelingWidget(QtWidgets.QWidget):
             len(set(shape.shape_type for shape in selected_shapes)) <= 1
         )
         self.actions.delete.setEnabled(n_selected)
-        self.actions.duplicate.setEnabled(n_selected)
         self.actions.copy.setEnabled(n_selected)
         self.actions.edit.setEnabled(n_selected >= 1 and same_type)
         self.actions.union_selection.setEnabled(
@@ -5768,10 +5817,51 @@ class LabelingWidget(QtWidgets.QWidget):
         elif hasattr(self, "_highlight_on") and not self._highlight_on:
             for shape in shapes:
                 shape.selected = False
-                shape.fill = False
+        # 将形状添加到画布
         self.canvas.load_shapes(shapes, replace=replace)
         self.canvas.update()
-        self.shape_list_changed.emit()
+
+    def load_shapes_at_position(self, shapes, target_pos, replace=True, update_last_label=True):
+        """
+        Load shapes and move them to the target position (mouse cursor position).
+
+        Args:
+            shapes: List of shapes to load
+            target_pos: Target position (QPointF) where shapes should be placed
+            replace: Whether to replace existing shapes
+            update_last_label: Whether to update last label
+        """
+        if not shapes:
+            return
+
+        # 计算所有形状的中心点
+        all_points = []
+        for shape in shapes:
+            all_points.extend(shape.points)
+
+        if not all_points:
+            return
+
+        # 计算原始中心点
+        sum_x = sum(p.x() for p in all_points)
+        sum_y = sum(p.y() for p in all_points)
+        center_x = sum_x / len(all_points)
+        center_y = sum_y / len(all_points)
+        original_center = QtCore.QPointF(center_x, center_y)
+
+        # 计算偏移量
+        offset = target_pos - original_center
+
+        # 移动所有形状
+        for shape in shapes:
+            new_points = []
+            for point in shape.points:
+                new_point = QtCore.QPointF(point.x() + offset.x(), point.y() + offset.y())
+                new_points.append(new_point)
+            shape.points = new_points
+
+        # 加载形状
+        self.load_shapes(shapes, replace=replace, update_last_label=update_last_label)
 
     def _update_object_manager(self):
         """Update the object manager dialog if it's visible."""
@@ -5885,24 +5975,72 @@ class LabelingWidget(QtWidgets.QWidget):
         self.set_dirty()
 
     def paste_selected_shape(self):
-        if self._config["system_clipboard"]:
-            clipboard = QtWidgets.QApplication.clipboard()
-            json_str = clipboard.text()
-            shapes = []
-            try:
-                shapeDicts = json.loads(json_str)
-                for shapeDict in shapeDicts:
-                    shapes.append(Shape().load_from_dict(shapeDict))
-            except json.JSONDecodeError as e:
-                self.error_message(
-                    self.tr("Error pasting shapes"),
-                    self.tr("Error decoding shapes: %s") % str(e),
-                )
-                return
-            self.load_shapes(shapes, replace=False)
+        # 检查配置中是否启用了虚影粘贴模式
+        # 注意：这里检查的是配置开关，而不是当前是否有虚影显示
+        # 即使按了 Ctrl+D 取消虚影，只要配置开关是启用的，仍然粘贴到鼠标位置
+        if self.canvas.smart_guides_paste_preview_enabled:
+            # 虚影粘贴模式：粘贴到鼠标位置
+            # 如果有虚影预览，使用虚影位置；否则使用当前鼠标位置
+            if self.canvas.paste_preview_mode:
+                canvas_pos = self.canvas.paste_preview_mouse_pos
+            else:
+                # 没有虚影（可能按了 Ctrl+D），使用当前鼠标位置
+                mouse_pos = self.canvas.mapFromGlobal(QtGui.QCursor.pos())
+                canvas_pos = self.canvas.transform_pos(mouse_pos)
+
+            if self._config["system_clipboard"]:
+                clipboard = QtWidgets.QApplication.clipboard()
+                json_str = clipboard.text()
+                shapes = []
+                try:
+                    shapeDicts = json.loads(json_str)
+                    for shapeDict in shapeDicts:
+                        shapes.append(Shape().load_from_dict(shapeDict))
+                except json.JSONDecodeError as e:
+                    self.error_message(
+                        self.tr("Error pasting shapes"),
+                        self.tr("Error decoding shapes: %s") % str(e),
+                    )
+                    self.canvas.disable_paste_preview()
+                    return
+                self.load_shapes_at_position(shapes, canvas_pos, replace=False)
+            else:
+                # 复制形状以避免修改原始数据
+                shapes_to_paste = [s.copy() for s in self._copied_shapes]
+                self.load_shapes_at_position(shapes_to_paste, canvas_pos, replace=False)
+
+            # 清除参考线
+            self.canvas.smart_guides_lines = []
+            self.set_dirty()
         else:
-            self.load_shapes(self._copied_shapes, replace=False)
-        self.set_dirty()
+            # 传统模式：粘贴到原始坐标位置（用于跨图片复制）
+            if self._config["system_clipboard"]:
+                clipboard = QtWidgets.QApplication.clipboard()
+                json_str = clipboard.text()
+                shapes = []
+                try:
+                    shapeDicts = json.loads(json_str)
+                    for shapeDict in shapeDicts:
+                        shapes.append(Shape().load_from_dict(shapeDict))
+                except json.JSONDecodeError as e:
+                    self.error_message(
+                        self.tr("Error pasting shapes"),
+                        self.tr("Error decoding shapes: %s") % str(e),
+                    )
+                    return
+                # 传统模式：直接加载形状到原始坐标位置
+                self.load_shapes(shapes, replace=False)
+            else:
+                # 复制形状以避免修改原始数据
+                shapes_to_paste = [s.copy() for s in self._copied_shapes]
+                # 传统模式：直接加载形状到原始坐标位置
+                self.load_shapes(shapes_to_paste, replace=False)
+            self.set_dirty()
+
+    def cancel_paste_preview(self):
+        """取消粘贴预览模式"""
+        if self.canvas.paste_preview_mode:
+            self.canvas.disable_paste_preview()
 
     def toggle_system_clipboard(self, system_clipboard):
         self._config["system_clipboard"] = system_clipboard
@@ -5916,11 +6054,17 @@ class LabelingWidget(QtWidgets.QWidget):
             clipboard.setText(
                 json.dumps([s.to_dict() for s in self.canvas.selected_shapes])
             )
+            # 只有在启用虚影粘贴模式时才启用粘贴预览
+            if self._config.get('enable_preview_paste_mode', True):
+                self.canvas.enable_paste_preview(self.canvas.selected_shapes)
         else:
             self._copied_shapes = [
                 s.copy() for s in self.canvas.selected_shapes
             ]
             self.actions.paste.setEnabled(len(self._copied_shapes) > 0)
+            # 只有在启用虚影粘贴模式时才启用粘贴预览
+            if self._config.get('enable_preview_paste_mode', True):
+                self.canvas.enable_paste_preview(self._copied_shapes)
 
 
     def update_label_visibility(self, label, is_visible):

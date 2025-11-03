@@ -12,18 +12,25 @@ from anylabeling.views.labeling.utils.colormap import label_colormap
 
 from .. import utils
 from ..shape import Shape
+from .rectangle_spacing_guide import RectangleSpacingGuide
 
 CURSOR_DEFAULT = QtCore.Qt.ArrowCursor
 CURSOR_POINT = QtCore.Qt.PointingHandCursor  # 恢复为默认，用于顶点
 CURSOR_DRAW = QtCore.Qt.CrossCursor
 CURSOR_MOVE = None   # 将在Canvas初始化时创建 - 拖拽矩形本体时
 CURSOR_GRAB = None   # 将在Canvas初始化时创建 - 接触矩形本体时
+CURSOR_RECTANGLE = None  # 将在Canvas初始化时创建 - rectangle模式专用
+CURSOR_ROTATION = None  # 将在Canvas初始化时创建 - rotation模式专用
 CURSOR_ROTATION3 = None  # 将在Canvas初始化时创建 - rotation3模式专用
+CURSOR_RECTANGLE3 = None  # 将在Canvas初始化时创建 - rectangle3模式专用
 
 # 自定义鼠标指针路径
 CUSTOM_CURSOR_GRAB_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Arrow.cur"
 CUSTOM_CURSOR_MOVE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Link.cur"
+CUSTOM_CURSOR_RECTANGLE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Move.cur"
+CUSTOM_CURSOR_ROTATION_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Hand.cur"
 CUSTOM_CURSOR_ROTATION3_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Unavailiable.cur"
+CUSTOM_CURSOR_RECTANGLE3_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Unavailiable.cur"
 
 AUTO_DECODE_DELAY_MS = 100
 MAX_AUTO_DECODE_MARKS = 42
@@ -235,6 +242,39 @@ class Canvas(
         self.path_selection_mode = False
         self.path_selection_points = []
         self.path_highlighted_shapes = set()  # Shapes highlighted during path selection
+
+        # Smart guides (智能参考线) state
+        self.smart_guides_enabled = self._config.get('smart_guides_enabled', True)  # 是否启用智能参考线
+        self.smart_guides_line_width = self._config.get('smart_guides_line_width', 2.0)  # 辅助线粗细
+        self.smart_guides_line_color = self._config.get('smart_guides_line_color', [255, 0, 255])  # 辅助线颜色 (RGB)
+        self.smart_guides_opacity = self._config.get('smart_guides_opacity', 0.8)  # 辅助线透明度 (0.0-1.0)
+        self.smart_guides_display_distance = self._config.get('smart_guides_display_distance', 100)  # 辅助线显示距离（像素）- 在此距离内才检测和显示辅助线
+        self.smart_guides_snap_distance = self._config.get('smart_guides_snap_distance', 10)  # 吸附距离（像素）- 磁铁效果，在此距离内才自动吸附
+        self.smart_guides_max_lines = self._config.get('smart_guides_max_lines', 10)  # 最大辅助线条数 - 只显示最近的N条
+
+        self.smart_guides_paste_preview_enabled = self._config.get('smart_guides_paste_preview_enabled', True)  # 是否启用虚影粘贴模式
+        self.smart_guides_lines = []  # 当前显示的参考线 [(x1, y1, x2, y2, type), ...]
+        self.smart_guides_snap_offset = None  # 吸附偏移量
+
+        # Rectangle spacing guide (矩形间距线) state
+        self.spacing_guide_enabled = self._config.get('spacing_guide_enabled', True)  # 是否启用矩形间距线
+        self.spacing_guide_selected_only = self._config.get('spacing_guide_selected_only', False)  # 是否仅对选中矩形测距
+        self.spacing_guide_line_width = self._config.get('spacing_guide_line_width', 2.0)  # 间距线粗细
+        self.spacing_guide_line_color = self._config.get('spacing_guide_line_color', [0, 255, 255])  # 间距线颜色 (RGB) - 青色
+        self.spacing_guide_opacity = self._config.get('spacing_guide_opacity', 0.8)  # 间距线透明度
+        self.spacing_guide_display_distance = self._config.get('spacing_guide_display_distance', 500)  # 间距线显示距离（默认500像素）
+        self.spacing_guide_snap_distance = self._config.get('spacing_guide_snap_distance', 10)  # 间距线吸附距离
+        self.spacing_guide_max_shapes = self._config.get('spacing_guide_max_shapes', 0)  # 最多检测的矩形数量（0表示检测所有）
+        self.spacing_guide_lines = []  # 当前显示的间距线
+        self.spacing_guide_snap_offset = None  # 间距线吸附偏移量
+
+        # Paste preview (粘贴预览) state
+        self.paste_preview_mode = False  # 是否处于粘贴预览模式
+        self.paste_preview_shapes = []  # 预览的形状列表
+        self.paste_preview_mouse_pos = None  # 鼠标位置
+        self.paste_preview_line_width = self._config.get('paste_preview_line_width', 2.0)  # 虚影线条粗细
+        self.paste_preview_line_color = self._config.get('paste_preview_line_color', [255, 0, 255])  # 虚影线条颜色 (RGB)
+        self.paste_preview_opacity = self._config.get('paste_preview_opacity', 0.4)  # 虚影透明度
         # self.line represents:
         #   - create_mode == 'polygon': edge from last point to current
         #   - create_mode == 'rectangle': diagonal line of the rectangle
@@ -435,10 +475,19 @@ class Canvas(
             raise ValueError(f"Unsupported create_mode: {value}")
         self._create_mode = value
 
-        # Set custom cursor for rotation3 mode
-        if value == "rotation3":
+        # Set custom cursor for different modes
+        if value == "rectangle":
+            self.un_highlight()
+            self.setCursor(CURSOR_RECTANGLE)
+        elif value == "rotation":
+            self.un_highlight()
+            self.setCursor(CURSOR_ROTATION)
+        elif value == "rotation3":
             self.un_highlight()
             self.setCursor(CURSOR_ROTATION3)
+        elif value == "rectangle3":
+            self.un_highlight()
+            self.setCursor(CURSOR_RECTANGLE3)
 
     def store_shapes(self):
         """Store shapes for restoring later (Undo feature)"""
@@ -872,6 +921,11 @@ class Canvas(
         except AttributeError:
             return
 
+        # Handle paste preview mode
+        if self.paste_preview_mode:
+            self.update_paste_preview_position(pos)
+            return
+
         # Handle Alt+drag selection box mode
         if self.selection_box_mode:
             self.selection_box_end = pos
@@ -914,8 +968,17 @@ class Canvas(
                 self.line.shape_type = self.create_mode
 
             if not self.current:
-                # Use rotation3 custom cursor if in rotation3 mode
-                cursor = CURSOR_ROTATION3 if self.create_mode == "rotation3" else CURSOR_DRAW
+                # Use custom cursor for different modes
+                if self.create_mode == "rectangle":
+                    cursor = CURSOR_RECTANGLE
+                elif self.create_mode == "rotation":
+                    cursor = CURSOR_ROTATION
+                elif self.create_mode == "rotation3":
+                    cursor = CURSOR_ROTATION3
+                elif self.create_mode == "rectangle3":
+                    cursor = CURSOR_RECTANGLE3
+                else:
+                    cursor = CURSOR_DRAW
                 self.override_cursor(cursor)
                 return
 
@@ -953,8 +1016,17 @@ class Canvas(
                 self.override_cursor(CURSOR_POINT)
                 self.current.highlight_vertex(0, Shape.NEAR_VERTEX)
             else:
-                # Use rotation3 custom cursor if in rotation3 mode
-                cursor = CURSOR_ROTATION3 if self.create_mode == "rotation3" else CURSOR_DRAW
+                # Use custom cursor for different modes
+                if self.create_mode == "rectangle":
+                    cursor = CURSOR_RECTANGLE
+                elif self.create_mode == "rotation":
+                    cursor = CURSOR_ROTATION
+                elif self.create_mode == "rotation3":
+                    cursor = CURSOR_ROTATION3
+                elif self.create_mode == "rectangle3":
+                    cursor = CURSOR_RECTANGLE3
+                else:
+                    cursor = CURSOR_DRAW
                 self.override_cursor(cursor)
             if self.create_mode in ["polygon", "linestrip"]:
                 self.line[0] = self.current[-1]
@@ -1695,6 +1767,11 @@ class Canvas(
                         [x for x in self.selected_shapes if x != self.h_hape]
                     )
 
+        # 清除智能参考线
+        self.smart_guides_lines = []
+        self.smart_guides_snap_offset = None
+        self.smart_guides_distances = []
+
         self.store_moving_shape()
 
     def complete_selection_box(self):
@@ -2252,6 +2329,11 @@ class Canvas(
         ):
             pos = self.intersection_point(point, pos)
 
+        # 检测智能参考线对齐（针对顶点移动）
+        snap_offset = self.detect_vertex_smart_guides(shape, index, pos)
+        if snap_offset:
+            pos = QtCore.QPointF(pos.x() + snap_offset.x(), pos.y() + snap_offset.y())
+
         if shape.shape_type == "rotation":
             sindex = (index + 2) % 4
             # Get the other 3 points after transformed
@@ -2291,8 +2373,14 @@ class Canvas(
         else:
             shape.move_vertex_by(index, pos - point)
 
-    def bounded_move_shapes(self, shapes, pos):
-        """Move shapes. Adjust position to be bounded by pixmap border"""
+    def bounded_move_shapes(self, shapes, pos, enable_snap=True):
+        """Move shapes. Adjust position to be bounded by pixmap border
+
+        Args:
+            shapes: 要移动的形状列表
+            pos: 目标位置
+            enable_snap: 是否启用吸附（磁铁效果）。False时只显示辅助线，不吸附
+        """
         shape_types = []
         for shape in shapes:
             if shape.shape_type in self.allowed_oop_shape_types:
@@ -2320,8 +2408,34 @@ class Canvas(
         # self.calculateOffsets(self.selectedShapes, pos)
         dp = pos - self.prev_point
         if dp:
+            # 先移动形状以便检测对齐
             for shape in shapes:
                 shape.move_by(dp)
+
+            # 检测智能参考线对齐（传递 enable_snap 参数）
+            snap_offset, guide_lines = self.detect_smart_guides(shapes, enable_snap=enable_snap)
+            self.smart_guides_lines = guide_lines
+
+            # 检测矩形间距线
+            if self.spacing_guide_enabled:
+                spacing_snap_offset, spacing_lines = RectangleSpacingGuide.detect_spacing_lines(
+                    shapes, self.shapes,
+                    display_distance=self.spacing_guide_display_distance,
+                    snap_distance=self.spacing_guide_snap_distance,
+                    max_shapes=self.spacing_guide_max_shapes,
+                    selected_only=self.spacing_guide_selected_only
+                )
+                self.spacing_guide_lines = spacing_lines
+                self.spacing_guide_snap_offset = spacing_snap_offset
+
+            # 如果有吸附偏移且启用了吸附，应用它
+            if enable_snap and snap_offset:
+                for shape in shapes:
+                    shape.move_by(snap_offset)
+                self.smart_guides_snap_offset = snap_offset
+            else:
+                self.smart_guides_snap_offset = None
+
             self.prev_point = pos
             return True
         return False
@@ -3645,6 +3759,49 @@ class Canvas(
         if self.path_selection_mode:
             self.draw_path_selection(p)
 
+        # Draw smart guides (智能参考线)
+        if self.smart_guides_lines:
+            self.draw_smart_guides(p)
+
+        # Detect and draw spacing guide (矩形间距线) - 检测所有矩形之间的间距
+        if self.spacing_guide_enabled and self.shapes:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"paintEvent: spacing_guide_enabled={self.spacing_guide_enabled}, shapes={len(self.shapes)}")
+
+            # 如果启用了"仅选中矩形测距"，则只对选中的矩形进行测距
+            if self.spacing_guide_selected_only:
+                selected_shapes = [s for s in self.shapes if s.selected]
+                if selected_shapes:
+                    spacing_snap_offset, spacing_lines = RectangleSpacingGuide.detect_spacing_lines(
+                        selected_shapes, self.shapes,
+                        display_distance=self.spacing_guide_display_distance,
+                        snap_distance=self.spacing_guide_snap_distance,
+                        max_shapes=self.spacing_guide_max_shapes,
+                        selected_only=True
+                    )
+                    self.spacing_guide_lines = spacing_lines
+                else:
+                    self.spacing_guide_lines = []
+            else:
+                spacing_snap_offset, spacing_lines = RectangleSpacingGuide.detect_spacing_lines(
+                    self.shapes, self.shapes,
+                    display_distance=self.spacing_guide_display_distance,
+                    snap_distance=self.spacing_guide_snap_distance,
+                    max_shapes=self.spacing_guide_max_shapes,
+                    selected_only=False
+                )
+                self.spacing_guide_lines = spacing_lines
+            logger.debug(f"paintEvent: spacing_guide_lines={len(self.spacing_guide_lines)}")
+
+        # Draw spacing guide (矩形间距线)
+        if self.spacing_guide_lines:
+            self.draw_spacing_guide(p)
+
+        # Draw paste preview (粘贴预览)
+        if self.paste_preview_mode:
+            self.draw_paste_preview(p)
+
         p.end()
 
     def draw_selection_box(self, p):
@@ -4348,10 +4505,13 @@ class Canvas(
             return min(distances, key=distances.get)
 
     def move_by_keyboard(self, offset):
-        """Move selected shapes by an offset (using keyboard)"""
+        """Move selected shapes by an offset (using keyboard)
+
+        方向键移动时禁用吸附，只显示辅助线，让用户可以自由移动
+        """
         if self.selected_shapes:
             self.bounded_move_shapes(
-                self.selected_shapes, self.prev_point + offset
+                self.selected_shapes, self.prev_point + offset, enable_snap=False
             )
             self.repaint()
             self.moving_shape = True
@@ -4707,7 +4867,7 @@ class Canvas(
 
     def _init_custom_cursors(self):
         """初始化自定义鼠标指针"""
-        global CURSOR_GRAB, CURSOR_MOVE, CURSOR_ROTATION3
+        global CURSOR_GRAB, CURSOR_MOVE, CURSOR_RECTANGLE, CURSOR_ROTATION, CURSOR_ROTATION3, CURSOR_RECTANGLE3
 
         try:
             # 创建自定义接触矩形指针
@@ -4724,8 +4884,909 @@ class Canvas(
             CURSOR_MOVE = QtCore.Qt.ClosedHandCursor
 
         try:
+            # 创建自定义rectangle指针
+            CURSOR_RECTANGLE = QtGui.QCursor(QtGui.QPixmap(CUSTOM_CURSOR_RECTANGLE_PATH))
+        except Exception:
+            # 如果自定义指针文件不存在，回退到十字指针
+            CURSOR_RECTANGLE = QtCore.Qt.CrossCursor
+
+        try:
+            # 创建自定义rotation指针
+            CURSOR_ROTATION = QtGui.QCursor(QtGui.QPixmap(CUSTOM_CURSOR_ROTATION_PATH))
+        except Exception:
+            # 如果自定义指针文件不存在，回退到十字指针
+            CURSOR_ROTATION = QtCore.Qt.CrossCursor
+
+        try:
             # 创建自定义rotation3指针
             CURSOR_ROTATION3 = QtGui.QCursor(QtGui.QPixmap(CUSTOM_CURSOR_ROTATION3_PATH))
         except Exception:
             # 如果自定义指针文件不存在，回退到十字指针
             CURSOR_ROTATION3 = QtCore.Qt.CrossCursor
+
+        try:
+            # 创建自定义rectangle3指针
+            CURSOR_RECTANGLE3 = QtGui.QCursor(QtGui.QPixmap(CUSTOM_CURSOR_RECTANGLE3_PATH))
+        except Exception:
+            # 如果自定义指针文件不存在，回退到十字指针
+            CURSOR_RECTANGLE3 = QtCore.Qt.CrossCursor
+
+    def get_shape_edges(self, shape):
+        """
+        获取形状的边（支持旋转矩形和普通矩形）
+
+        Args:
+            shape: Shape对象
+
+        Returns:
+            list: 边的列表，每条边为 (p1, p2, edge_type)
+                  p1, p2 是 QPointF 端点
+                  edge_type 是边的类型标识（'left', 'right', 'top', 'bottom'）
+        """
+        edges = []
+
+        if shape.shape_type in ['rotation', 'rotation3'] and len(shape.points) >= 4:
+            # 旋转矩形：4个顶点定义4条边
+            points = shape.points[:4]
+            edge_types = ['top', 'right', 'bottom', 'left']
+
+            for i in range(4):
+                p1 = points[i]
+                p2 = points[(i + 1) % 4]
+                edges.append((p1, p2, edge_types[i]))
+
+        elif shape.shape_type == 'rectangle' and len(shape.points) >= 4:
+            # 🔥 关键修复：支持普通矩形
+            # 普通矩形的4个顶点：左上、右上、右下、左下
+            points = shape.points[:4]
+            edge_types = ['top', 'right', 'bottom', 'left']
+
+            for i in range(4):
+                p1 = points[i]
+                p2 = points[(i + 1) % 4]
+                edges.append((p1, p2, edge_types[i]))
+
+        return edges
+
+    def point_to_line_distance(self, point, line_p1, line_p2):
+        """
+        计算点到直线的垂直距离（支持倾斜线）
+
+        Args:
+            point: QPointF - 要计算距离的点
+            line_p1, line_p2: QPointF - 直线的两个端点
+
+        Returns:
+            float: 点到直线的垂直距离
+        """
+        # 向量 AB (line_p1 -> line_p2)
+        dx = line_p2.x() - line_p1.x()
+        dy = line_p2.y() - line_p1.y()
+
+        # 线段长度
+        line_length = math.sqrt(dx * dx + dy * dy)
+        if line_length < 1e-6:
+            # 退化为点
+            return math.sqrt((point.x() - line_p1.x())**2 + (point.y() - line_p1.y())**2)
+
+        # 向量 AP (line_p1 -> point)
+        px = point.x() - line_p1.x()
+        py = point.y() - line_p1.y()
+
+        # 叉积的绝对值 / 线段长度 = 垂直距离
+        cross = abs(dx * py - dy * px)
+        return cross / line_length
+
+    def are_lines_parallel(self, line1_p1, line1_p2, line2_p1, line2_p2, angle_threshold=5.0):
+        """
+        判断两条线段是否平行（角度差小于阈值）
+
+        Args:
+            line1_p1, line1_p2: QPointF - 第一条线的端点
+            line2_p1, line2_p2: QPointF - 第二条线的端点
+            angle_threshold: float - 角度差阈值（度数）
+
+        Returns:
+            bool: 是否平行
+        """
+        # 计算两条线的角度
+        angle1 = math.atan2(line1_p2.y() - line1_p1.y(), line1_p2.x() - line1_p1.x())
+        angle2 = math.atan2(line2_p2.y() - line2_p1.y(), line2_p2.x() - line2_p1.x())
+
+        # 角度差（归一化到 [-π, π]）
+        angle_diff = abs(angle1 - angle2)
+        angle_diff = min(angle_diff, 2 * math.pi - angle_diff)
+
+        # 转换为度数
+        angle_diff_deg = math.degrees(angle_diff)
+
+        # 平行：角度差接近0° 或 180°
+        return angle_diff_deg < angle_threshold or abs(angle_diff_deg - 180) < angle_threshold
+
+    def get_perpendicular_foot(self, point, line_p1, line_p2):
+        """
+        计算点到直线的垂足
+
+        Args:
+            point: QPointF - 要计算垂足的点
+            line_p1, line_p2: QPointF - 直线的两个端点
+
+        Returns:
+            QPointF: 垂足坐标
+        """
+        # 向量 AB (line_p1 -> line_p2)
+        dx = line_p2.x() - line_p1.x()
+        dy = line_p2.y() - line_p1.y()
+
+        # 线段长度平方
+        line_length_sq = dx * dx + dy * dy
+        if line_length_sq < 1e-6:
+            # 退化为点
+            return QtCore.QPointF(line_p1.x(), line_p1.y())
+
+        # 向量 AP (line_p1 -> point)
+        px = point.x() - line_p1.x()
+        py = point.y() - line_p1.y()
+
+        # 投影参数 t = (AP · AB) / |AB|²
+        t = (px * dx + py * dy) / line_length_sq
+
+        # 垂足坐标 = A + t * AB
+        foot_x = line_p1.x() + t * dx
+        foot_y = line_p1.y() + t * dy
+
+        return QtCore.QPointF(foot_x, foot_y)
+
+    def is_point_inside_shape(self, point, shape):
+        """
+        判断点是否在形状内部
+
+        Args:
+            point: QPointF - 要检查的点
+            shape: Shape对象
+
+        Returns:
+            bool: 是否在形状内部
+        """
+        if not shape.points or len(shape.points) < 3:
+            return False
+
+        # 使用射线法判断点是否在多边形内部
+        x, y = point.x(), point.y()
+        n = len(shape.points)
+        inside = False
+
+        p1x, p1y = shape.points[0].x(), shape.points[0].y()
+        for i in range(1, n + 1):
+            p2x, p2y = shape.points[i % n].x(), shape.points[i % n].y()
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+
+        return inside
+
+    def is_shape_axis_aligned(self, shape, angle_threshold=5.0):
+        """
+        判断旋转矩形是否接近水平/垂直（轴对齐）
+
+        Args:
+            shape: Shape对象
+            angle_threshold: float - 角度阈值（度数）
+
+        Returns:
+            bool: 是否接近水平/垂直
+        """
+        if shape.shape_type not in ['rotation', 'rotation3']:
+            return True  # 普通矩形总是轴对齐
+
+        if not hasattr(shape, 'direction') or shape.direction is None:
+            return True
+
+        # 获取旋转角度（弧度）
+        angle_rad = shape.direction
+        # 转换为度数
+        angle_deg = math.degrees(angle_rad)
+        # 归一化到 [0, 90)
+        angle_deg = abs(angle_deg) % 90
+
+        # 检查是否接近 0° 或 90°
+        return angle_deg < angle_threshold or angle_deg > (90 - angle_threshold)
+
+    def detect_smart_guides(self, moving_shapes, force_enable=False, enable_snap=True):
+        """
+        检测智能参考线对齐
+
+        Args:
+            moving_shapes: 正在移动的形状列表
+            force_enable: 强制启用（用于虚影模式，不受 smart_guides_enabled 限制）
+            enable_snap: 是否启用吸附（磁铁效果）。False时只显示辅助线，不吸附
+
+        Returns:
+            tuple: (snap_offset, guide_lines)
+                snap_offset: 吸附偏移量 QPointF，如果没有吸附则为None
+                guide_lines: 参考线列表 [(x1, y1, x2, y2, type), ...]
+        """
+        # 虚影模式下强制启用，或者检查智能辅助线是否启用
+        if not force_enable and not self.smart_guides_enabled:
+            return None, []
+
+        if not moving_shapes:
+            return None, []
+
+        # 计算移动形状的边界
+        moving_rects = []
+        for shape in moving_shapes:
+            rect = shape.bounding_rect()
+            moving_rects.append({
+                'left': rect.left(),
+                'right': rect.right(),
+                'top': rect.top(),
+                'bottom': rect.bottom(),
+                'center_x': rect.center().x(),
+                'center_y': rect.center().y(),
+            })
+
+        # 获取所有移动形状的整体边界
+        all_left = min(r['left'] for r in moving_rects)
+        all_right = max(r['right'] for r in moving_rects)
+        all_top = min(r['top'] for r in moving_rects)
+        all_bottom = max(r['bottom'] for r in moving_rects)
+        all_center_x = (all_left + all_right) / 2
+        all_center_y = (all_top + all_bottom) / 2
+
+        # 检测与其他形状的对齐
+        guide_lines_with_dist = []  # 存储 (distance, line_data) 用于排序
+        snap_x = None
+        snap_y = None
+        min_dist_x = self.smart_guides_snap_distance  # 吸附距离
+        min_dist_y = self.smart_guides_snap_distance  # 吸附距离
+
+        # 用于去重的字典（避免在同一位置绘制多条线）
+        # key: position, value: distance
+        h_line_positions = {}  # 水平线的 y 坐标 -> 距离
+        v_line_positions = {}  # 垂直线的 x 坐标 -> 距离
+
+        # 用于存储倾斜辅助线（旋转矩形的边）
+        # key: (p1, p2) 线段端点元组, value: (distance, edge_type)
+        rotated_lines = {}
+
+        # 🎯 检查移动的形状是否为倾斜的旋转矩形
+        # 如果是倾斜的旋转矩形，只检测边对边的倾斜辅助线，不检测水平/垂直辅助线
+        is_tilted_rotation = False
+        for moving_shape in moving_shapes:
+            if moving_shape.shape_type in ['rotation', 'rotation3']:
+                # 获取旋转角度（弧度）
+                angle_rad = getattr(moving_shape, 'direction', 0)
+                # 转换为度数
+                angle_deg = math.degrees(angle_rad) % 360
+
+                # 检查是否为倾斜角度（不是 0°/90°/180°/270°）
+                # 允许 ±5° 的误差
+                angle_threshold = 5.0
+                is_horizontal_angle = (
+                    abs(angle_deg) < angle_threshold or
+                    abs(angle_deg - 90) < angle_threshold or
+                    abs(angle_deg - 180) < angle_threshold or
+                    abs(angle_deg - 270) < angle_threshold or
+                    abs(angle_deg - 360) < angle_threshold
+                )
+
+                if not is_horizontal_angle:
+                    is_tilted_rotation = True
+                    break
+
+        for shape in self.shapes:
+            if shape in moving_shapes or not self.is_visible(shape):
+                continue
+
+            rect = shape.bounding_rect()
+            target = {
+                'left': rect.left(),
+                'right': rect.right(),
+                'top': rect.top(),
+                'bottom': rect.bottom(),
+                'center_x': rect.center().x(),
+                'center_y': rect.center().y(),
+            }
+
+            # 🎯 检查目标矩形是否为倾斜的旋转矩形
+            target_is_tilted_rotation = False
+            if shape.shape_type in ['rotation', 'rotation3']:
+                angle_rad = getattr(shape, 'direction', 0)
+                angle_deg = math.degrees(angle_rad) % 360
+                angle_threshold = 5.0
+                is_horizontal_angle = (
+                    abs(angle_deg) < angle_threshold or
+                    abs(angle_deg - 90) < angle_threshold or
+                    abs(angle_deg - 180) < angle_threshold or
+                    abs(angle_deg - 270) < angle_threshold or
+                    abs(angle_deg - 360) < angle_threshold
+                )
+                target_is_tilted_rotation = not is_horizontal_angle
+
+            # 🎯 只有在非倾斜旋转矩形时才检测水平/垂直辅助线
+            # 并且目标矩形也不能是倾斜的旋转矩形
+            if not is_tilted_rotation and not target_is_tilted_rotation:
+                # 检测水平对齐（相同边 + 交叉边）
+                h_alignments = [
+                    # 相同边对齐
+                    ('left', all_left, target['left']),
+                    ('right', all_right, target['right']),
+                    ('center_x', all_center_x, target['center_x']),
+                    # 交叉边对齐（PS 风格）
+                    ('left_to_right', all_left, target['right']),   # 移动矩形的左边 对齐 目标矩形的右边
+                    ('right_to_left', all_right, target['left']),   # 移动矩形的右边 对齐 目标矩形的左边
+                ]
+
+                for align_type, moving_pos, target_pos in h_alignments:
+                    dist = abs(moving_pos - target_pos)
+
+                    # 辅助线显示：在显示距离内就显示
+                    if dist <= self.smart_guides_display_distance:
+                        # 添加垂直参考线（去重，保留距离最近的）
+                        if target_pos not in v_line_positions or dist < v_line_positions[target_pos]:
+                            v_line_positions[target_pos] = dist
+
+                    # 吸附功能：只在吸附距离内才吸附
+                    if enable_snap and dist <= self.smart_guides_snap_distance:
+                        if dist < min_dist_x:
+                            min_dist_x = dist
+                            snap_x = target_pos - moving_pos
+
+                # 检测垂直对齐（相同边 + 交叉边）
+                v_alignments = [
+                    # 相同边对齐
+                    ('top', all_top, target['top']),
+                    ('bottom', all_bottom, target['bottom']),
+                    ('center_y', all_center_y, target['center_y']),
+                    # 交叉边对齐（PS 风格）
+                    ('top_to_bottom', all_top, target['bottom']),   # 移动矩形的顶边 对齐 目标矩形的底边
+                    ('bottom_to_top', all_bottom, target['top']),   # 移动矩形的底边 对齐 目标矩形的顶边
+                ]
+
+                for align_type, moving_pos, target_pos in v_alignments:
+                    dist = abs(moving_pos - target_pos)
+
+                    # 辅助线显示：在显示距离内就显示
+                    if dist <= self.smart_guides_display_distance:
+                        # 添加水平参考线（去重，保留距离最近的）
+                        if target_pos not in h_line_positions or dist < h_line_positions[target_pos]:
+                            h_line_positions[target_pos] = dist
+
+                    # 吸附功能：只在吸附距离内才吸附
+                    if enable_snap and dist <= self.smart_guides_snap_distance:
+                        if dist < min_dist_y:
+                            min_dist_y = dist
+                            snap_y = target_pos - moving_pos
+
+            # 🎯 只有在倾斜旋转矩形时才检测边对边的倾斜辅助线
+            if is_tilted_rotation and shape.shape_type in ['rotation', 'rotation3']:
+                target_edges = self.get_shape_edges(shape)
+
+                # 遍历移动形状的边
+                for moving_shape in moving_shapes:
+                    if moving_shape.shape_type not in ['rotation', 'rotation3']:
+                        continue
+
+                    moving_edges = self.get_shape_edges(moving_shape)
+
+                    # 检测每条移动边与目标边的平行对齐
+                    for moving_p1, moving_p2, moving_edge_type in moving_edges:
+                        for target_p1, target_p2, target_edge_type in target_edges:
+                            # 检查是否平行
+                            if not self.are_lines_parallel(moving_p1, moving_p2, target_p1, target_p2):
+                                continue
+
+                            # 计算移动边的中点到目标边的距离
+                            moving_mid = QtCore.QPointF(
+                                (moving_p1.x() + moving_p2.x()) / 2,
+                                (moving_p1.y() + moving_p2.y()) / 2
+                            )
+                            dist = self.point_to_line_distance(moving_mid, target_p1, target_p2)
+
+                            # 辅助线显示：在显示距离内就显示
+                            if dist <= self.smart_guides_display_distance:
+                                # 使用线段的哈希键（避免重复）
+                                line_key = (
+                                    round(target_p1.x(), 1), round(target_p1.y(), 1),
+                                    round(target_p2.x(), 1), round(target_p2.y(), 1)
+                                )
+
+                                if line_key not in rotated_lines or dist < rotated_lines[line_key][0]:
+                                    rotated_lines[line_key] = (dist, target_edge_type)
+
+        # 将辅助线按距离排序，只保留最近的N条
+        for pos, dist in v_line_positions.items():
+            guide_lines_with_dist.append((dist, (pos, 0, pos, self.pixmap.height() if self.pixmap else 10000, 'vertical')))
+
+        for pos, dist in h_line_positions.items():
+            guide_lines_with_dist.append((dist, (0, pos, self.pixmap.width() if self.pixmap else 10000, pos, 'horizontal')))
+
+        # 🎯 新增：添加旋转矩形的倾斜辅助线
+        for line_key, (dist, edge_type) in rotated_lines.items():
+            x1, y1, x2, y2 = line_key
+            # 延长线段以覆盖整个画布（可选）
+            # 这里直接使用原始线段端点
+            guide_lines_with_dist.append((dist, (x1, y1, x2, y2, f'rotated_{edge_type}')))
+
+        # 按距离排序并限制数量
+        guide_lines_with_dist.sort(key=lambda x: x[0])
+        guide_lines = [line_data for dist, line_data in guide_lines_with_dist[:self.smart_guides_max_lines]]
+
+        # 计算吸附偏移量
+        snap_offset = None
+        if snap_x is not None or snap_y is not None:
+            snap_offset = QtCore.QPointF(snap_x if snap_x is not None else 0, snap_y if snap_y is not None else 0)
+
+        return snap_offset, guide_lines
+
+    def detect_vertex_smart_guides(self, shape, vertex_index, new_pos):
+        """
+        检测顶点移动时的智能参考线对齐
+
+        Args:
+            shape: 正在调整的形状
+            vertex_index: 正在移动的顶点索引
+            new_pos: 顶点的新位置
+
+        Returns:
+            QPointF: 吸附偏移量，如果没有吸附则为None
+        """
+        if not self.smart_guides_enabled:
+            return None
+
+        # 创建临时形状副本，应用新的顶点位置
+        temp_shape = shape.copy()
+        old_point = temp_shape[vertex_index]
+        shift = new_pos - old_point
+
+        # 根据形状类型调整顶点
+        if temp_shape.shape_type == "rectangle":
+            temp_shape.move_vertex_by(vertex_index, shift)
+            left_index = (vertex_index + 1) % 4
+            right_index = (vertex_index + 3) % 4
+            if vertex_index % 2 == 0:
+                right_shift = QtCore.QPointF(shift.x(), 0)
+                left_shift = QtCore.QPointF(0, shift.y())
+            else:
+                left_shift = QtCore.QPointF(shift.x(), 0)
+                right_shift = QtCore.QPointF(0, shift.y())
+            temp_shape.move_vertex_by(right_index, right_shift)
+            temp_shape.move_vertex_by(left_index, left_shift)
+        else:
+            temp_shape.move_vertex_by(vertex_index, shift)
+
+        # 获取调整后的边界
+        rect = temp_shape.bounding_rect()
+        moving_bounds = {
+            'left': rect.left(),
+            'right': rect.right(),
+            'top': rect.top(),
+            'bottom': rect.bottom(),
+            'center_x': rect.center().x(),
+            'center_y': rect.center().y(),
+        }
+
+        # 检测与其他形状的对齐
+        guide_lines = []
+        snap_x = None
+        snap_y = None
+        min_dist_x = self.smart_guides_align_distance
+        min_dist_y = self.smart_guides_align_distance
+
+        for other_shape in self.shapes:
+            if other_shape == shape or not self.is_visible(other_shape):
+                continue
+
+            other_rect = other_shape.bounding_rect()
+            target = {
+                'left': other_rect.left(),
+                'right': other_rect.right(),
+                'top': other_rect.top(),
+                'bottom': other_rect.bottom(),
+                'center_x': other_rect.center().x(),
+                'center_y': other_rect.center().y(),
+            }
+
+            # 检测水平对齐
+            h_alignments = [
+                ('left', moving_bounds['left'], target['left']),
+                ('right', moving_bounds['right'], target['right']),
+                ('center_x', moving_bounds['center_x'], target['center_x']),
+            ]
+
+            for align_type, moving_pos, target_pos in h_alignments:
+                dist = abs(moving_pos - target_pos)
+                if dist < min_dist_x:
+                    min_dist_x = dist
+                    snap_x = target_pos - moving_pos
+                    # 添加垂直参考线
+                    guide_lines = [gl for gl in guide_lines if gl[4] != 'vertical']
+                    guide_lines.append((target_pos, 0, target_pos, self.pixmap.height() if self.pixmap else 10000, 'vertical'))
+
+            # 检测垂直对齐
+            v_alignments = [
+                ('top', moving_bounds['top'], target['top']),
+                ('bottom', moving_bounds['bottom'], target['bottom']),
+                ('center_y', moving_bounds['center_y'], target['center_y']),
+            ]
+
+            for align_type, moving_pos, target_pos in v_alignments:
+                dist = abs(moving_pos - target_pos)
+                if dist < min_dist_y:
+                    min_dist_y = dist
+                    snap_y = target_pos - moving_pos
+                    # 添加水平参考线
+                    guide_lines = [gl for gl in guide_lines if gl[4] != 'horizontal']
+                    guide_lines.append((0, target_pos, self.pixmap.width() if self.pixmap else 10000, target_pos, 'horizontal'))
+
+        # 更新参考线
+        self.smart_guides_lines = guide_lines
+
+        # 计算吸附偏移量
+        snap_offset = None
+        if snap_x is not None or snap_y is not None:
+            snap_offset = QtCore.QPointF(snap_x if snap_x is not None else 0, snap_y if snap_y is not None else 0)
+
+        return snap_offset
+
+    def extend_line_to_canvas(self, x1, y1, x2, y2):
+        """
+        延长线段到画布边界
+
+        Args:
+            x1, y1, x2, y2: 线段的两个端点
+
+        Returns:
+            tuple: (new_x1, new_y1, new_x2, new_y2) 延长后的端点
+        """
+        canvas_width = self.pixmap.width() if self.pixmap else 10000
+        canvas_height = self.pixmap.height() if self.pixmap else 10000
+
+        # 计算线段的方向向量
+        dx = x2 - x1
+        dy = y2 - y1
+
+        # 避免除零
+        if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+            return x1, y1, x2, y2
+
+        # 计算线段与画布边界的交点
+        # 使用参数方程：P = P1 + t * (P2 - P1)
+        t_values = []
+
+        # 左边界 (x = 0)
+        if abs(dx) > 1e-6:
+            t = -x1 / dx
+            t_values.append(t)
+
+        # 右边界 (x = canvas_width)
+        if abs(dx) > 1e-6:
+            t = (canvas_width - x1) / dx
+            t_values.append(t)
+
+        # 上边界 (y = 0)
+        if abs(dy) > 1e-6:
+            t = -y1 / dy
+            t_values.append(t)
+
+        # 下边界 (y = canvas_height)
+        if abs(dy) > 1e-6:
+            t = (canvas_height - y1) / dy
+            t_values.append(t)
+
+        # 过滤有效的 t 值（在画布范围内）
+        valid_points = []
+        for t in t_values:
+            px = x1 + t * dx
+            py = y1 + t * dy
+            if -1 <= px <= canvas_width + 1 and -1 <= py <= canvas_height + 1:
+                valid_points.append((px, py))
+
+        # 如果找到至少2个交点，使用最远的两个
+        if len(valid_points) >= 2:
+            # 按距离排序
+            valid_points.sort(key=lambda p: (p[0] - x1)**2 + (p[1] - y1)**2)
+            return valid_points[0][0], valid_points[0][1], valid_points[-1][0], valid_points[-1][1]
+
+        # 否则返回原始线段
+        return x1, y1, x2, y2
+
+    def draw_smart_guides(self, p):
+        """
+        绘制智能参考线
+
+        Args:
+            p: QPainter对象
+        """
+        # 如果没有辅助线，直接返回
+        if not self.smart_guides_lines:
+            return
+
+        # 虚影模式下，辅助线独立于画布辅助线开关
+        # 画布模式下，检查辅助线开关
+        if not self.paste_preview_mode and not self.smart_guides_enabled:
+            return
+
+        # 设置参考线样式：使用配置的颜色和透明度
+        # 从配置中获取颜色 (RGB)
+        r, g, b = self.smart_guides_line_color[:3]
+        # 计算透明度 (0.0-1.0 转换为 0-255)
+        alpha = int(self.smart_guides_opacity * 255)
+        pen = QtGui.QPen(QtGui.QColor(r, g, b, alpha))
+        pen.setWidth(max(1, int(round(self.smart_guides_line_width / Shape.scale))))
+        pen.setStyle(QtCore.Qt.DashLine)
+        p.setPen(pen)
+
+        # 绘制所有参考线
+        for line in self.smart_guides_lines:
+            x1, y1, x2, y2, line_type = line
+
+            # 🎯 对于倾斜线（旋转矩形的边），延长到画布边界
+            if line_type.startswith('rotated_'):
+                x1, y1, x2, y2 = self.extend_line_to_canvas(x1, y1, x2, y2)
+
+            p.drawLine(QtCore.QPointF(x1, y1), QtCore.QPointF(x2, y2))
+
+    def draw_spacing_guide(self, p):
+        """
+        绘制矩形间距线和距离数值 (Photoshop 风格)
+
+        Args:
+            p: QPainter对象
+        """
+        # 如果没有间距线或未启用，直接返回
+        if not self.spacing_guide_lines or not self.spacing_guide_enabled:
+            return
+
+        # 设置间距线样式
+        r, g, b = self.spacing_guide_line_color[:3]
+        alpha = int(self.spacing_guide_opacity * 255)
+
+        # 调试日志
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"draw_spacing_guide: drawing {len(self.spacing_guide_lines)} spacing lines")
+
+        # 绘制所有间距线
+        for line_data in self.spacing_guide_lines:
+            if isinstance(line_data, dict):
+                x1 = line_data.get('x1', 0)
+                y1 = line_data.get('y1', 0)
+                x2 = line_data.get('x2', 0)
+                y2 = line_data.get('y2', 0)
+                distance = line_data.get('distance', 0)
+                line_type = line_data.get('type', 'horizontal')
+
+                # 绘制间距线
+                pen = QtGui.QPen(QtGui.QColor(r, g, b, alpha))
+                pen.setWidth(max(1, int(round(self.spacing_guide_line_width / Shape.scale))))
+                pen.setStyle(QtCore.Qt.SolidLine)
+                p.setPen(pen)
+                p.drawLine(QtCore.QPointF(x1, y1), QtCore.QPointF(x2, y2))
+
+                # 计算线的中点
+                mid_x = (x1 + x2) / 2
+                mid_y = (y1 + y2) / 2
+
+                # 只有当距离 >= 0 时才绘制距离数值
+                if distance >= 0:
+                    # 绘制距离数值（小数点后2位）
+                    distance_text = f"{distance:.2f}"
+
+                    # 设置文字样式
+                    font = QtGui.QFont()
+                    font.setPointSize(max(1, int(10 / self.scale)))
+                    font.setBold(True)
+                    p.setFont(font)
+
+                    # 绘制文字背景（半透明矩形）
+                    metrics = QtGui.QFontMetrics(font)
+                    text_rect = metrics.boundingRect(distance_text)
+                    bg_padding = 3 / self.scale
+                    bg_rect = QtCore.QRectF(
+                        mid_x - text_rect.width() / 2 - bg_padding,
+                        mid_y - text_rect.height() / 2 - bg_padding,
+                        text_rect.width() + 2 * bg_padding,
+                        text_rect.height() + 2 * bg_padding
+                    )
+
+                    # 绘制背景（半透明黑色）
+                    bg_color = QtGui.QColor(0, 0, 0, 150)
+                    p.fillRect(bg_rect, bg_color)
+
+                    # 绘制文字
+                    text_color = QtGui.QColor(r, g, b, 255)
+                    p.setPen(text_color)
+                    # 使用 QRectF 来绘制文字，确保文字在正确的位置
+                    text_draw_rect = QtCore.QRectF(
+                        mid_x - text_rect.width() / 2,
+                        mid_y - text_rect.height() / 2,
+                        text_rect.width(),
+                        text_rect.height()
+                    )
+                    p.drawText(text_draw_rect, QtCore.Qt.AlignCenter, distance_text)
+
+    def enable_paste_preview(self, shapes):
+        """
+        启用粘贴预览模式
+
+        Args:
+            shapes: 要预览的形状列表
+        """
+        self.paste_preview_mode = True
+        self.paste_preview_shapes = [s.copy() for s in shapes]
+        # 获取当前鼠标位置
+        mouse_pos = self.mapFromGlobal(QtGui.QCursor.pos())
+        self.paste_preview_mouse_pos = self.transform_pos(mouse_pos)
+        self.update()
+
+    def disable_paste_preview(self):
+        """
+        禁用粘贴预览模式
+        """
+        self.paste_preview_mode = False
+        self.paste_preview_shapes = []
+        self.paste_preview_mouse_pos = None
+        self.smart_guides_lines = []
+        self.smart_guides_distances = []
+        self.update()
+
+    def update_paste_preview_position(self, canvas_pos):
+        """
+        更新粘贴预览的位置
+
+        Args:
+            canvas_pos: 画布坐标
+        """
+        if not self.paste_preview_mode:
+            return
+
+        # 计算原始形状的中心点
+        all_points = []
+        for shape in self.paste_preview_shapes:
+            all_points.extend(shape.points)
+
+        if not all_points:
+            return
+
+        sum_x = sum(pt.x() for pt in all_points)
+        sum_y = sum(pt.y() for pt in all_points)
+        original_center = QtCore.QPointF(sum_x / len(all_points), sum_y / len(all_points))
+
+        # 计算偏移量
+        offset = canvas_pos - original_center
+
+        # 创建临时形状副本并移动到目标位置
+        temp_shapes = []
+        for shape in self.paste_preview_shapes:
+            temp_shape = shape.copy()
+            new_points = []
+            for point in temp_shape.points:
+                new_point = QtCore.QPointF(point.x() + offset.x(), point.y() + offset.y())
+                new_points.append(new_point)
+            temp_shape.points = new_points
+            temp_shapes.append(temp_shape)
+
+        # 虚影模式下的辅助线独立于画布辅助线的开关
+        # 虚影辅助线始终显示（只要处于虚影模式）
+        # 使用 force_enable=True 强制启用辅助线检测（绕过画布辅助线开关）
+        snap_offset, guide_lines = self.detect_smart_guides(temp_shapes, force_enable=True)
+        self.smart_guides_lines = guide_lines
+
+        # 虚影模式下的间距线
+        if self.spacing_guide_enabled:
+            spacing_snap_offset, spacing_lines = RectangleSpacingGuide.detect_spacing_lines(
+                temp_shapes, self.shapes,
+                display_distance=self.spacing_guide_display_distance,
+                snap_distance=self.spacing_guide_snap_distance,
+                max_shapes=self.spacing_guide_max_shapes,
+                selected_only=self.spacing_guide_selected_only
+            )
+            self.spacing_guide_lines = spacing_lines
+
+        # 如果有吸附偏移，应用它
+        if snap_offset:
+            self.paste_preview_mouse_pos = QtCore.QPointF(
+                canvas_pos.x() + snap_offset.x(),
+                canvas_pos.y() + snap_offset.y()
+            )
+        else:
+            self.paste_preview_mouse_pos = canvas_pos
+
+        self.update()
+
+    def draw_paste_preview(self, p):
+        """
+        绘制粘贴预览（半透明虚影）
+
+        Args:
+            p: QPainter对象
+        """
+        if not self.paste_preview_mode or not self.paste_preview_shapes or not self.paste_preview_mouse_pos:
+            return
+
+        # 计算原始形状的中心点
+        all_points = []
+        for shape in self.paste_preview_shapes:
+            all_points.extend(shape.points)
+
+        if not all_points:
+            return
+
+        sum_x = sum(pt.x() for pt in all_points)
+        sum_y = sum(pt.y() for pt in all_points)
+        original_center = QtCore.QPointF(sum_x / len(all_points), sum_y / len(all_points))
+
+        # 计算偏移量
+        offset = self.paste_preview_mouse_pos - original_center
+
+        # 绘制每个形状的预览
+        for shape in self.paste_preview_shapes:
+            # 创建临时形状副本并移动到预览位置
+            preview_shape = shape.copy()
+            new_points = []
+            for point in preview_shape.points:
+                new_point = QtCore.QPointF(point.x() + offset.x(), point.y() + offset.y())
+                new_points.append(new_point)
+            preview_shape.points = new_points
+
+            # 设置半透明样式
+            preview_shape.fill = True
+            preview_shape.selected = False
+
+            # 绘制形状（半透明）
+            # 保存原始透明度
+            p.save()
+            p.setOpacity(self.paste_preview_opacity)  # 使用配置的透明度
+
+            # 绘制填充
+            if preview_shape.fill:
+                color = preview_shape.fill_color
+                p.setBrush(QtGui.QBrush(color))
+            else:
+                p.setBrush(QtCore.Qt.NoBrush)
+
+            # 绘制边框 - 使用配置的虚影线条颜色和粗细
+            line_color = QtGui.QColor(*self.paste_preview_line_color)
+            pen = QtGui.QPen(line_color)
+            pen.setWidth(max(1, int(round(self.paste_preview_line_width / Shape.scale))))
+            pen.setStyle(QtCore.Qt.DashLine)  # 虚线
+            p.setPen(pen)
+
+            # 绘制形状路径
+            if preview_shape.shape_type == "rectangle":
+                # 绘制矩形
+                if len(preview_shape.points) >= 4:
+                    path = QtGui.QPainterPath()
+                    path.moveTo(preview_shape.points[0])
+                    for point in preview_shape.points[1:]:
+                        path.lineTo(point)
+                    path.closeSubpath()
+                    p.drawPath(path)
+            elif preview_shape.shape_type == "rotation":
+                # 绘制旋转矩形
+                if len(preview_shape.points) >= 4:
+                    path = QtGui.QPainterPath()
+                    path.moveTo(preview_shape.points[0])
+                    for point in preview_shape.points[1:]:
+                        path.lineTo(point)
+                    path.closeSubpath()
+                    p.drawPath(path)
+            else:
+                # 其他形状类型
+                if len(preview_shape.points) >= 2:
+                    path = QtGui.QPainterPath()
+                    path.moveTo(preview_shape.points[0])
+                    for point in preview_shape.points[1:]:
+                        path.lineTo(point)
+                    if preview_shape.shape_type in ["polygon"]:
+                        path.closeSubpath()
+                    p.drawPath(path)
+
+            p.restore()

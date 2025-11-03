@@ -36,6 +36,7 @@ from .angle_correction_dialog import AngleCorrectionDialog
 from .alignment_dialog import AlignmentDialog
 from .keymap_dialog import KeymapDialog
 from .color_manager_dialog import ColorManagerDialog
+from .smart_guides_dialog import SmartGuidesDialog
 from .shortcut_manager_dialog import ShortcutManagerDialog
 from .segmentation_dialog import SegmentationDialog
 from .wheel_settings_dialog import WheelSettingsDialog
@@ -80,6 +81,7 @@ __all__ = [
     "AlignmentDialog",
     "KeymapDialog",
     "ColorManagerDialog",
+    "SmartGuidesDialog",
     "ShortcutManagerDialog",
     "SegmentationDialog",
     "Rectangle3WidthDialog",

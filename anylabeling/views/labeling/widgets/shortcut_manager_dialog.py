@@ -99,7 +99,7 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
                 ("edit_polygon", self.tr("编辑多边形")),
                 ("copy_polygon", self.tr("复制标注")),
                 ("paste_polygon", self.tr("粘贴标注")),
-                ("duplicate_polygon", self.tr("复制标注")),
+                ("cancel_paste_preview", self.tr("取消粘贴预览")),
                 ("delete_polygon", self.tr("删除标注")),
                 ("undo", self.tr("撤销")),
                 ("undo_last_point", self.tr("撤销最后一个点")),

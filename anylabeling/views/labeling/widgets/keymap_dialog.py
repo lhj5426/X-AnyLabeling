@@ -17,7 +17,8 @@ class KeymapDialog(QtWidgets.QDialog):
             & ~QtCore.Qt.WindowContextHelpButtonHint
             | QtCore.Qt.WindowMinimizeButtonHint
         )
-        # self.setModal(True) # Removed
+        # Non-modal (non-blocking) window
+        self.setModal(False)
         self.setMinimumWidth(500)
 
         self.direction_actions = {
@@ -51,6 +52,7 @@ class KeymapDialog(QtWidgets.QDialog):
 
         self.combos = {"direction": {}, "zxcv": {}}
         self.line_edits = {}
+        self._loading = True  # Prevent saving during initialization
 
         layout = QtWidgets.QVBoxLayout()
 
@@ -74,9 +76,11 @@ class KeymapDialog(QtWidgets.QDialog):
             combo = QtWidgets.QComboBox()
             for name in self.direction_actions.keys():
                 combo.addItem(name)
+            combo.currentTextChanged.connect(self._on_keymap_changed)
             direction_keys_layout.addWidget(label, 0, i)
             direction_keys_layout.addWidget(combo, 1, i)
             self.combos["direction"][key] = combo
+        self.line_edits["direction"].textChanged.connect(self._on_keymap_changed)
         direction_layout.addLayout(direction_keys_layout)
         direction_group.setLayout(direction_layout)
 
@@ -100,9 +104,11 @@ class KeymapDialog(QtWidgets.QDialog):
             combo = QtWidgets.QComboBox()
             for name in self.zxcv_actions.keys():
                 combo.addItem(name)
+            combo.currentTextChanged.connect(self._on_keymap_changed)
             zxcv_keys_layout.addWidget(label, 0, i)
             zxcv_keys_layout.addWidget(combo, 1, i)
             self.combos["zxcv"][key] = combo
+        self.line_edits["zxcv"].textChanged.connect(self._on_keymap_changed)
         zxcv_layout.addLayout(zxcv_keys_layout)
         zxcv_group.setLayout(zxcv_layout)
 
@@ -146,20 +152,9 @@ class KeymapDialog(QtWidgets.QDialog):
 
         speed_group.setLayout(speed_layout)
 
-        # Buttons
-        button_layout = QtWidgets.QHBoxLayout()
-        save_button = QtWidgets.QPushButton(self.tr("保存配置"))
-        save_button.clicked.connect(self._save_config_only)
-        close_button = QtWidgets.QPushButton(self.tr("关闭"))
-        close_button.clicked.connect(self.reject)
-        button_layout.addStretch()
-        button_layout.addWidget(save_button)
-        button_layout.addWidget(close_button)
-
         layout.addWidget(direction_group)
         layout.addWidget(zxcv_group)
         layout.addWidget(speed_group)
-        layout.addLayout(button_layout)
 
         self.setLayout(layout)
         self.load_config()
@@ -169,6 +164,15 @@ class KeymapDialog(QtWidgets.QDialog):
             self.toggle_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(shortcut_key), self)
             self.toggle_shortcut.activated.connect(self.accept) # Connect to accept, so it acts like a close button
             self.toggle_shortcut.setContext(QtCore.Qt.WindowShortcut) # Active when this window or its children have focus
+
+    def _on_keymap_changed(self):
+        """Save keymap config when any keymap setting changes."""
+        if self._loading:
+            return
+        keymap_config = self.get_config()
+        self._config["keymap"] = keymap_config
+        save_config(self._config)
+        self.config_saved.emit(self._config["keymap"])
 
     def _update_speed_settings(self):
         speed_settings = {
@@ -184,11 +188,7 @@ class KeymapDialog(QtWidgets.QDialog):
         keymap_config["zxcv_enabled"] = self.zxcv_enable_checkbox.isChecked()
         self._config["keymap"] = keymap_config
 
-        self.config_saved.emit(self._config["keymap"])
-
-    def _save_config_only(self):
-        keymap_config = self.get_config()
-        self._config["keymap"] = keymap_config
+        # Save config to file immediately
         save_config(self._config)
         self.config_saved.emit(self._config["keymap"])
 
@@ -230,6 +230,9 @@ class KeymapDialog(QtWidgets.QDialog):
         self.large_rotation_spinbox.setValue(math.degrees(speed_settings.get("large_rotation_increment", 0.0087)))
         self.small_rotation_spinbox.setValue(math.degrees(speed_settings.get("small_rotation_increment", 0.001745)))
 
+        # Finished loading, now allow saving
+        self._loading = False
+
     def get_config(self):
         keymap_config = {"direction": {"labels": [], "actions": {}}, "zxcv": {"labels": [], "actions": {}}}
         for group, line_edit in self.line_edits.items():
@@ -255,8 +258,14 @@ class KeymapDialog(QtWidgets.QDialog):
         self.line_edits["direction"].setEnabled(enabled)
         for combo in self.combos["direction"].values():
             combo.setEnabled(enabled)
+        # Save config when checkbox state changes
+        if not self._loading:
+            self._on_keymap_changed()
 
     def _toggle_zxcv_keys_enabled(self, enabled):
         self.line_edits["zxcv"].setEnabled(enabled)
         for combo in self.combos["zxcv"].values():
             combo.setEnabled(enabled)
+        # Save config when checkbox state changes
+        if not self._loading:
+            self._on_keymap_changed()

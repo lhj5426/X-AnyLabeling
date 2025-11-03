@@ -137,6 +137,7 @@ shortcuts:
   alignment_tool: Ctrl+Shift+R
   auto_label: Ctrl+Shift+A
   auto_run: Ctrl+M
+  cancel_paste_preview: Ctrl+D
   close: Ctrl+W
   copy_polygon: Ctrl+C
   create_circle: null
@@ -215,3 +216,27 @@ custom_models: []
 
 # Digit shortcuts
 digit_shortcuts: null
+
+# Smart guides (辅助线)
+smart_guides_enabled: true
+smart_guides_line_width: 2.0
+smart_guides_line_color: [255, 0, 255]
+smart_guides_opacity: 0.8
+smart_guides_display_distance: 100  # 辅助线显示距离（像素）- 在此距离内才检测和显示辅助线
+smart_guides_snap_distance: 10  # 吸附距离（像素）- 磁铁效果，在此距离内才自动吸附
+smart_guides_max_lines: 10  # 最大辅助线条数 - 只显示最近的N条
+smart_guides_paste_preview_enabled: true
+
+# Rectangle spacing guide (矩形间距线)
+spacing_guide_enabled: true
+spacing_guide_line_width: 2.0
+spacing_guide_line_color: [0, 255, 255]  # 青色
+spacing_guide_opacity: 0.8
+spacing_guide_display_distance: 500  # 间距线显示距离（像素）
+spacing_guide_snap_distance: 10  # 间距线吸附距离（像素）
+spacing_guide_max_shapes: 0  # 最多检测的矩形数量（0表示检测所有）
+
+# Paste preview (虚影)
+paste_preview_line_width: 2.0
+paste_preview_line_color: [255, 0, 255]
+paste_preview_opacity: 0.4
