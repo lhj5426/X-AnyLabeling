@@ -6055,7 +6055,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 json.dumps([s.to_dict() for s in self.canvas.selected_shapes])
             )
             # 只有在启用虚影粘贴模式时才启用粘贴预览
-            if self._config.get('enable_preview_paste_mode', True):
+            if self._config.get('smart_guides_paste_preview_enabled', True):
                 self.canvas.enable_paste_preview(self.canvas.selected_shapes)
         else:
             self._copied_shapes = [
@@ -6063,7 +6063,7 @@ class LabelingWidget(QtWidgets.QWidget):
             ]
             self.actions.paste.setEnabled(len(self._copied_shapes) > 0)
             # 只有在启用虚影粘贴模式时才启用粘贴预览
-            if self._config.get('enable_preview_paste_mode', True):
+            if self._config.get('smart_guides_paste_preview_enabled', True):
                 self.canvas.enable_paste_preview(self._copied_shapes)
 
 

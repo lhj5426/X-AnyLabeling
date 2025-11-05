@@ -547,6 +547,9 @@ class Canvas(
         self.selected_shapes = []
         for shape in self.shapes:
             shape.selected = False
+        # 清除间距线缓存，避免恢复形状后间距线不匹配
+        self.spacing_guide_lines = []
+        self.spacing_guide_snap_offset = None
         self.update()
 
     def enterEvent(self, _):
@@ -2516,6 +2519,9 @@ class Canvas(
                 deleted_shapes.append(shape)
             self.store_shapes()
             self.selected_shapes = []
+            # 清除间距线缓存，避免删除矩形后间距线残留
+            self.spacing_guide_lines = []
+            self.spacing_guide_snap_offset = None
             self.update()
         return deleted_shapes
 
@@ -2526,6 +2532,9 @@ class Canvas(
         if shape in self.shapes:
             self.shapes.remove(shape)
         self.store_shapes()
+        # 清除间距线缓存，避免删除矩形后间距线残留
+        self.spacing_guide_lines = []
+        self.spacing_guide_snap_offset = None
         self.update()
 
     def duplicate_selected_shapes(self):
@@ -3793,6 +3802,9 @@ class Canvas(
                 )
                 self.spacing_guide_lines = spacing_lines
             logger.debug(f"paintEvent: spacing_guide_lines={len(self.spacing_guide_lines)}")
+        else:
+            # 当间距线功能被禁用或没有形状时，清除间距线缓存
+            self.spacing_guide_lines = []
 
         # Draw spacing guide (矩形间距线)
         if self.spacing_guide_lines:
@@ -4740,6 +4752,9 @@ class Canvas(
         self.pixmap = pixmap
         if clear_shapes:
             self.shapes = []
+            # 清除间距线缓存，避免加载新图片后间距线残留
+            self.spacing_guide_lines = []
+            self.spacing_guide_snap_offset = None
         self.update()
 
     def load_shapes(self, shapes, replace=True):
@@ -4753,6 +4768,9 @@ class Canvas(
         self.h_hape = None
         self.h_vertex = None
         self.h_edge = None
+        # 清除间距线缓存，避免加载形状后间距线不匹配
+        self.spacing_guide_lines = []
+        self.spacing_guide_snap_offset = None
         self.update()
 
     def set_shape_visible(self, shape, value):
@@ -5635,6 +5653,8 @@ class Canvas(
         self.paste_preview_mouse_pos = None
         self.smart_guides_lines = []
         self.smart_guides_distances = []
+        self.spacing_guide_lines = []  # 清除间距线
+        self.spacing_guide_snap_offset = None  # 清除间距线吸附偏移量
         self.update()
 
     def update_paste_preview_position(self, canvas_pos):
