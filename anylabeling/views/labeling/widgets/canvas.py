@@ -2508,7 +2508,8 @@ class Canvas(
                 shape.points = new_points
 
             # 2. 检测智能参考线对齐（边缘吸附已经集成在 detect_smart_guides 方法中）
-            # enable_snap 参数控制是否应用吸附，但会被 smart_guides_enable_snap 开关覆盖
+            # 辅助线吸附：受 smart_guides_enable_snap 控制
+            # 边缘吸附：独立于辅助线，只受 edge_snap_enabled 控制
             actual_enable_snap = enable_snap and self.smart_guides_enable_snap
             snap_offset, guide_lines = self.detect_smart_guides(shapes, enable_snap=actual_enable_snap)
             self.smart_guides_lines = guide_lines
@@ -2526,7 +2527,9 @@ class Canvas(
                 self.spacing_guide_snap_offset = spacing_snap_offset
 
             # 5. 🎯 完全模仿粘贴模式：应用吸附偏移到最终位置
-            if enable_snap and snap_offset:
+            # 只要有吸附偏移（辅助线吸附或边缘吸附），就应用
+            # enable_snap 参数只是一个总开关，但边缘吸附有自己的独立开关
+            if snap_offset:
                 # 计算最终偏移 = 总偏移 + 吸附偏移
                 final_offset = QtCore.QPointF(
                     total_offset.x() + snap_offset.x(),
@@ -5239,8 +5242,9 @@ class Canvas(
                 snap_offset: 吸附偏移量 QPointF，如果没有吸附则为None
                 guide_lines: 参考线列表 [(x1, y1, x2, y2, type), ...]
         """
-        # 虚影模式下强制启用，或者检查智能辅助线是否启用
-        if not force_enable and not self.smart_guides_enabled:
+        # 🎯 修改：即使辅助线关闭，如果边缘吸附开启，也要继续执行
+        # 只有在辅助线和边缘吸附都关闭时才返回
+        if not force_enable and not self.smart_guides_enabled and not self.edge_snap_enabled:
             return None, []
 
         if not moving_shapes:
@@ -5342,7 +5346,8 @@ class Canvas(
 
             # 🎯 只有在非倾斜旋转矩形时才检测水平/垂直辅助线
             # 并且目标矩形也不能是倾斜的旋转矩形
-            if not is_tilted_rotation and not target_is_tilted_rotation:
+            # 并且辅助线功能需要开启（force_enable 或 smart_guides_enabled）
+            if not is_tilted_rotation and not target_is_tilted_rotation and (force_enable or self.smart_guides_enabled):
                 # 检测水平对齐（相同边 + 交叉边）
                 h_alignments = [
                     # 相同边对齐（只有左右边，不包括中心）
@@ -5424,7 +5429,8 @@ class Canvas(
                             snap_y = target_pos - moving_pos
 
             # 🎯 只有在倾斜旋转矩形时才检测边对边的倾斜辅助线
-            if is_tilted_rotation and shape.shape_type in ['rotation', 'rotation3']:
+            # 并且辅助线功能需要开启（force_enable 或 smart_guides_enabled）
+            if is_tilted_rotation and shape.shape_type in ['rotation', 'rotation3'] and (force_enable or self.smart_guides_enabled):
                 target_edges = self.get_shape_edges(shape)
 
                 # 遍历移动形状的边
@@ -5582,7 +5588,7 @@ class Canvas(
                 dist = abs(all_bottom - target_top)
                 if dist < min_dist_y:
                     min_dist_y = dist
-                    snap_y = target_bottom - all_bottom
+                    snap_y = target_top - all_bottom
 
         # 返回吸附偏移量
         if snap_x is not None or snap_y is not None:
