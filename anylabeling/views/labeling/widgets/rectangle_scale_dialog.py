@@ -143,8 +143,47 @@ class RectangleScaleDialog(QtWidgets.QDialog):
         inverse_layout.addStretch()
         scale_layout.addLayout(inverse_layout)
 
+        # 累乘还原计算器 - 紧凑布局
+        cumulative_layout = QtWidgets.QHBoxLayout()
+        cumulative_layout.setSpacing(4)
+        cumulative_layout.addWidget(QtWidgets.QLabel(self.tr("累乘还原:")))
+
+        self.cumulative_ratio = QtWidgets.QLineEdit()
+        self.cumulative_ratio.setPlaceholderText(self.tr("1.3333"))
+        self.cumulative_ratio.setValidator(QtGui.QDoubleValidator(0.0001, 100.0, 6))
+        self.cumulative_ratio.setMaximumWidth(80)
+        cumulative_layout.addWidget(self.cumulative_ratio)
+
+        cumulative_layout.addWidget(QtWidgets.QLabel(self.tr("×")))
+
+        self.cumulative_times = QtWidgets.QSpinBox()
+        self.cumulative_times.setMinimum(1)
+        self.cumulative_times.setMaximum(100)
+        self.cumulative_times.setValue(3)
+        self.cumulative_times.setMaximumWidth(50)
+        self.cumulative_times.setSuffix(self.tr("次"))
+        cumulative_layout.addWidget(self.cumulative_times)
+
+        self.cumulative_result_label = QtWidgets.QLabel(self.tr("需缩放: --"))
+        self.cumulative_result_label.setStyleSheet("QLabel { color: #FF5722; font-weight: bold; font-size: 11px; }")
+        cumulative_layout.addWidget(self.cumulative_result_label)
+
+        self.cumulative_apply_button = QtWidgets.QPushButton(self.tr("应用"))
+        self.cumulative_apply_button.setStyleSheet("QPushButton { background-color: #FF5722; color: white; padding: 3px 8px; }")
+        self.cumulative_apply_button.clicked.connect(self.apply_cumulative_restore)
+        self.cumulative_apply_button.setMaximumWidth(60)
+        cumulative_layout.addWidget(self.cumulative_apply_button)
+
+        cumulative_layout.addStretch()
+        scale_layout.addLayout(cumulative_layout)
+
+        # 连接信号以实时计算
+        self.cumulative_ratio.textChanged.connect(self.calculate_cumulative_restore)
+        self.cumulative_times.valueChanged.connect(self.calculate_cumulative_restore)
+
         # 初始计算
         self.calculate_inverse_scale()
+        self.calculate_cumulative_restore()
 
         # 图像和标注信息 - 单行显示
         info_layout = QtWidgets.QHBoxLayout()
@@ -503,6 +542,69 @@ class RectangleScaleDialog(QtWidgets.QDialog):
 
             self.add_log(
                 self.tr(f"✅ 已应用倒数计算结果: 当前图是原图的 {ratio} 倍，需要缩放 {inverse_scale:.6f} 倍恢复原图"),
+                "success"
+            )
+        except ValueError:
+            self.add_log(self.tr("❌ 错误：请输入有效的数字！"), "error")
+        except Exception as e:
+            self.add_log(self.tr(f"❌ 错误：{str(e)}"), "error")
+
+    def calculate_cumulative_restore(self):
+        """计算累乘还原的缩放比例"""
+        try:
+            ratio_text = self.cumulative_ratio.text().strip()
+            if not ratio_text:
+                self.cumulative_result_label.setText(self.tr("需缩放: --"))
+                return
+
+            ratio = float(ratio_text)
+            times = self.cumulative_times.value()
+
+            if ratio <= 0:
+                self.cumulative_result_label.setText(self.tr("需缩放: 错误"))
+                self.cumulative_result_label.setStyleSheet("QLabel { color: #F44336; font-weight: bold; font-size: 11px; }")
+                return
+
+            # 计算累乘结果
+            cumulative_result = ratio ** times
+
+            # 计算还原比例（倒数）
+            restore_scale = 1.0 / cumulative_result
+
+            self.cumulative_result_label.setText(
+                self.tr(f"需缩放: {restore_scale:.6f}")
+            )
+            self.cumulative_result_label.setStyleSheet("QLabel { color: #FF5722; font-weight: bold; font-size: 11px; }")
+        except ValueError:
+            self.cumulative_result_label.setText(self.tr("需缩放: 错误"))
+            self.cumulative_result_label.setStyleSheet("QLabel { color: #F44336; font-weight: bold; font-size: 11px; }")
+
+    def apply_cumulative_restore(self):
+        """应用累乘还原的缩放比例"""
+        try:
+            ratio_text = self.cumulative_ratio.text().strip()
+            if not ratio_text:
+                self.add_log(self.tr("❌ 错误：请输入缩放比例！"), "error")
+                return
+
+            ratio = float(ratio_text)
+            times = self.cumulative_times.value()
+
+            if ratio <= 0:
+                self.add_log(self.tr("❌ 错误：比例必须大于0！"), "error")
+                return
+
+            # 计算累乘结果
+            cumulative_result = ratio ** times
+
+            # 计算还原比例（倒数）
+            restore_scale = 1.0 / cumulative_result
+
+            # 将比例填入输入框
+            self.scale_input.setText(f"{restore_scale:.6f}")
+
+            self.add_log(
+                self.tr(f"✅ 已应用累乘还原: {ratio} 的 {times} 次方 = {cumulative_result:.6f}，需要缩放 {restore_scale:.6f} 倍恢复原图"),
                 "success"
             )
         except ValueError:
