@@ -41,6 +41,7 @@ from .shortcut_manager_dialog import ShortcutManagerDialog
 from .segmentation_dialog import SegmentationDialog
 from .wheel_settings_dialog import WheelSettingsDialog
 from .rectangle3_width_dialog import Rectangle3WidthDialog
+from .rectangle_scale_dialog import RectangleScaleDialog
 
 
 __all__ = [
@@ -85,4 +86,5 @@ __all__ = [
     "ShortcutManagerDialog",
     "SegmentationDialog",
     "Rectangle3WidthDialog",
+    "RectangleScaleDialog",
 ]

@@ -84,6 +84,7 @@ from .widgets import (
     SegmentationDialog,
     Rectangle3WidthDialog,
 )
+from .widgets.rectangle_scale_dialog import RectangleScaleDialog
 from ...services import merger, tag_sorting
 
 LABEL_COLORMAP = utils.label_colormap()
@@ -197,6 +198,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # Wheel settings dialog
         self.wheel_settings_dialog = None
         self.rectangle3_width_dialog = None
+        self.rectangle_scale_dialog = None
 
         self.supported_shape = Shape.get_supported_shape()
         self.label_info = {}
@@ -1169,6 +1171,13 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("管理所有快捷键配置"),
         )
 
+        rectangle_scale_tool = action(
+            self.tr("矩形缩放工具"),
+            self.open_rectangle_scale_dialog,
+            icon="edit",
+            tip=self.tr("按比例缩放所有矩形标注的坐标位置"),
+        )
+
         open_chatbot = action(
             self.tr("ChatBot"),
             self.open_chatbot,
@@ -2097,6 +2106,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 merge_shapes,
                 dual_color_label_tool,
                 mask_generator_tool,
+                rectangle_scale_tool,
                 None,
                 # === 管理器工具 ===
                 label_manager,
@@ -4130,6 +4140,400 @@ class LabelingWidget(QtWidgets.QWidget):
             self.rectangle3_width_dialog.activateWindow()
         else:
             self.rectangle3_width_dialog.show()
+
+    def open_rectangle_scale_dialog(self):
+        """打开矩形缩放工具对话框"""
+        if not self.image_list:
+            self.error_message(
+                self.tr("未加载图像"),
+                self.tr("请先加载图像文件夹后再使用此工具。"),
+            )
+            return
+
+        if self.rectangle_scale_dialog is None:
+            self.rectangle_scale_dialog = RectangleScaleDialog(parent=self)
+            self.rectangle_scale_dialog.scale_applied.connect(self.apply_rectangle_scale)
+            self.rectangle_scale_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        # 更新对话框信息
+        if self.image:
+            self.rectangle_scale_dialog.update_image_info(
+                self.image.width(),
+                self.image.height()
+            )
+
+        # 统计矩形数量
+        rect_count = sum(1 for shape in self.canvas.shapes
+                        if shape.shape_type in ["rectangle", "rotation", "rotation3", "rectangle3"])
+        self.rectangle_scale_dialog.update_shapes_info(rect_count)
+
+        # 更新页面范围（当前页到最后一页）
+        if self.filename and self.filename in self.fn_to_index:
+            current_page = self.fn_to_index[str(self.filename)] + 1  # 从0开始，所以+1
+        else:
+            current_page = 1
+        total_pages = len(self.image_list)
+        self.rectangle_scale_dialog.update_page_range(current_page, total_pages)
+
+        if self.rectangle_scale_dialog.isVisible():
+            self.rectangle_scale_dialog.raise_()
+            self.rectangle_scale_dialog.activateWindow()
+        else:
+            self.rectangle_scale_dialog.show()
+
+    def apply_rectangle_scale(self, scale_factor):
+        """应用矩形缩放
+
+        Args:
+            scale_factor: 缩放比例（正数）
+        """
+        # 获取缩放范围
+        scope = self.rectangle_scale_dialog.get_scale_scope()
+
+        if scope == "current":
+            # 只缩放当前页面
+            self._scale_current_page(scale_factor)
+        elif scope == "all":
+            # 缩放全部页面
+            self._scale_all_pages(scale_factor)
+        else:
+            # 缩放指定范围的页面
+            start, end = self.rectangle_scale_dialog.get_page_range()
+            self._scale_page_range(scale_factor, start, end)
+
+    def _scale_current_page(self, scale_factor):
+        """缩放当前页面的矩形
+
+        Args:
+            scale_factor: 缩放比例
+        """
+        if not self.canvas.shapes:
+            self.rectangle_scale_dialog.add_log(
+                self.tr("⚠️ 当前图像没有标注！"), "warning"
+            )
+            return
+
+        # 获取缩放中心
+        center_type = self.rectangle_scale_dialog.get_scale_center()
+
+        if center_type == "image" and self.image:
+            center_x = self.image.width() / 2.0
+            center_y = self.image.height() / 2.0
+        else:
+            center_x = 0
+            center_y = 0
+
+        # 保存当前状态用于撤销
+        self.canvas.store_shapes()
+
+        # 缩放所有矩形
+        shapes_to_scale = [s for s in self.canvas.shapes
+                         if s.shape_type in ["rectangle", "rotation", "rotation3", "rectangle3"]]
+
+        # 缩放矩形
+        scaled_count = 0
+        for shape in shapes_to_scale:
+            new_points = []
+            for point in shape.points:
+                rel_x = point.x() - center_x
+                rel_y = point.y() - center_y
+                new_x = center_x + rel_x * scale_factor
+                new_y = center_y + rel_y * scale_factor
+                new_points.append(QtCore.QPointF(new_x, new_y))
+
+            shape.points = new_points
+
+            # 更新旋转矩形的中心点
+            if shape.shape_type in ["rotation", "rotation3", "rectangle3"] and len(shape.points) == 4:
+                cx = (shape.points[0].x() + shape.points[2].x()) / 2
+                cy = (shape.points[0].y() + shape.points[2].y()) / 2
+                shape.center = QtCore.QPointF(cx, cy)
+
+            scaled_count += 1
+
+        # 更新显示
+        self.canvas.update()
+        self.set_dirty()
+
+        # 显示结果到日志
+        self.rectangle_scale_dialog.add_log(
+            self.tr(f"✅ 当前页面缩放完成！缩放了 {scaled_count} 个矩形，比例: {scale_factor:.4f}"),
+            "success"
+        )
+        logger.info(f"Current page scaled: {scaled_count} shapes by factor {scale_factor:.4f}")
+
+    def _scale_all_pages(self, scale_factor):
+        """缩放全部页面的矩形（后台处理，不切换画布）
+
+        Args:
+            scale_factor: 缩放比例
+        """
+        if not self.image_list:
+            self.rectangle_scale_dialog.add_log(
+                self.tr("⚠️ 没有加载图像列表！"), "warning"
+            )
+            return
+
+        # 保存当前文件名
+        current_filename = self.filename
+
+        total_files = len(self.image_list)
+        total_scaled = 0
+        files_processed = 0
+
+        self.rectangle_scale_dialog.add_log(
+            self.tr(f"🔄 开始批量缩放，共 {total_files} 个文件...（后台处理）"), "info"
+        )
+
+        # 获取缩放中心类型
+        center_type = self.rectangle_scale_dialog.get_scale_center()
+
+        # 遍历所有图像（后台处理，不加载到画布）
+        for idx, image_path in enumerate(self.image_list):
+            # 更新进度条和UI（防止假死）
+            self.rectangle_scale_dialog.update_progress(idx + 1, total_files)
+            QtWidgets.QApplication.processEvents()
+
+            # 获取对应的JSON文件路径
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+            # 检查JSON文件是否存在
+            if not osp.exists(label_file_path):
+                continue
+
+            try:
+                # 直接读取JSON文件（不加载到画布）
+                label_file = LabelFile(label_file_path, osp.dirname(image_path))
+
+                if not label_file.shapes:
+                    continue
+
+                # 获取图像尺寸（从实际图像文件读取）
+                from PIL import Image
+                try:
+                    with Image.open(image_path) as img:
+                        image_width = img.width
+                        image_height = img.height
+                except Exception:
+                    # 如果无法读取图像，跳过
+                    continue
+
+                if center_type == "image":
+                    center_x = image_width / 2.0
+                    center_y = image_height / 2.0
+                else:
+                    center_x = 0
+                    center_y = 0
+
+                # 缩放矩形
+                file_scaled = 0
+                for shape in label_file.shapes:
+                    if shape.shape_type in ["rectangle", "rotation", "rotation3", "rectangle3"]:
+                        new_points = []
+                        for point in shape.points:
+                            rel_x = point.x() - center_x
+                            rel_y = point.y() - center_y
+                            new_x = center_x + rel_x * scale_factor
+                            new_y = center_y + rel_y * scale_factor
+                            new_points.append(QtCore.QPointF(new_x, new_y))
+
+                        shape.points = new_points
+
+                        # 更新旋转矩形的中心点
+                        if shape.shape_type in ["rotation", "rotation3", "rectangle3"] and len(shape.points) == 4:
+                            cx = (shape.points[0].x() + shape.points[2].x()) / 2
+                            cy = (shape.points[0].y() + shape.points[2].y()) / 2
+                            shape.center = QtCore.QPointF(cx, cy)
+
+                        file_scaled += 1
+
+                if file_scaled > 0:
+                    # 将Shape对象转换为字典格式
+                    shapes_dict = [shape.to_dict() for shape in label_file.shapes]
+
+                    # 保存JSON文件（不加载到画布）
+                    label_file.save(
+                        filename=label_file_path,
+                        shapes=shapes_dict,
+                        image_path=label_file.image_path,
+                        image_height=image_height,
+                        image_width=image_width,
+                        image_data=label_file.image_data,
+                        other_data=label_file.other_data,
+                        flags=label_file.flags,
+                    )
+                    total_scaled += file_scaled
+                    files_processed += 1
+
+                    self.rectangle_scale_dialog.add_log(
+                        self.tr(f"  [{idx+1}/{total_files}] {osp.basename(image_path)}: {file_scaled} 个矩形"),
+                        "info"
+                    )
+            except Exception as e:
+                self.rectangle_scale_dialog.add_log(
+                    self.tr(f"  ❌ [{idx+1}/{total_files}] {osp.basename(image_path)}: 处理失败 - {str(e)}"),
+                    "error"
+                )
+
+        # 重置进度条
+        self.rectangle_scale_dialog.reset_progress()
+
+        # 如果当前文件被修改了，重新加载以显示更新
+        if current_filename and current_filename in self.image_list:
+            self.load_file(current_filename)
+
+        # 显示结果
+        self.rectangle_scale_dialog.add_log(
+            self.tr(f"✅ 批量缩放完成！处理了 {files_processed} 个文件，共 {total_scaled} 个矩形，比例: {scale_factor:.4f}"),
+            "success"
+        )
+        logger.info(f"All pages scaled: {files_processed} files, {total_scaled} shapes by factor {scale_factor:.4f}")
+
+    def _scale_page_range(self, scale_factor, start_page, end_page):
+        """缩放指定范围的页面（后台处理，不切换画布）
+
+        Args:
+            scale_factor: 缩放比例
+            start_page: 起始页码（从1开始）
+            end_page: 结束页码（包含）
+        """
+        if not self.image_list:
+            self.rectangle_scale_dialog.add_log(
+                self.tr("⚠️ 没有加载图像列表！"), "warning"
+            )
+            return
+
+        # 验证范围
+        total_files = len(self.image_list)
+        if start_page < 1 or end_page > total_files or start_page > end_page:
+            self.rectangle_scale_dialog.add_log(
+                self.tr(f"❌ 错误：页面范围无效！总共 {total_files} 页，请输入有效范围。"), "error"
+            )
+            return
+
+        # 保存当前文件名
+        current_filename = self.filename
+
+        total_scaled = 0
+        files_processed = 0
+        total_pages = end_page - start_page + 1
+
+        self.rectangle_scale_dialog.add_log(
+            self.tr(f"🔄 开始缩放第 {start_page}-{end_page} 页，共 {total_pages} 个文件...（后台处理）"), "info"
+        )
+
+        # 获取缩放中心类型
+        center_type = self.rectangle_scale_dialog.get_scale_center()
+
+        # 遍历指定范围的图像（页码从1开始，索引从0开始）
+        for page_num in range(start_page, end_page + 1):
+            idx = page_num - 1
+            current_progress = page_num - start_page + 1
+
+            # 更新进度条和UI（防止假死）
+            self.rectangle_scale_dialog.update_progress(current_progress, total_pages)
+            QtWidgets.QApplication.processEvents()
+
+            image_path = self.image_list[idx]
+
+            # 获取对应的JSON文件路径
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+            # 检查JSON文件是否存在
+            if not osp.exists(label_file_path):
+                continue
+
+            try:
+                # 直接读取JSON文件（不加载到画布）
+                label_file = LabelFile(label_file_path, osp.dirname(image_path))
+
+                if not label_file.shapes:
+                    continue
+
+                # 获取图像尺寸（从实际图像文件读取）
+                from PIL import Image
+                try:
+                    with Image.open(image_path) as img:
+                        image_width = img.width
+                        image_height = img.height
+                except Exception:
+                    # 如果无法读取图像，跳过
+                    continue
+
+                if center_type == "image":
+                    center_x = image_width / 2.0
+                    center_y = image_height / 2.0
+                else:
+                    center_x = 0
+                    center_y = 0
+
+                # 缩放矩形
+                file_scaled = 0
+                for shape in label_file.shapes:
+                    if shape.shape_type in ["rectangle", "rotation", "rotation3", "rectangle3"]:
+                        new_points = []
+                        for point in shape.points:
+                            rel_x = point.x() - center_x
+                            rel_y = point.y() - center_y
+                            new_x = center_x + rel_x * scale_factor
+                            new_y = center_y + rel_y * scale_factor
+                            new_points.append(QtCore.QPointF(new_x, new_y))
+
+                        shape.points = new_points
+
+                        # 更新旋转矩形的中心点
+                        if shape.shape_type in ["rotation", "rotation3", "rectangle3"] and len(shape.points) == 4:
+                            cx = (shape.points[0].x() + shape.points[2].x()) / 2
+                            cy = (shape.points[0].y() + shape.points[2].y()) / 2
+                            shape.center = QtCore.QPointF(cx, cy)
+
+                        file_scaled += 1
+
+                if file_scaled > 0:
+                    # 将Shape对象转换为字典格式
+                    shapes_dict = [shape.to_dict() for shape in label_file.shapes]
+
+                    # 保存JSON文件（不加载到画布）
+                    label_file.save(
+                        filename=label_file_path,
+                        shapes=shapes_dict,
+                        image_path=label_file.image_path,
+                        image_height=image_height,
+                        image_width=image_width,
+                        image_data=label_file.image_data,
+                        other_data=label_file.other_data,
+                        flags=label_file.flags,
+                    )
+                    total_scaled += file_scaled
+                    files_processed += 1
+
+                    self.rectangle_scale_dialog.add_log(
+                        self.tr(f"  [第{page_num}页] {osp.basename(image_path)}: {file_scaled} 个矩形"),
+                        "info"
+                    )
+            except Exception as e:
+                self.rectangle_scale_dialog.add_log(
+                    self.tr(f"  ❌ [第{page_num}页] {osp.basename(image_path)}: 处理失败 - {str(e)}"),
+                    "error"
+                )
+
+        # 重置进度条
+        self.rectangle_scale_dialog.reset_progress()
+
+        # 如果当前文件被修改了，重新加载以显示更新
+        if current_filename and current_filename in self.image_list:
+            self.load_file(current_filename)
+
+        # 显示结果
+        self.rectangle_scale_dialog.add_log(
+            self.tr(f"✅ 范围缩放完成！处理了 {files_processed} 个文件（第{start_page}-{end_page}页），共 {total_scaled} 个矩形，比例: {scale_factor:.4f}"),
+            "success"
+        )
+        logger.info(f"Page range {start_page}-{end_page} scaled: {files_processed} files, {total_scaled} shapes by factor {scale_factor:.4f}")
 
     def on_rectangle3_width_changed(self, width):
         """Slot for when the rectangle3 width changes."""
