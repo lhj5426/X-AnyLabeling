@@ -244,17 +244,58 @@ class Canvas(
         self.path_highlighted_shapes = set()  # Shapes highlighted during path selection
 
         # Smart guides (智能参考线) state
-        self.smart_guides_enabled = self._config.get('smart_guides_enabled', True)  # 是否启用智能参考线
+        self.smart_guides_enabled = self._config.get('smart_guides_enabled', True)  # 是否显示智能参考线
+        self.smart_guides_enable_snap = self._config.get('smart_guides_enable_snap', True)  # 是否启用辅助线吸附功能
+        self.smart_guides_show_horizontal = self._config.get('smart_guides_show_horizontal', True)  # 是否显示水平辅助线
+        self.smart_guides_show_vertical = self._config.get('smart_guides_show_vertical', True)  # 是否显示垂直辅助线
         self.smart_guides_line_width = self._config.get('smart_guides_line_width', 2.0)  # 辅助线粗细
         self.smart_guides_line_color = self._config.get('smart_guides_line_color', [255, 0, 255])  # 辅助线颜色 (RGB)
         self.smart_guides_opacity = self._config.get('smart_guides_opacity', 0.8)  # 辅助线透明度 (0.0-1.0)
         self.smart_guides_display_distance = self._config.get('smart_guides_display_distance', 100)  # 辅助线显示距离（像素）- 在此距离内才检测和显示辅助线
         self.smart_guides_snap_distance = self._config.get('smart_guides_snap_distance', 10)  # 吸附距离（像素）- 磁铁效果，在此距离内才自动吸附
         self.smart_guides_max_lines = self._config.get('smart_guides_max_lines', 10)  # 最大辅助线条数 - 只显示最近的N条
+        # 🎯 辅助线方向吸附开关（只有4条边）
+        self.smart_guides_snap_left = self._config.get('smart_guides_snap_left', True)  # 左边对齐吸附
+        self.smart_guides_snap_right = self._config.get('smart_guides_snap_right', True)  # 右边对齐吸附
+        self.smart_guides_snap_top = self._config.get('smart_guides_snap_top', True)  # 上边对齐吸附
+        self.smart_guides_snap_bottom = self._config.get('smart_guides_snap_bottom', True)  # 下边对齐吸附
 
         self.smart_guides_paste_preview_enabled = self._config.get('smart_guides_paste_preview_enabled', True)  # 是否启用虚影粘贴模式
+        self.smart_guides_paste_show_guides = self._config.get('smart_guides_paste_show_guides', True)  # 粘贴模式下是否显示辅助线
+        self.smart_guides_paste_enable_snap = self._config.get('smart_guides_paste_enable_snap', True)  # 粘贴模式下是否启用吸附功能
+        self.smart_guides_paste_snap_distance = self._config.get('smart_guides_paste_snap_distance', 10)  # 粘贴模式下的吸附距离（像素）
+        # 🎯 粘贴模式方向吸附开关（只有4条边）
+        self.smart_guides_paste_snap_left = self._config.get('smart_guides_paste_snap_left', True)  # 粘贴模式：左边对齐吸附
+        self.smart_guides_paste_snap_right = self._config.get('smart_guides_paste_snap_right', True)  # 粘贴模式：右边对齐吸附
+        self.smart_guides_paste_snap_top = self._config.get('smart_guides_paste_snap_top', True)  # 粘贴模式：上边对齐吸附
+        self.smart_guides_paste_snap_bottom = self._config.get('smart_guides_paste_snap_bottom', True)  # 粘贴模式：下边对齐吸附
+
         self.smart_guides_lines = []  # 当前显示的参考线 [(x1, y1, x2, y2, type), ...]
         self.smart_guides_snap_offset = None  # 吸附偏移量
+
+        # 边缘吸附设置
+        self.edge_snap_enabled = self._config.get('edge_snap_enabled', False)  # 是否启用边缘吸附
+        self.edge_snap_distance = self._config.get('edge_snap_distance', 50)  # 边缘吸附距离（像素）
+        self.edge_snap_release_distance = self._config.get('edge_snap_release_distance', 3)  # 脱离吸附距离（像素）
+        self.edge_snap_left = self._config.get('edge_snap_left', True)  # 左边缘吸附
+        self.edge_snap_right = self._config.get('edge_snap_right', True)  # 右边缘吸附
+        self.edge_snap_top = self._config.get('edge_snap_top', True)  # 上边缘吸附
+        self.edge_snap_bottom = self._config.get('edge_snap_bottom', True)  # 下边缘吸附
+
+        # 吸附状态跟踪（用于脱离吸附）
+        self.snap_accumulated_offset = QtCore.QPointF(0, 0)  # 累积的反向移动距离
+        self.is_snapped = False  # 当前是否处于吸附状态
+        self.snap_released_x = False  # X 方向是否已解锁（防止立即重新吸附）
+        self.snap_released_y = False  # Y 方向是否已解锁（防止立即重新吸附）
+
+        # 🎯 实体矩形移动的原始状态（模仿粘贴模式）
+        self.moving_shapes_original = []  # 开始移动时的形状副本
+        self.moving_start_mouse_pos = None  # 开始移动时的鼠标位置
+
+        # 🎯 顶点拖拽的原始状态（模仿粘贴模式）
+        self.vertex_drag_original_points = None  # 开始拖拽时的形状原始点位
+        self.vertex_drag_start_mouse_pos = None  # 开始拖拽时的鼠标位置
+        self.vertex_drag_index = None  # 正在拖拽的顶点索引
 
         # Rectangle spacing guide (矩形间距线) state
         self.spacing_guide_enabled = self._config.get('spacing_guide_enabled', True)  # 是否启用矩形间距线
@@ -1775,6 +1816,17 @@ class Canvas(
         self.smart_guides_snap_offset = None
         self.smart_guides_distances = []
 
+        # 🎯 清除移动状态（模仿粘贴模式）
+        self.moving_shapes_original = []
+        self.moving_start_mouse_pos = None
+        self.snap_accumulated_offset = QtCore.QPointF(0, 0)
+        self.is_snapped = False
+
+        # 🎯 清除顶点拖拽状态（模仿粘贴模式）
+        self.vertex_drag_original_points = None
+        self.vertex_drag_start_mouse_pos = None
+        self.vertex_drag_index = None
+
         self.store_moving_shape()
 
     def complete_selection_box(self):
@@ -2326,22 +2378,40 @@ class Canvas(
         """Move a vertex. Adjust position to be bounded by pixmap border"""
         index, shape = self.h_vertex, self.h_hape
         point = shape[index]
+
+        # 🎯 第一次拖拽顶点时，保存原始状态（模仿粘贴模式）
+        if self.vertex_drag_original_points is None or self.vertex_drag_index != index:
+            self.vertex_drag_original_points = [QtCore.QPointF(pt.x(), pt.y()) for pt in shape.points]
+            self.vertex_drag_start_mouse_pos = self.prev_point
+            self.vertex_drag_index = index
+
+        # 计算鼠标的总偏移量（从开始拖拽到现在）
+        total_offset = pos - self.vertex_drag_start_mouse_pos
+
+        # 基于原始顶点位置 + 总偏移量，计算新的顶点位置
+        original_vertex_pos = self.vertex_drag_original_points[index]
+        new_vertex_pos = QtCore.QPointF(
+            original_vertex_pos.x() + total_offset.x(),
+            original_vertex_pos.y() + total_offset.y()
+        )
+
         if (
-            self.out_off_pixmap(pos)
+            self.out_off_pixmap(new_vertex_pos)
             and shape.shape_type not in self.allowed_oop_shape_types
         ):
-            pos = self.intersection_point(point, pos)
+            new_vertex_pos = self.intersection_point(point, new_vertex_pos)
 
         # 检测智能参考线对齐（针对顶点移动）
-        snap_offset = self.detect_vertex_smart_guides(shape, index, pos)
+        snap_offset = self.detect_vertex_smart_guides(shape, index, new_vertex_pos)
         if snap_offset:
-            pos = QtCore.QPointF(pos.x() + snap_offset.x(), pos.y() + snap_offset.y())
+            new_vertex_pos = QtCore.QPointF(new_vertex_pos.x() + snap_offset.x(), new_vertex_pos.y() + snap_offset.y())
 
+        # 🎯 使用 new_vertex_pos 而不是 pos，基于原始位置计算偏移
         if shape.shape_type == "rotation":
             sindex = (index + 2) % 4
             # Get the other 3 points after transformed
             p2, p3, p4 = self.get_adjoint_points(
-                shape.direction, shape[sindex], pos, index
+                shape.direction, shape[sindex], new_vertex_pos, index
             )
             # if (
             #     self.out_off_pixmap(p2)
@@ -2351,7 +2421,7 @@ class Canvas(
             #     # No need to move if one pixal out of map
             #     return
             # Move 4 pixal one by one
-            shape.move_vertex_by(index, pos - point)
+            shape.move_vertex_by(index, new_vertex_pos - point)
             lindex = (index + 1) % 4
             rindex = (index + 3) % 4
             shape[lindex] = p2
@@ -2359,7 +2429,7 @@ class Canvas(
             shape.close()
             # Don't recalculate direction when resizing - only adjust size, keep original angle
         elif shape.shape_type == "rectangle":
-            shift_pos = pos - point
+            shift_pos = new_vertex_pos - point
             shape.move_vertex_by(index, shift_pos)
             left_index = (index + 1) % 4
             right_index = (index + 3) % 4
@@ -2374,7 +2444,7 @@ class Canvas(
             shape.move_vertex_by(right_index, right_shift)
             shape.move_vertex_by(left_index, left_shift)
         else:
-            shape.move_vertex_by(index, pos - point)
+            shape.move_vertex_by(index, new_vertex_pos - point)
 
     def bounded_move_shapes(self, shapes, pos, enable_snap=True):
         """Move shapes. Adjust position to be bounded by pixmap border
@@ -2409,17 +2479,41 @@ class Canvas(
         # a bit "shaky" when nearing the border and allows it to
         # go outside of the shape's area for some reason.
         # self.calculateOffsets(self.selectedShapes, pos)
-        dp = pos - self.prev_point
-        if dp:
-            # 先移动形状以便检测对齐
-            for shape in shapes:
-                shape.move_by(dp)
 
-            # 检测智能参考线对齐（传递 enable_snap 参数）
-            snap_offset, guide_lines = self.detect_smart_guides(shapes, enable_snap=enable_snap)
+        # 🎯 完全模仿粘贴模式：基于原始位置 + 鼠标总偏移量
+        # 第一次移动时，保存原始状态
+        if not self.moving_shapes_original:
+            self.moving_shapes_original = []
+            for shape in shapes:
+                # 保存形状的原始点位
+                original_points = [QtCore.QPointF(pt.x(), pt.y()) for pt in shape.points]
+                self.moving_shapes_original.append({
+                    'shape': shape,
+                    'original_points': original_points
+                })
+            self.moving_start_mouse_pos = self.prev_point
+
+        # 计算鼠标的总偏移量（从开始拖动到现在）
+        total_offset = pos - self.moving_start_mouse_pos
+
+        if total_offset.x() != 0 or total_offset.y() != 0:
+            # 1. 基于原始位置 + 总偏移量，计算目标位置
+            for item in self.moving_shapes_original:
+                shape = item['shape']
+                original_points = item['original_points']
+                # 恢复到原始位置，再应用总偏移
+                new_points = []
+                for pt in original_points:
+                    new_points.append(QtCore.QPointF(pt.x() + total_offset.x(), pt.y() + total_offset.y()))
+                shape.points = new_points
+
+            # 2. 检测智能参考线对齐（边缘吸附已经集成在 detect_smart_guides 方法中）
+            # enable_snap 参数控制是否应用吸附，但会被 smart_guides_enable_snap 开关覆盖
+            actual_enable_snap = enable_snap and self.smart_guides_enable_snap
+            snap_offset, guide_lines = self.detect_smart_guides(shapes, enable_snap=actual_enable_snap)
             self.smart_guides_lines = guide_lines
 
-            # 检测矩形间距线
+            # 4. 检测矩形间距线
             if self.spacing_guide_enabled:
                 spacing_snap_offset, spacing_lines = RectangleSpacingGuide.detect_spacing_lines(
                     shapes, self.shapes,
@@ -2431,12 +2525,26 @@ class Canvas(
                 self.spacing_guide_lines = spacing_lines
                 self.spacing_guide_snap_offset = spacing_snap_offset
 
-            # 如果有吸附偏移且启用了吸附，应用它
+            # 5. 🎯 完全模仿粘贴模式：应用吸附偏移到最终位置
             if enable_snap and snap_offset:
-                for shape in shapes:
-                    shape.move_by(snap_offset)
+                # 计算最终偏移 = 总偏移 + 吸附偏移
+                final_offset = QtCore.QPointF(
+                    total_offset.x() + snap_offset.x(),
+                    total_offset.y() + snap_offset.y()
+                )
+
+                # 基于原始位置应用最终偏移
+                for item in self.moving_shapes_original:
+                    shape = item['shape']
+                    original_points = item['original_points']
+                    new_points = []
+                    for pt in original_points:
+                        new_points.append(QtCore.QPointF(pt.x() + final_offset.x(), pt.y() + final_offset.y()))
+                    shape.points = new_points
+
                 self.smart_guides_snap_offset = snap_offset
             else:
+                # 没有吸附，保持当前位置（已经应用了 total_offset）
                 self.smart_guides_snap_offset = None
 
             self.prev_point = pos
@@ -5115,7 +5223,7 @@ class Canvas(
         # 检查是否接近 0° 或 90°
         return angle_deg < angle_threshold or angle_deg > (90 - angle_threshold)
 
-    def detect_smart_guides(self, moving_shapes, force_enable=False, enable_snap=True):
+    def detect_smart_guides(self, moving_shapes, force_enable=False, enable_snap=True, snap_distance=None, use_paste_mode_switches=False):
         """
         检测智能参考线对齐
 
@@ -5123,6 +5231,8 @@ class Canvas(
             moving_shapes: 正在移动的形状列表
             force_enable: 强制启用（用于虚影模式，不受 smart_guides_enabled 限制）
             enable_snap: 是否启用吸附（磁铁效果）。False时只显示辅助线，不吸附
+            snap_distance: 自定义吸附距离（像素）。None时使用默认的 smart_guides_snap_distance
+            use_paste_mode_switches: 是否使用粘贴模式的方向开关（True时使用 smart_guides_paste_snap_*）
 
         Returns:
             tuple: (snap_offset, guide_lines)
@@ -5135,6 +5245,9 @@ class Canvas(
 
         if not moving_shapes:
             return None, []
+
+        # 使用自定义吸附距离或默认值
+        effective_snap_distance = snap_distance if snap_distance is not None else self.smart_guides_snap_distance
 
         # 计算移动形状的边界
         moving_rects = []
@@ -5161,8 +5274,8 @@ class Canvas(
         guide_lines_with_dist = []  # 存储 (distance, line_data) 用于排序
         snap_x = None
         snap_y = None
-        min_dist_x = self.smart_guides_snap_distance  # 吸附距离
-        min_dist_y = self.smart_guides_snap_distance  # 吸附距离
+        min_dist_x = effective_snap_distance  # 吸附距离
+        min_dist_y = effective_snap_distance  # 吸附距离
 
         # 用于去重的字典（避免在同一位置绘制多条线）
         # key: position, value: distance
@@ -5232,10 +5345,9 @@ class Canvas(
             if not is_tilted_rotation and not target_is_tilted_rotation:
                 # 检测水平对齐（相同边 + 交叉边）
                 h_alignments = [
-                    # 相同边对齐
+                    # 相同边对齐（只有左右边，不包括中心）
                     ('left', all_left, target['left']),
                     ('right', all_right, target['right']),
-                    ('center_x', all_center_x, target['center_x']),
                     # 交叉边对齐（PS 风格）
                     ('left_to_right', all_left, target['right']),   # 移动矩形的左边 对齐 目标矩形的右边
                     ('right_to_left', all_right, target['left']),   # 移动矩形的右边 对齐 目标矩形的左边
@@ -5250,18 +5362,32 @@ class Canvas(
                         if target_pos not in v_line_positions or dist < v_line_positions[target_pos]:
                             v_line_positions[target_pos] = dist
 
-                    # 吸附功能：只在吸附距离内才吸附
-                    if enable_snap and dist <= self.smart_guides_snap_distance:
-                        if dist < min_dist_x:
+                    # 🎯 吸附功能：根据方向开关决定是否吸附
+                    if enable_snap and dist <= effective_snap_distance:
+                        # 检查该方向是否启用吸附（根据是否为粘贴模式选择不同的开关）
+                        should_snap = False
+                        if use_paste_mode_switches:
+                            # 粘贴模式：使用 smart_guides_paste_snap_* 开关（只有4条边）
+                            if align_type in ['left', 'left_to_right', 'right_to_left']:
+                                should_snap = self.smart_guides_paste_snap_left if 'left' in align_type else self.smart_guides_paste_snap_right
+                            elif align_type == 'right':
+                                should_snap = self.smart_guides_paste_snap_right
+                        else:
+                            # 普通模式：使用 smart_guides_snap_* 开关（只有4条边）
+                            if align_type in ['left', 'left_to_right', 'right_to_left']:
+                                should_snap = self.smart_guides_snap_left if 'left' in align_type else self.smart_guides_snap_right
+                            elif align_type == 'right':
+                                should_snap = self.smart_guides_snap_right
+
+                        if should_snap and dist < min_dist_x:
                             min_dist_x = dist
                             snap_x = target_pos - moving_pos
 
                 # 检测垂直对齐（相同边 + 交叉边）
                 v_alignments = [
-                    # 相同边对齐
+                    # 相同边对齐（只有上下边，不包括中心）
                     ('top', all_top, target['top']),
                     ('bottom', all_bottom, target['bottom']),
-                    ('center_y', all_center_y, target['center_y']),
                     # 交叉边对齐（PS 风格）
                     ('top_to_bottom', all_top, target['bottom']),   # 移动矩形的顶边 对齐 目标矩形的底边
                     ('bottom_to_top', all_bottom, target['top']),   # 移动矩形的底边 对齐 目标矩形的顶边
@@ -5276,9 +5402,24 @@ class Canvas(
                         if target_pos not in h_line_positions or dist < h_line_positions[target_pos]:
                             h_line_positions[target_pos] = dist
 
-                    # 吸附功能：只在吸附距离内才吸附
-                    if enable_snap and dist <= self.smart_guides_snap_distance:
-                        if dist < min_dist_y:
+                    # 🎯 吸附功能：根据方向开关决定是否吸附
+                    if enable_snap and dist <= effective_snap_distance:
+                        # 检查该方向是否启用吸附（根据是否为粘贴模式选择不同的开关）
+                        should_snap = False
+                        if use_paste_mode_switches:
+                            # 粘贴模式：使用 smart_guides_paste_snap_* 开关（只有4条边）
+                            if align_type in ['top', 'top_to_bottom', 'bottom_to_top']:
+                                should_snap = self.smart_guides_paste_snap_top if 'top' in align_type else self.smart_guides_paste_snap_bottom
+                            elif align_type == 'bottom':
+                                should_snap = self.smart_guides_paste_snap_bottom
+                        else:
+                            # 普通模式：使用 smart_guides_snap_* 开关（只有4条边）
+                            if align_type in ['top', 'top_to_bottom', 'bottom_to_top']:
+                                should_snap = self.smart_guides_snap_top if 'top' in align_type else self.smart_guides_snap_bottom
+                            elif align_type == 'bottom':
+                                should_snap = self.smart_guides_snap_bottom
+
+                        if should_snap and dist < min_dist_y:
                             min_dist_y = dist
                             snap_y = target_pos - moving_pos
 
@@ -5336,12 +5477,118 @@ class Canvas(
         guide_lines_with_dist.sort(key=lambda x: x[0])
         guide_lines = [line_data for dist, line_data in guide_lines_with_dist[:self.smart_guides_max_lines]]
 
-        # 计算吸附偏移量
+        # 🎯 边缘吸附：按方向独立判断优先级
+        # - 边缘吸附独立于辅助线吸附开关（enable_snap），只要 edge_snap_enabled=True 就生效
+        # - 如果辅助线在某个方向有吸附 → 该方向使用辅助线吸附
+        # - 如果辅助线在某个方向没有吸附 → 该方向可以使用边缘吸附
+        edge_snap_x = None
+        edge_snap_y = None
+        if self.edge_snap_enabled:
+            edge_snap_offset = self._detect_edge_snap(moving_rects, self.edge_snap_distance)
+            if edge_snap_offset is not None:
+                edge_snap_x = edge_snap_offset.x() if edge_snap_offset.x() != 0 else None
+                edge_snap_y = edge_snap_offset.y() if edge_snap_offset.y() != 0 else None
+
+        # 合并辅助线吸附和边缘吸附：
+        # - 水平方向：辅助线吸附优先（如果 enable_snap=True 且有吸附），否则使用边缘吸附
+        # - 垂直方向：辅助线吸附优先（如果 enable_snap=True 且有吸附），否则使用边缘吸附
+        final_snap_x = snap_x if snap_x is not None else edge_snap_x
+        final_snap_y = snap_y if snap_y is not None else edge_snap_y
+
+        # 计算最终吸附偏移量
         snap_offset = None
-        if snap_x is not None or snap_y is not None:
-            snap_offset = QtCore.QPointF(snap_x if snap_x is not None else 0, snap_y if snap_y is not None else 0)
+        if final_snap_x is not None or final_snap_y is not None:
+            snap_offset = QtCore.QPointF(
+                final_snap_x if final_snap_x is not None else 0,
+                final_snap_y if final_snap_y is not None else 0
+            )
 
         return snap_offset, guide_lines
+
+    def _detect_edge_snap(self, moving_rects, snap_distance):
+        """
+        检测边缘吸附（矩形边缘贴边）
+
+        Args:
+            moving_rects: 正在移动的矩形列表
+            snap_distance: 吸附距离
+
+        Returns:
+            QtCore.QPointF: 吸附偏移量，如果没有吸附则返回None
+        """
+        if not moving_rects:
+            return None
+
+        # 获取所有移动形状的整体边界
+        all_left = min(r['left'] for r in moving_rects)
+        all_right = max(r['right'] for r in moving_rects)
+        all_top = min(r['top'] for r in moving_rects)
+        all_bottom = max(r['bottom'] for r in moving_rects)
+
+        snap_x = None
+        snap_y = None
+        min_dist_x = snap_distance
+        min_dist_y = snap_distance
+
+        # 遍历所有其他形状，检测边缘吸附
+        for other_shape in self.shapes:
+            if not self.is_visible(other_shape):
+                continue
+
+            # 检查是否是正在移动的形状
+            is_moving = False
+            other_rect = other_shape.bounding_rect()
+            for moving_rect in moving_rects:
+                if (abs(other_rect.left() - moving_rect['left']) < 0.1 and
+                    abs(other_rect.right() - moving_rect['right']) < 0.1 and
+                    abs(other_rect.top() - moving_rect['top']) < 0.1 and
+                    abs(other_rect.bottom() - moving_rect['bottom']) < 0.1):
+                    is_moving = True
+                    break
+
+            if is_moving:
+                continue
+
+            target_left = other_rect.left()
+            target_right = other_rect.right()
+            target_top = other_rect.top()
+            target_bottom = other_rect.bottom()
+
+            # 检测水平边缘吸附（左右边缘贴边）
+            if self.edge_snap_left:
+                # 移动矩形的左边 贴 目标矩形的右边
+                dist = abs(all_left - target_right)
+                if dist < min_dist_x:
+                    min_dist_x = dist
+                    snap_x = target_right - all_left
+
+            if self.edge_snap_right:
+                # 移动矩形的右边 贴 目标矩形的左边
+                dist = abs(all_right - target_left)
+                if dist < min_dist_x:
+                    min_dist_x = dist
+                    snap_x = target_left - all_right
+
+            # 检测垂直边缘吸附（上下边缘贴边）
+            if self.edge_snap_top:
+                # 移动矩形的上边 贴 目标矩形的下边
+                dist = abs(all_top - target_bottom)
+                if dist < min_dist_y:
+                    min_dist_y = dist
+                    snap_y = target_bottom - all_top
+
+            if self.edge_snap_bottom:
+                # 移动矩形的下边 贴 目标矩形的上边
+                dist = abs(all_bottom - target_top)
+                if dist < min_dist_y:
+                    min_dist_y = dist
+                    snap_y = target_bottom - all_bottom
+
+        # 返回吸附偏移量
+        if snap_x is not None or snap_y is not None:
+            return QtCore.QPointF(snap_x if snap_x is not None else 0, snap_y if snap_y is not None else 0)
+
+        return None
 
     def detect_vertex_smart_guides(self, shape, vertex_index, new_pos):
         """
@@ -5355,6 +5602,7 @@ class Canvas(
         Returns:
             QPointF: 吸附偏移量，如果没有吸附则为None
         """
+        # 🎯 如果辅助线未启用，则不显示也不吸附
         if not self.smart_guides_enabled:
             return None
 
@@ -5391,11 +5639,14 @@ class Canvas(
         }
 
         # 检测与其他形状的对齐
-        guide_lines = []
         snap_x = None
         snap_y = None
-        min_dist_x = self.smart_guides_align_distance
-        min_dist_y = self.smart_guides_align_distance
+        min_dist_x = self.smart_guides_snap_distance
+        min_dist_y = self.smart_guides_snap_distance
+
+        # 🎯 修复：使用字典去重，同时保留水平和垂直辅助线
+        v_line_positions = {}  # 垂直线的 x 坐标 -> 距离
+        h_line_positions = {}  # 水平线的 y 坐标 -> 距离
 
         for other_shape in self.shapes:
             if other_shape == shape or not self.is_visible(other_shape):
@@ -5411,45 +5662,75 @@ class Canvas(
                 'center_y': other_rect.center().y(),
             }
 
-            # 检测水平对齐
+            # 检测水平对齐（只有左右边，不包括中心）
             h_alignments = [
                 ('left', moving_bounds['left'], target['left']),
                 ('right', moving_bounds['right'], target['right']),
-                ('center_x', moving_bounds['center_x'], target['center_x']),
             ]
 
             for align_type, moving_pos, target_pos in h_alignments:
                 dist = abs(moving_pos - target_pos)
-                if dist < min_dist_x:
-                    min_dist_x = dist
-                    snap_x = target_pos - moving_pos
-                    # 添加垂直参考线
-                    guide_lines = [gl for gl in guide_lines if gl[4] != 'vertical']
-                    guide_lines.append((target_pos, 0, target_pos, self.pixmap.height() if self.pixmap else 10000, 'vertical'))
 
-            # 检测垂直对齐
+                # 🎯 辅助线显示：在显示距离内就显示（去重，保留距离最近的）
+                if dist <= self.smart_guides_display_distance:
+                    if target_pos not in v_line_positions or dist < v_line_positions[target_pos]:
+                        v_line_positions[target_pos] = dist
+
+                # 🎯 吸附功能：根据方向开关决定是否吸附（只有左右边）
+                if dist < min_dist_x:
+                    # 检查该方向是否启用吸附
+                    should_snap = False
+                    if align_type == 'left':
+                        should_snap = self.smart_guides_snap_left
+                    elif align_type == 'right':
+                        should_snap = self.smart_guides_snap_right
+
+                    if should_snap:
+                        min_dist_x = dist
+                        snap_x = target_pos - moving_pos
+
+            # 检测垂直对齐（只有上下边，不包括中心）
             v_alignments = [
                 ('top', moving_bounds['top'], target['top']),
                 ('bottom', moving_bounds['bottom'], target['bottom']),
-                ('center_y', moving_bounds['center_y'], target['center_y']),
             ]
 
             for align_type, moving_pos, target_pos in v_alignments:
                 dist = abs(moving_pos - target_pos)
-                if dist < min_dist_y:
-                    min_dist_y = dist
-                    snap_y = target_pos - moving_pos
-                    # 添加水平参考线
-                    guide_lines = [gl for gl in guide_lines if gl[4] != 'horizontal']
-                    guide_lines.append((0, target_pos, self.pixmap.width() if self.pixmap else 10000, target_pos, 'horizontal'))
 
-        # 更新参考线
+                # 🎯 辅助线显示：在显示距离内就显示（去重，保留距离最近的）
+                if dist <= self.smart_guides_display_distance:
+                    if target_pos not in h_line_positions or dist < h_line_positions[target_pos]:
+                        h_line_positions[target_pos] = dist
+
+                # 🎯 吸附功能：根据方向开关决定是否吸附（只有上下边）
+                if dist < min_dist_y:
+                    # 检查该方向是否启用吸附
+                    should_snap = False
+                    if align_type == 'top':
+                        should_snap = self.smart_guides_snap_top
+                    elif align_type == 'bottom':
+                        should_snap = self.smart_guides_snap_bottom
+
+                    if should_snap:
+                        min_dist_y = dist
+                        snap_y = target_pos - moving_pos
+
+        # 🎯 生成辅助线列表
+        guide_lines = []
+        for x_pos in v_line_positions.keys():
+            guide_lines.append((x_pos, 0, x_pos, self.pixmap.height() if self.pixmap else 10000, 'vertical'))
+        for y_pos in h_line_positions.keys():
+            guide_lines.append((0, y_pos, self.pixmap.width() if self.pixmap else 10000, y_pos, 'horizontal'))
+
+        # 更新参考线（总是显示）
         self.smart_guides_lines = guide_lines
 
-        # 计算吸附偏移量
+        # 🎯 计算吸附偏移量（只有在吸附功能启用时才返回）
         snap_offset = None
-        if snap_x is not None or snap_y is not None:
-            snap_offset = QtCore.QPointF(snap_x if snap_x is not None else 0, snap_y if snap_y is not None else 0)
+        if self.smart_guides_enable_snap:
+            if snap_x is not None or snap_y is not None:
+                snap_offset = QtCore.QPointF(snap_x if snap_x is not None else 0, snap_y if snap_y is not None else 0)
 
         return snap_offset
 
@@ -5544,6 +5825,19 @@ class Canvas(
         # 绘制所有参考线
         for line in self.smart_guides_lines:
             x1, y1, x2, y2, line_type = line
+
+            # 🎯 根据开关过滤水平/垂直辅助线
+            # 水平线：y1 == y2
+            # 垂直线：x1 == x2
+            is_horizontal = (y1 == y2)
+            is_vertical = (x1 == x2)
+
+            # 如果是水平线但关闭了水平辅助线显示，跳过
+            if is_horizontal and not self.smart_guides_show_horizontal:
+                continue
+            # 如果是垂直线但关闭了垂直辅助线显示，跳过
+            if is_vertical and not self.smart_guides_show_vertical:
+                continue
 
             # 🎯 对于倾斜线（旋转矩形的边），延长到画布边界
             if line_type.startswith('rotated_'):
@@ -5694,10 +5988,24 @@ class Canvas(
             temp_shapes.append(temp_shape)
 
         # 虚影模式下的辅助线独立于画布辅助线的开关
-        # 虚影辅助线始终显示（只要处于虚影模式）
-        # 使用 force_enable=True 强制启用辅助线检测（绕过画布辅助线开关）
-        snap_offset, guide_lines = self.detect_smart_guides(temp_shapes, force_enable=True)
-        self.smart_guides_lines = guide_lines
+        # 根据粘贴模式的辅助线显示开关决定是否显示辅助线
+        snap_offset = None
+        if self.smart_guides_paste_show_guides:
+            # 使用 force_enable=True 强制启用辅助线检测（绕过画布辅助线开关）
+            # enable_snap 参数控制是否启用吸附功能
+            # snap_distance 参数使用粘贴模式的独立吸附距离
+            # use_paste_mode_switches=True 使用粘贴模式的方向开关
+            snap_offset, guide_lines = self.detect_smart_guides(
+                temp_shapes,
+                force_enable=True,
+                enable_snap=self.smart_guides_paste_enable_snap,
+                snap_distance=self.smart_guides_paste_snap_distance,
+                use_paste_mode_switches=True
+            )
+            self.smart_guides_lines = guide_lines
+        else:
+            # 不显示辅助线
+            self.smart_guides_lines = []
 
         # 虚影模式下的间距线
         if self.spacing_guide_enabled:
@@ -5709,9 +6017,11 @@ class Canvas(
                 selected_only=self.spacing_guide_selected_only
             )
             self.spacing_guide_lines = spacing_lines
+        else:
+            self.spacing_guide_lines = []
 
-        # 如果有吸附偏移，应用它
-        if snap_offset:
+        # 如果启用了吸附功能且有吸附偏移，应用它
+        if self.smart_guides_paste_enable_snap and snap_offset:
             self.paste_preview_mouse_pos = QtCore.QPointF(
                 canvas_pos.x() + snap_offset.x(),
                 canvas_pos.y() + snap_offset.y()

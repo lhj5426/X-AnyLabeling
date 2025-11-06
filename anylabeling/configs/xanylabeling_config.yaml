@@ -218,14 +218,40 @@ custom_models: []
 digit_shortcuts: null
 
 # Smart guides (辅助线)
-smart_guides_enabled: true
+smart_guides_enabled: true  # 是否显示辅助线
+smart_guides_enable_snap: true  # 是否启用辅助线吸附功能（可以只显示辅助线不吸附）
+smart_guides_show_horizontal: true  # 是否显示水平辅助线
+smart_guides_show_vertical: true  # 是否显示垂直辅助线
 smart_guides_line_width: 2.0
 smart_guides_line_color: [255, 0, 255]
 smart_guides_opacity: 0.8
 smart_guides_display_distance: 100  # 辅助线显示距离（像素）- 在此距离内才检测和显示辅助线
 smart_guides_snap_distance: 10  # 吸附距离（像素）- 磁铁效果，在此距离内才自动吸附
 smart_guides_max_lines: 10  # 最大辅助线条数 - 只显示最近的N条
+# 辅助线方向吸附开关（可以独立控制每个方向的吸附，只有4条边）
+smart_guides_snap_left: true  # 是否启用左边对齐吸附
+smart_guides_snap_right: true  # 是否启用右边对齐吸附
+smart_guides_snap_top: true  # 是否启用上边对齐吸附
+smart_guides_snap_bottom: true  # 是否启用下边对齐吸附
+# 粘贴模式辅助线
 smart_guides_paste_preview_enabled: true
+smart_guides_paste_show_guides: true  # 粘贴模式下是否显示辅助线
+smart_guides_paste_enable_snap: true  # 粘贴模式下是否启用吸附功能
+smart_guides_paste_snap_distance: 10  # 粘贴模式下的吸附距离（像素）
+# 粘贴模式方向吸附开关（可以独立控制每个方向的吸附，只有4条边）
+smart_guides_paste_snap_left: true  # 粘贴模式：是否启用左边对齐吸附
+smart_guides_paste_snap_right: true  # 粘贴模式：是否启用右边对齐吸附
+smart_guides_paste_snap_top: true  # 粘贴模式：是否启用上边对齐吸附
+smart_guides_paste_snap_bottom: true  # 粘贴模式：是否启用下边对齐吸附
+
+# 边缘吸附设置
+edge_snap_enabled: false  # 是否启用边缘吸附功能
+edge_snap_distance: 50  # 边缘吸附距离（像素）- 在此距离内自动吸附
+edge_snap_release_distance: 3  # 脱离吸附距离（像素）- 反方向移动超过此距离可解锁吸附
+edge_snap_left: true  # 是否启用左边缘吸附
+edge_snap_right: true  # 是否启用右边缘吸附
+edge_snap_top: true  # 是否启用上边缘吸附
+edge_snap_bottom: true  # 是否启用下边缘吸附
 
 # Rectangle spacing guide (矩形间距线)
 spacing_guide_enabled: true
