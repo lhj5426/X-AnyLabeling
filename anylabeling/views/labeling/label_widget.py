@@ -7418,6 +7418,9 @@ class LabelingWidget(QtWidgets.QWidget):
         # Update expand margins dialog colors if open
         self._update_expand_margins_colors()
 
+        # Update rectangle scale dialog page range if open
+        self._update_rectangle_scale_page_range()
+
         return True
 
     # QT Overload
@@ -8916,6 +8919,20 @@ class LabelingWidget(QtWidgets.QWidget):
             self.expand_margins_dialog is not None and
             self.expand_margins_dialog.isVisible()):
             self.expand_margins_dialog.refresh_colors()
+
+    def _update_rectangle_scale_page_range(self):
+        """Update page range in rectangle scale dialog if it's open and visible."""
+        if (hasattr(self, 'rectangle_scale_dialog') and
+            self.rectangle_scale_dialog is not None and
+            self.rectangle_scale_dialog.isVisible()):
+            # 获取当前页码
+            if self.filename and self.filename in self.fn_to_index:
+                current_page = self.fn_to_index[str(self.filename)] + 1  # 从0开始，所以+1
+            else:
+                current_page = 1
+            total_pages = len(self.image_list) if self.image_list else 0
+            # 更新页面范围
+            self.rectangle_scale_dialog.update_page_range(current_page, total_pages)
 
     def open_merge_tool(self):
         if not self.image_list:
