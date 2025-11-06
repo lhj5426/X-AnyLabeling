@@ -4877,8 +4877,14 @@ class LabelingWidget(QtWidgets.QWidget):
                 Shape.select_fill_color = color
             elif key == ['shape', 'vertex_fill_color']:
                 Shape.vertex_fill_color = color
+                # 🎯 更新所有已有形状的顶点颜色
+                for shape in self.canvas.shapes:
+                    shape.vertex_fill_color = color
             elif key == ['shape', 'hvertex_fill_color']:
                 Shape.hvertex_fill_color = color
+                # 🎯 更新所有已有形状的高亮顶点颜色
+                for shape in self.canvas.shapes:
+                    shape.hvertex_fill_color = color
             elif key == ['shape', 'alignment_reference_color']:
                 self.canvas.alignment_reference_color = color
             elif key == ['shape', 'alignment_target_color']:
@@ -6142,8 +6148,9 @@ class LabelingWidget(QtWidgets.QWidget):
     def _update_shape_color(self, shape):
         r, g, b = self._get_rgb_by_label(shape.label)
         shape.line_color = QtGui.QColor(r, g, b)
-        shape.vertex_fill_color = QtGui.QColor(r, g, b)
-        shape.hvertex_fill_color = QtGui.QColor(255, 255, 255)
+        # 🎯 不再覆盖顶点颜色，使用配置文件中的设置
+        # shape.vertex_fill_color = QtGui.QColor(r, g, b)
+        # shape.hvertex_fill_color = QtGui.QColor(255, 255, 255)
         shape.fill_color = QtGui.QColor(r, g, b, 128)
         shape.select_line_color = QtGui.QColor(r, g, b)
         shape.select_fill_color = QtGui.QColor(r, g, b, 155)

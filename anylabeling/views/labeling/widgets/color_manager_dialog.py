@@ -66,7 +66,7 @@ class ColorManagerDialog(QDialog):
         left_form.addRow(self.tr("填充颜色:"), self.fill_color_button)
 
         self.hvertex_fill_color_button = self.create_color_button(['shape', 'hvertex_fill_color'], self.config['shape']['hvertex_fill_color'])
-        left_form.addRow(self.tr("高亮顶点填充颜色:"), self.hvertex_fill_color_button)
+        left_form.addRow(self.tr("拖拽时顶点填充色:"), self.hvertex_fill_color_button)
 
         self.line_color_button = self.create_color_button(['shape', 'line_color'], self.config['shape']['line_color'])
         left_form.addRow(self.tr("选择标签时填充颜色:"), self.line_color_button)
@@ -133,7 +133,7 @@ class ColorManagerDialog(QDialog):
         right_form.addRow(self.tr("形状填充默认透明度:"), self.shape_fill_alpha_idle_spinbox)
 
         self.vertex_fill_color_button = self.create_color_button(['shape', 'vertex_fill_color'], self.config['shape']['vertex_fill_color'])
-        right_form.addRow(self.tr("顶点填充颜色:"), self.vertex_fill_color_button)
+        right_form.addRow(self.tr("选中时顶点填充色:"), self.vertex_fill_color_button)
 
         # Alignment tool settings
         self.alignment_reference_color_button = self.create_color_button(['shape', 'alignment_reference_color'], self.config['shape'].get('alignment_reference_color', [255, 0, 255, 255]))
