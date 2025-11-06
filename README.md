@@ -44,7 +44,7 @@ https://github.com/lhj5426/YSG
 
 识别完是可以直接训练的,你能吗
 
-[魔改内容说明](https://github.com/lhj5426/X-AnyLabeling/blob/mogai/READMEZH.md)
+[魔改项说明](https://github.com/lhj5426/X-AnyLabeling/blob/mogai/READMEZH.md)
 
 
 
