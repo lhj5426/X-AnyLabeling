@@ -456,6 +456,11 @@ https://github.com/user-attachments/assets/e9898115-d830-4565-8a55-cc42ded57fb2
 
 https://github.com/user-attachments/assets/183d7ca9-ce35-4442-977b-8d71b6d18ccd
 
+76.增加 矩形缩放工具 
+
+https://github.com/user-attachments/assets/ae6a16c1-f74c-4ae6-bcf3-e9b385a3ed0c
+
+
 
 
 
