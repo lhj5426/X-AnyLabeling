@@ -4255,11 +4255,8 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.update()
         self.set_dirty()
 
-        # 显示结果到日志
-        self.rectangle_scale_dialog.add_log(
-            self.tr(f"✅ 当前页面缩放完成！缩放了 {scaled_count} 个矩形，比例: {scale_factor:.4f}"),
-            "success"
-        )
+        # 记录缩放历史并显示结果到日志
+        self.rectangle_scale_dialog.record_scale_history(scale_factor, scaled_count)
         logger.info(f"Current page scaled: {scaled_count} shapes by factor {scale_factor:.4f}")
 
     def _scale_all_pages(self, scale_factor):
@@ -4384,11 +4381,8 @@ class LabelingWidget(QtWidgets.QWidget):
         if current_filename and current_filename in self.image_list:
             self.load_file(current_filename)
 
-        # 显示结果
-        self.rectangle_scale_dialog.add_log(
-            self.tr(f"✅ 批量缩放完成！处理了 {files_processed} 个文件，共 {total_scaled} 个矩形，比例: {scale_factor:.4f}"),
-            "success"
-        )
+        # 记录缩放历史并显示结果
+        self.rectangle_scale_dialog.record_scale_history(scale_factor, total_scaled, is_batch=True, files_count=files_processed)
         logger.info(f"All pages scaled: {files_processed} files, {total_scaled} shapes by factor {scale_factor:.4f}")
 
     def _scale_page_range(self, scale_factor, start_page, end_page):
@@ -4528,11 +4522,8 @@ class LabelingWidget(QtWidgets.QWidget):
         if current_filename and current_filename in self.image_list:
             self.load_file(current_filename)
 
-        # 显示结果
-        self.rectangle_scale_dialog.add_log(
-            self.tr(f"✅ 范围缩放完成！处理了 {files_processed} 个文件（第{start_page}-{end_page}页），共 {total_scaled} 个矩形，比例: {scale_factor:.4f}"),
-            "success"
-        )
+        # 记录缩放历史并显示结果
+        self.rectangle_scale_dialog.record_scale_history(scale_factor, total_scaled, is_batch=True, files_count=files_processed, page_range=(start_page, end_page))
         logger.info(f"Page range {start_page}-{end_page} scaled: {files_processed} files, {total_scaled} shapes by factor {scale_factor:.4f}")
 
     def on_rectangle3_width_changed(self, width):

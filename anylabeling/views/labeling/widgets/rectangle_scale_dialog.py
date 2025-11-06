@@ -25,6 +25,9 @@ class RectangleScaleDialog(QtWidgets.QDialog):
             | Qt.WindowCloseButtonHint
         )
 
+        # 缩放历史记录：{比例: 次数}
+        self.scale_history = {}
+
         self.init_ui()
         self.load_settings()
 
@@ -345,6 +348,11 @@ class RectangleScaleDialog(QtWidgets.QDialog):
         self.clear_log_button.clicked.connect(self.clear_log)
         self.clear_log_button.setMaximumWidth(70)
 
+        self.reset_history_button = QtWidgets.QPushButton(self.tr("重置历史"))
+        self.reset_history_button.clicked.connect(self.reset_scale_history)
+        self.reset_history_button.setMaximumWidth(70)
+        self.reset_history_button.setToolTip(self.tr("重置缩放次数统计"))
+
         self.close_button = QtWidgets.QPushButton(self.tr("关闭"))
         self.close_button.clicked.connect(self.close)
         self.close_button.setMaximumWidth(60)
@@ -352,6 +360,7 @@ class RectangleScaleDialog(QtWidgets.QDialog):
         button_layout.addWidget(self.apply_button)
         button_layout.addWidget(self.reset_button)
         button_layout.addWidget(self.clear_log_button)
+        button_layout.addWidget(self.reset_history_button)
         button_layout.addWidget(self.close_button)
 
         layout.addLayout(button_layout)
@@ -697,6 +706,65 @@ class RectangleScaleDialog(QtWidgets.QDialog):
         """清空日志"""
         self.log_text.clear()
         self.add_log(self.tr("日志已清空"), "info")
+
+    def record_scale_history(self, scale_factor, scaled_count, is_batch=False, files_count=0, page_range=None):
+        """记录缩放历史并显示带次数的日志
+
+        Args:
+            scale_factor: 缩放比例
+            scaled_count: 缩放的矩形数量
+            is_batch: 是否为批量缩放
+            files_count: 批量缩放时处理的文件数量
+            page_range: 页面范围 (start, end) 或 None
+        """
+        # 将比例四舍五入到4位小数作为key，避免浮点数精度问题
+        scale_key = round(scale_factor, 4)
+
+        # 记录或更新次数
+        if scale_key in self.scale_history:
+            self.scale_history[scale_key] += 1
+        else:
+            self.scale_history[scale_key] = 1
+
+        times = self.scale_history[scale_key]
+
+        # 构建日志消息
+        if is_batch:
+            # 批量缩放
+            if page_range:
+                start, end = page_range
+                base_msg = self.tr(f"✅ 范围缩放完成！处理了 {files_count} 个文件（第{start}-{end}页），共 {scaled_count} 个矩形，比例: {scale_factor:.4f}")
+            else:
+                base_msg = self.tr(f"✅ 批量缩放完成！处理了 {files_count} 个文件，共 {scaled_count} 个矩形，比例: {scale_factor:.4f}")
+
+            if times == 1:
+                message = base_msg + self.tr(" [第1次]")
+                level = "success"
+            else:
+                message = base_msg + self.tr(f" [第{times}次] ⚠️ 重复操作")
+                level = "warning"
+        else:
+            # 单页缩放
+            if times == 1:
+                message = self.tr(f"✅ 当前页面缩放完成！缩放了 {scaled_count} 个矩形，比例: {scale_factor:.4f} [第1次]")
+                level = "success"
+            else:
+                message = self.tr(f"✅ 当前页面缩放完成！缩放了 {scaled_count} 个矩形，比例: {scale_factor:.4f} [第{times}次] ⚠️ 重复操作")
+                level = "warning"
+
+        self.add_log(message, level)
+
+        # 如果连续使用相同比例超过2次，额外提示
+        if times >= 3:
+            self.add_log(
+                self.tr(f"💡 提示：比例 {scale_factor:.4f} 已使用 {times} 次，如需还原可使用累乘还原功能"),
+                "info"
+            )
+
+    def reset_scale_history(self):
+        """重置缩放历史记录"""
+        self.scale_history.clear()
+        self.add_log(self.tr("🔄 缩放历史已重置"), "info")
 
     def update_progress(self, current, total, message=""):
         """更新进度条
