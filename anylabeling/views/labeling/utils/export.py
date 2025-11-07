@@ -433,9 +433,18 @@ def export_yolo_annotation(self, mode):
     path_input_layout = QHBoxLayout()
     path_input_layout.setSpacing(8)
 
+    # Set default folder name based on mode
+    folder_names = {
+        "hbb": "labels",
+        "obb": "OBB_labels",
+        "seg": "SEG_labels",
+        "pose": "POSE_labels"
+    }
+    default_folder = folder_names.get(mode, "labels")
+
     path_edit = QtWidgets.QLineEdit()
     path_edit.setText(
-        osp.realpath(osp.join(osp.dirname(self.filename), "..", "labels"))
+        osp.realpath(osp.join(osp.dirname(self.filename), "..", default_folder))
     )
     path_edit.setPlaceholderText(self.tr("Select Export Directory"))
 

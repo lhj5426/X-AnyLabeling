@@ -99,6 +99,18 @@ class OverviewDialog(QtWidgets.QDialog):
         self.start_index = 1
         self.end_index = len(self.image_file_list)
         self.showing_label_infos = True
+        # Shape type translation mapping
+        self.shape_type_translation = {
+            "polygon": self.tr("多边形"),
+            "rectangle": self.tr("矩形"),
+            "rectangle3": self.tr("三点矩形"),
+            "rotation": self.tr("旋转框"),
+            "rotation3": self.tr("三点旋转框"),
+            "point": self.tr("点"),
+            "line": self.tr("线"),
+            "circle": self.tr("圆"),
+            "linestrip": self.tr("折线"),
+        }
         if self.image_file_list:
             self.init_ui()
 
@@ -291,7 +303,12 @@ class OverviewDialog(QtWidgets.QDialog):
         Get the total information for the images in the current project.
         """
         label_infos, shape_infos = self.get_label_infos(start_index, end_index)
-        total_infos = [["Label"] + self.supported_shape + ["Total"]]
+        # Translate shape type names
+        translated_shapes = [
+            self.shape_type_translation.get(shape, shape)
+            for shape in self.supported_shape
+        ]
+        total_infos = [[self.tr("标签")] + translated_shapes + [self.tr("总计")]]
         shape_counter = [0 for _ in range(len(self.supported_shape) + 1)]
 
         for label, infos in label_infos.items():
@@ -303,7 +320,7 @@ class OverviewDialog(QtWidgets.QDialog):
             total_infos.append(row)
             shape_counter = [x + y for x, y in zip(counter, shape_counter)]
 
-        total_infos.append(["Total"] + shape_counter)
+        total_infos.append([self.tr("总计")] + shape_counter)
         return total_infos, shape_infos
 
     def get_shape_infos_table(self, shape_infos):
@@ -311,15 +328,15 @@ class OverviewDialog(QtWidgets.QDialog):
         Get the shape information table for the images in the current project.
         """
         headers = [
-            "Filename",
-            "Label",
-            "Type",
-            "Linking",
-            "Group ID",
-            "Difficult",
-            "Description",
-            "Flags",
-            "Points",
+            self.tr("文件名"),
+            self.tr("标签"),
+            self.tr("类型"),
+            self.tr("关联"),
+            self.tr("组ID"),
+            self.tr("困难"),
+            self.tr("描述"),
+            self.tr("标记"),
+            self.tr("坐标点"),
         ]
         table_data = []
         for shape in shape_infos:
