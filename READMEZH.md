@@ -414,6 +414,11 @@ https://github.com/user-attachments/assets/183d7ca9-ce35-4442-977b-8d71b6d18ccd
 
 https://github.com/user-attachments/assets/ae6a16c1-f74c-4ae6-bcf3-e9b385a3ed0c
 
+77.4点矩形控制柄改成8点矩形控制柄
+
+https://github.com/user-attachments/assets/23d7b9c5-4eb0-4ac0-b6ec-9de29fcc8779
+
+
 
 
 
