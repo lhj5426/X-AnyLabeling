@@ -418,6 +418,11 @@ class Shape:
                         line_path.lineTo(p)
                         if self.selected:
                             self.draw_vertex(vrtx_path, i)
+                    # Draw edge midpoints for 8-point adjustment
+                    if self.selected:
+                        midpoints = self.get_edge_midpoints()
+                        for i, midpoint in enumerate(midpoints):
+                            self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
             elif self.shape_type == "rotation":
@@ -440,6 +445,11 @@ class Shape:
                         line_path.lineTo(p)
                         if self.selected:
                             self.draw_vertex(vrtx_path, i)
+                    # Draw edge midpoints for 8-point adjustment
+                    if self.selected:
+                        midpoints = self.get_edge_midpoints()
+                        for i, midpoint in enumerate(midpoints):
+                            self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
             elif self.shape_type == "rotation3":
@@ -462,6 +472,11 @@ class Shape:
                         line_path.lineTo(p)
                         if self.selected:
                             self.draw_vertex(vrtx_path, i)
+                    # Draw edge midpoints for 8-point adjustment
+                    if self.selected:
+                        midpoints = self.get_edge_midpoints()
+                        for i, midpoint in enumerate(midpoints):
+                            self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
             elif self.shape_type == "circle":
@@ -549,17 +564,60 @@ class Shape:
         else:
             logger.error("Unsupported vertex shape")
 
+    def draw_edge_midpoint(self, path, point, virtual_index):
+        """Draw an edge midpoint control point
+
+        Args:
+            path: QPainterPath to draw on
+            point: QPointF position of the midpoint
+            virtual_index: Virtual index (4-7) for highlighting
+        """
+        d = self.point_size / self.scale
+
+        # Check if this midpoint is highlighted
+        if virtual_index == self._highlight_index:
+            size, _ = self._highlight_settings[self._highlight_mode]
+            d *= size
+            self._vertex_fill_color = self.hvertex_fill_color
+        else:
+            self._vertex_fill_color = self.vertex_fill_color
+
+        # Draw edge midpoints as squares to distinguish from corner vertices (circles)
+        path.addRect(point.x() - d / 2, point.y() - d / 2, d, d)
+
     def nearest_vertex(self, point, epsilon):
         """Find the index of the nearest vertex to a point
         Only consider if the distance is smaller than epsilon
+
+        For rectangle shapes (rectangle, rotation, rotation3), this method also
+        checks edge midpoints. Returns:
+        - 0-3: corner vertices (actual points)
+        - 4-7: edge midpoints (virtual points)
+          - 4: midpoint of edge 0-1
+          - 5: midpoint of edge 1-2
+          - 6: midpoint of edge 2-3
+          - 7: midpoint of edge 3-0
         """
         min_distance = float("inf")
         min_i = None
+
+        # Check corner vertices
         for i, p in enumerate(self.points):
             dist = utils.distance(p - point)
             if dist <= epsilon and dist < min_distance:
                 min_distance = dist
                 min_i = i
+
+        # For rectangle shapes, also check edge midpoints
+        if self.shape_type in ["rectangle", "rotation", "rotation3"] and len(self.points) == 4:
+            midpoints = self.get_edge_midpoints()
+            for i, midpoint in enumerate(midpoints):
+                dist = utils.distance(midpoint - point)
+                # Use a slightly larger epsilon for midpoints to make them easier to grab
+                if dist <= epsilon * 1.2 and dist < min_distance:
+                    min_distance = dist
+                    min_i = i + 4  # Use indices 4-7 for edge midpoints
+
         return min_i
 
     def nearest_edge(self, point, epsilon):
@@ -573,6 +631,32 @@ class Shape:
                 min_distance = dist
                 post_i = i
         return post_i
+
+    def get_edge_midpoints(self):
+        """
+        Get midpoints of all edges for rectangle shapes.
+
+        Returns:
+            list: List of QPointF representing edge midpoints.
+                  For rectangles with 4 points, returns 4 midpoints:
+                  [midpoint_0_1, midpoint_1_2, midpoint_2_3, midpoint_3_0]
+        """
+        if len(self.points) < 2:
+            return []
+
+        midpoints = []
+        num_points = len(self.points)
+
+        for i in range(num_points):
+            p1 = self.points[i]
+            p2 = self.points[(i + 1) % num_points]
+            midpoint = QtCore.QPointF(
+                (p1.x() + p2.x()) / 2.0,
+                (p1.y() + p2.y()) / 2.0
+            )
+            midpoints.append(midpoint)
+
+        return midpoints
 
     def contains_point(self, point: QtCore.QPointF) -> bool:
         """

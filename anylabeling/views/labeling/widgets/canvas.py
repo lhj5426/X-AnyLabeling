@@ -2375,8 +2375,23 @@ class Canvas(
         return QtCore.QPointF(x, y)
 
     def bounded_move_vertex(self, pos):
-        """Move a vertex. Adjust position to be bounded by pixmap border"""
+        """Move a vertex. Adjust position to be bounded by pixmap border
+
+        Supports 8-point adjustment for rectangles:
+        - Indices 0-3: corner vertices
+        - Indices 4-7: edge midpoints (virtual points)
+        """
         index, shape = self.h_vertex, self.h_hape
+
+        # Check if this is an edge midpoint (indices 4-7)
+        is_edge_midpoint = index >= 4 and index <= 7
+
+        if is_edge_midpoint:
+            # Handle edge midpoint dragging
+            self._move_edge_midpoint(shape, index, pos)
+            return
+
+        # Original corner vertex handling
         point = shape[index]
 
         # 🎯 第一次拖拽顶点时，保存原始状态（模仿粘贴模式）
@@ -2445,6 +2460,113 @@ class Canvas(
             shape.move_vertex_by(left_index, left_shift)
         else:
             shape.move_vertex_by(index, new_vertex_pos - point)
+
+    def _move_edge_midpoint(self, shape, virtual_index, pos):
+        """Move an edge midpoint to adjust rectangle edge
+
+        Args:
+            shape: The shape being adjusted
+            virtual_index: Virtual index (4-7) representing edge midpoint
+            pos: New mouse position
+
+        Edge midpoint mapping:
+        - 4: midpoint of edge 0-1 (top edge for standard rectangle)
+        - 5: midpoint of edge 1-2 (right edge)
+        - 6: midpoint of edge 2-3 (bottom edge)
+        - 7: midpoint of edge 3-0 (left edge)
+        """
+        if shape.shape_type not in ["rectangle", "rotation", "rotation3"]:
+            return
+
+        if len(shape.points) != 4:
+            return
+
+        # 🎯 第一次拖拽边中点时，保存原始状态
+        if self.vertex_drag_original_points is None or self.vertex_drag_index != virtual_index:
+            self.vertex_drag_original_points = [QtCore.QPointF(pt.x(), pt.y()) for pt in shape.points]
+            self.vertex_drag_start_mouse_pos = self.prev_point
+            self.vertex_drag_index = virtual_index
+
+        # 计算鼠标的总偏移量
+        total_offset = pos - self.vertex_drag_start_mouse_pos
+
+        # Get edge index (0-3)
+        edge_index = virtual_index - 4
+
+        # Get the two vertices of this edge
+        v1_index = edge_index
+        v2_index = (edge_index + 1) % 4
+
+        # Get original positions
+        original_v1 = self.vertex_drag_original_points[v1_index]
+        original_v2 = self.vertex_drag_original_points[v2_index]
+
+        # 🎯 计算边中点的新位置（用于辅助线检测）
+        original_midpoint = QtCore.QPointF(
+            (original_v1.x() + original_v2.x()) / 2,
+            (original_v1.y() + original_v2.y()) / 2
+        )
+        new_midpoint_pos = QtCore.QPointF(
+            original_midpoint.x() + total_offset.x(),
+            original_midpoint.y() + total_offset.y()
+        )
+
+        # 🎯 检测智能参考线对齐（针对边中点移动）
+        snap_offset = self.detect_vertex_smart_guides(shape, virtual_index, new_midpoint_pos)
+        if snap_offset:
+            # 应用吸附偏移
+            new_midpoint_pos = QtCore.QPointF(
+                new_midpoint_pos.x() + snap_offset.x(),
+                new_midpoint_pos.y() + snap_offset.y()
+            )
+            # 更新总偏移量
+            total_offset = new_midpoint_pos - original_midpoint
+
+        if shape.shape_type == "rectangle":
+            # For axis-aligned rectangles, move edge perpendicular to its direction
+            # Determine if this is a horizontal or vertical edge
+            is_horizontal = abs(original_v1.y() - original_v2.y()) < abs(original_v1.x() - original_v2.x())
+
+            if is_horizontal:
+                # Horizontal edge - move vertically only
+                new_v1 = QtCore.QPointF(original_v1.x(), original_v1.y() + total_offset.y())
+                new_v2 = QtCore.QPointF(original_v2.x(), original_v2.y() + total_offset.y())
+            else:
+                # Vertical edge - move horizontally only
+                new_v1 = QtCore.QPointF(original_v1.x() + total_offset.x(), original_v1.y())
+                new_v2 = QtCore.QPointF(original_v2.x() + total_offset.x(), original_v2.y())
+
+            # Update the two vertices
+            shape.points[v1_index] = new_v1
+            shape.points[v2_index] = new_v2
+
+        elif shape.shape_type in ["rotation", "rotation3"]:
+            # For rotated rectangles, move edge along its perpendicular direction
+            # Calculate edge vector
+            edge_vec = original_v2 - original_v1
+            edge_length = (edge_vec.x()**2 + edge_vec.y()**2)**0.5
+
+            if edge_length < 0.001:
+                return
+
+            # Normalize edge vector
+            edge_unit = QtCore.QPointF(edge_vec.x() / edge_length, edge_vec.y() / edge_length)
+
+            # Perpendicular vector (rotate 90 degrees)
+            perp_unit = QtCore.QPointF(-edge_unit.y(), edge_unit.x())
+
+            # Project mouse offset onto perpendicular direction
+            offset_along_perp = total_offset.x() * perp_unit.x() + total_offset.y() * perp_unit.y()
+
+            # Move both vertices of the edge along perpendicular
+            perp_offset = QtCore.QPointF(perp_unit.x() * offset_along_perp, perp_unit.y() * offset_along_perp)
+
+            new_v1 = original_v1 + perp_offset
+            new_v2 = original_v2 + perp_offset
+
+            # Update the two vertices
+            shape.points[v1_index] = new_v1
+            shape.points[v2_index] = new_v2
 
     def bounded_move_shapes(self, shapes, pos, enable_snap=True):
         """Move shapes. Adjust position to be bounded by pixmap border
@@ -5487,9 +5609,10 @@ class Canvas(
         # - 边缘吸附独立于辅助线吸附开关（enable_snap），只要 edge_snap_enabled=True 就生效
         # - 如果辅助线在某个方向有吸附 → 该方向使用辅助线吸附
         # - 如果辅助线在某个方向没有吸附 → 该方向可以使用边缘吸附
+        # - 倾斜旋转矩形（非0/90/180/270度）不参与边缘吸附
         edge_snap_x = None
         edge_snap_y = None
-        if self.edge_snap_enabled:
+        if self.edge_snap_enabled and not is_tilted_rotation:
             edge_snap_offset = self._detect_edge_snap(moving_rects, self.edge_snap_distance)
             if edge_snap_offset is not None:
                 edge_snap_x = edge_snap_offset.x() if edge_snap_offset.x() != 0 else None
@@ -5514,6 +5637,8 @@ class Canvas(
     def _detect_edge_snap(self, moving_rects, snap_distance):
         """
         检测边缘吸附（矩形边缘贴边）
+
+        注意：倾斜旋转矩形（非0/90/180/270度）不参与边缘吸附
 
         Args:
             moving_rects: 正在移动的矩形列表
@@ -5540,6 +5665,22 @@ class Canvas(
         for other_shape in self.shapes:
             if not self.is_visible(other_shape):
                 continue
+
+            # 🎯 排除倾斜旋转矩形（非0/90/180/270度）作为吸附目标
+            if other_shape.shape_type in ['rotation', 'rotation3']:
+                angle_rad = getattr(other_shape, 'direction', 0)
+                angle_deg = math.degrees(angle_rad) % 360
+                angle_threshold = 5.0
+                is_horizontal_angle = (
+                    abs(angle_deg) < angle_threshold or
+                    abs(angle_deg - 90) < angle_threshold or
+                    abs(angle_deg - 180) < angle_threshold or
+                    abs(angle_deg - 270) < angle_threshold or
+                    abs(angle_deg - 360) < angle_threshold
+                )
+                # 如果是倾斜角度，跳过这个形状
+                if not is_horizontal_angle:
+                    continue
 
             # 检查是否是正在移动的形状
             is_moving = False
@@ -5600,9 +5741,11 @@ class Canvas(
         """
         检测顶点移动时的智能参考线对齐
 
+        支持角点（索引0-3）和边中点（索引4-7）
+
         Args:
             shape: 正在调整的形状
-            vertex_index: 正在移动的顶点索引
+            vertex_index: 正在移动的顶点索引（0-3为角点，4-7为边中点）
             new_pos: 顶点的新位置
 
         Returns:
@@ -5612,26 +5755,77 @@ class Canvas(
         if not self.smart_guides_enabled:
             return None
 
+        # 🎯 检查是否为边中点（索引4-7）
+        is_edge_midpoint = vertex_index >= 4 and vertex_index <= 7
+
         # 创建临时形状副本，应用新的顶点位置
         temp_shape = shape.copy()
-        old_point = temp_shape[vertex_index]
-        shift = new_pos - old_point
 
-        # 根据形状类型调整顶点
-        if temp_shape.shape_type == "rectangle":
-            temp_shape.move_vertex_by(vertex_index, shift)
-            left_index = (vertex_index + 1) % 4
-            right_index = (vertex_index + 3) % 4
-            if vertex_index % 2 == 0:
-                right_shift = QtCore.QPointF(shift.x(), 0)
-                left_shift = QtCore.QPointF(0, shift.y())
-            else:
-                left_shift = QtCore.QPointF(shift.x(), 0)
-                right_shift = QtCore.QPointF(0, shift.y())
-            temp_shape.move_vertex_by(right_index, right_shift)
-            temp_shape.move_vertex_by(left_index, left_shift)
+        if is_edge_midpoint:
+            # 🎯 边中点：需要模拟边中点拖拽后的矩形形状
+            # 获取边索引（0-3）
+            edge_index = vertex_index - 4
+            v1_index = edge_index
+            v2_index = (edge_index + 1) % 4
+
+            # 获取原始顶点位置
+            original_v1 = temp_shape[v1_index]
+            original_v2 = temp_shape[v2_index]
+
+            # 计算边的方向向量
+            edge_dx = original_v2.x() - original_v1.x()
+            edge_dy = original_v2.y() - original_v1.y()
+            edge_length = math.sqrt(edge_dx**2 + edge_dy**2)
+
+            if edge_length > 1e-6:
+                # 计算垂直于边的方向向量（单位向量）
+                perp_dx = -edge_dy / edge_length
+                perp_dy = edge_dx / edge_length
+
+                # 计算边的原始中点
+                original_midpoint = QtCore.QPointF(
+                    (original_v1.x() + original_v2.x()) / 2,
+                    (original_v1.y() + original_v2.y()) / 2
+                )
+
+                # 计算新中点相对于原始中点的偏移
+                offset = new_pos - original_midpoint
+
+                # 计算沿垂直方向的投影（只允许垂直于边的移动）
+                projection = offset.x() * perp_dx + offset.y() * perp_dy
+
+                # 应用偏移到两个顶点
+                move_x = projection * perp_dx
+                move_y = projection * perp_dy
+
+                temp_shape.points[v1_index] = QtCore.QPointF(
+                    original_v1.x() + move_x,
+                    original_v1.y() + move_y
+                )
+                temp_shape.points[v2_index] = QtCore.QPointF(
+                    original_v2.x() + move_x,
+                    original_v2.y() + move_y
+                )
         else:
-            temp_shape.move_vertex_by(vertex_index, shift)
+            # 🎯 角点：原有逻辑
+            old_point = temp_shape[vertex_index]
+            shift = new_pos - old_point
+
+            # 根据形状类型调整顶点
+            if temp_shape.shape_type == "rectangle":
+                temp_shape.move_vertex_by(vertex_index, shift)
+                left_index = (vertex_index + 1) % 4
+                right_index = (vertex_index + 3) % 4
+                if vertex_index % 2 == 0:
+                    right_shift = QtCore.QPointF(shift.x(), 0)
+                    left_shift = QtCore.QPointF(0, shift.y())
+                else:
+                    left_shift = QtCore.QPointF(shift.x(), 0)
+                    right_shift = QtCore.QPointF(0, shift.y())
+                temp_shape.move_vertex_by(right_index, right_shift)
+                temp_shape.move_vertex_by(left_index, left_shift)
+            else:
+                temp_shape.move_vertex_by(vertex_index, shift)
 
         # 获取调整后的边界
         rect = temp_shape.bounding_rect()
@@ -5668,10 +5862,14 @@ class Canvas(
                 'center_y': other_rect.center().y(),
             }
 
-            # 检测水平对齐（只有左右边，不包括中心）
+            # 检测水平对齐（相同边 + 交叉边，PS 风格）
             h_alignments = [
+                # 相同边对齐
                 ('left', moving_bounds['left'], target['left']),
                 ('right', moving_bounds['right'], target['right']),
+                # 交叉边对齐（PS 风格）
+                ('left_to_right', moving_bounds['left'], target['right']),   # 移动矩形的左边 对齐 目标矩形的右边
+                ('right_to_left', moving_bounds['right'], target['left']),   # 移动矩形的右边 对齐 目标矩形的左边
             ]
 
             for align_type, moving_pos, target_pos in h_alignments:
@@ -5682,23 +5880,27 @@ class Canvas(
                     if target_pos not in v_line_positions or dist < v_line_positions[target_pos]:
                         v_line_positions[target_pos] = dist
 
-                # 🎯 吸附功能：根据方向开关决定是否吸附（只有左右边）
+                # 🎯 吸附功能：根据方向开关决定是否吸附
                 if dist < min_dist_x:
                     # 检查该方向是否启用吸附
                     should_snap = False
-                    if align_type == 'left':
+                    if align_type in ['left', 'left_to_right']:
                         should_snap = self.smart_guides_snap_left
-                    elif align_type == 'right':
+                    elif align_type in ['right', 'right_to_left']:
                         should_snap = self.smart_guides_snap_right
 
                     if should_snap:
                         min_dist_x = dist
                         snap_x = target_pos - moving_pos
 
-            # 检测垂直对齐（只有上下边，不包括中心）
+            # 检测垂直对齐（相同边 + 交叉边，PS 风格）
             v_alignments = [
+                # 相同边对齐
                 ('top', moving_bounds['top'], target['top']),
                 ('bottom', moving_bounds['bottom'], target['bottom']),
+                # 交叉边对齐（PS 风格）
+                ('top_to_bottom', moving_bounds['top'], target['bottom']),   # 移动矩形的顶边 对齐 目标矩形的底边
+                ('bottom_to_top', moving_bounds['bottom'], target['top']),   # 移动矩形的底边 对齐 目标矩形的顶边
             ]
 
             for align_type, moving_pos, target_pos in v_alignments:
@@ -5709,13 +5911,13 @@ class Canvas(
                     if target_pos not in h_line_positions or dist < h_line_positions[target_pos]:
                         h_line_positions[target_pos] = dist
 
-                # 🎯 吸附功能：根据方向开关决定是否吸附（只有上下边）
+                # 🎯 吸附功能：根据方向开关决定是否吸附
                 if dist < min_dist_y:
                     # 检查该方向是否启用吸附
                     should_snap = False
-                    if align_type == 'top':
+                    if align_type in ['top', 'top_to_bottom']:
                         should_snap = self.smart_guides_snap_top
-                    elif align_type == 'bottom':
+                    elif align_type in ['bottom', 'bottom_to_top']:
                         should_snap = self.smart_guides_snap_bottom
 
                     if should_snap:
