@@ -2638,8 +2638,10 @@ class Canvas(
 
             # 4. 检测矩形间距线
             if self.spacing_guide_enabled:
+                # 🎯 只对可见的形状进行间距线检测
+                visible_shapes = [s for s in self.shapes if self.is_visible(s)]
                 spacing_snap_offset, spacing_lines = RectangleSpacingGuide.detect_spacing_lines(
-                    shapes, self.shapes,
+                    shapes, visible_shapes,
                     display_distance=self.spacing_guide_display_distance,
                     snap_distance=self.spacing_guide_snap_distance,
                     max_shapes=self.spacing_guide_max_shapes,
@@ -4011,12 +4013,15 @@ class Canvas(
             logger = logging.getLogger(__name__)
             logger.debug(f"paintEvent: spacing_guide_enabled={self.spacing_guide_enabled}, shapes={len(self.shapes)}")
 
+            # 🎯 只对可见的形状进行间距线检测
+            visible_shapes = [s for s in self.shapes if self.is_visible(s)]
+
             # 如果启用了"仅选中矩形测距"，则只对选中的矩形进行测距
             if self.spacing_guide_selected_only:
-                selected_shapes = [s for s in self.shapes if s.selected]
+                selected_shapes = [s for s in visible_shapes if s.selected]
                 if selected_shapes:
                     spacing_snap_offset, spacing_lines = RectangleSpacingGuide.detect_spacing_lines(
-                        selected_shapes, self.shapes,
+                        selected_shapes, visible_shapes,
                         display_distance=self.spacing_guide_display_distance,
                         snap_distance=self.spacing_guide_snap_distance,
                         max_shapes=self.spacing_guide_max_shapes,
@@ -4027,7 +4032,7 @@ class Canvas(
                     self.spacing_guide_lines = []
             else:
                 spacing_snap_offset, spacing_lines = RectangleSpacingGuide.detect_spacing_lines(
-                    self.shapes, self.shapes,
+                    visible_shapes, visible_shapes,
                     display_distance=self.spacing_guide_display_distance,
                     snap_distance=self.spacing_guide_snap_distance,
                     max_shapes=self.spacing_guide_max_shapes,
