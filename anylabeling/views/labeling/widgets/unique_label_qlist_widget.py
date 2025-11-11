@@ -86,7 +86,18 @@ class UniqueLabelQListWidget(EscapableQListWidget):
         self.on_selection_changed()
 
     def focusOutEvent(self, event):
-        """失去焦点时清除选中状态"""
+        """失去焦点时清除选中状态（但有活动窗口时不清除）"""
+        # 检查是否有活动的模态对话框或弹出窗口
+        active_window = QtWidgets.QApplication.activeWindow()
+        active_popup = QtWidgets.QApplication.activePopupWidget()
+        active_modal = QtWidgets.QApplication.activeModalWidget()
+
+        # 如果有活动的弹出窗口、模态对话框，或者焦点在应用内的其他窗口，不清除选中
+        if active_popup or active_modal or (active_window and active_window != self.window()):
+            super().focusOutEvent(event)
+            return
+
+        # 否则清除选中
         self.clearSelection()
         super().focusOutEvent(event)
 

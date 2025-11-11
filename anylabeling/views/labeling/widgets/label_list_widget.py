@@ -145,11 +145,6 @@ class LabelListWidget(QtWidgets.QListView):
             self.item_selection_changed_event
         )
 
-    def focusOutEvent(self, event):
-        """失去焦点时清除选中状态"""
-        self.clearSelection()
-        super().focusOutEvent(event)
-
     def __len__(self):
         return self.model().rowCount()
 
