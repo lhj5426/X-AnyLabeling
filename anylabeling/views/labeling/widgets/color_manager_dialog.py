@@ -113,6 +113,9 @@ class ColorManagerDialog(QDialog):
         self.spacing_guide_line_color_button = self.create_color_button('spacing_guide_line_color', self.config.get('spacing_guide_line_color', [0, 255, 255]))
         left_form.addRow(self.tr("间距线线条颜色:"), self.spacing_guide_line_color_button)
 
+        self.spacing_guide_text_bg_color_button = self.create_color_button('spacing_guide_text_bg_color', self.config.get('spacing_guide_text_bg_color', [0, 0, 0, 150]))
+        left_form.addRow(self.tr("间距线文字背景色:"), self.spacing_guide_text_bg_color_button)
+
         # === 右列配置项 ===
         self.select_fill_color_button = self.create_color_button(['shape', 'select_fill_color'], self.config['shape']['select_fill_color'])
         right_form.addRow(self.tr("选中填充颜色:"), self.select_fill_color_button)

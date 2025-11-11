@@ -4920,6 +4920,9 @@ class LabelingWidget(QtWidgets.QWidget):
             elif key == 'spacing_guide_line_color':
                 # 间距线线条颜色
                 self.canvas.spacing_guide_line_color = value if isinstance(value, list) else [color.red(), color.green(), color.blue()]
+            elif key == 'spacing_guide_text_bg_color':
+                # 间距线文字背景色
+                self.canvas.spacing_guide_text_bg_color = value if isinstance(value, list) else [color.red(), color.green(), color.blue(), color.alpha()]
             elif key == 'manually_edited_color':
                 pass
         else:

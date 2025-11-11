@@ -10,7 +10,8 @@ class WheelSettingsDialog(QtWidgets.QDialog):
         super(WheelSettingsDialog, self).__init__(parent)
         self.parent = parent
         self._config = config if config is not None else {}
-        self.wheel_settings = self._config.get("wheel_rectangle_editing", {})
+        # Read from canvas.wheel_rectangle_editing, not root level
+        self.wheel_settings = self._config.get("canvas", {}).get("wheel_rectangle_editing", {})
 
         self.setWindowTitle(self.tr("鼠标滚轮设置"))
         self.setWindowFlags(
@@ -208,6 +209,16 @@ class WheelSettingsDialog(QtWidgets.QDialog):
 
     def load_settings(self):
         """Load settings from config into UI."""
+        # Block signals during loading to prevent multiple on_value_changed calls
+        self.adjust_step_h_spinbox.blockSignals(True)
+        self.adjust_step_v_spinbox.blockSignals(True)
+        self.shift_adjust_step_h_spinbox.blockSignals(True)
+        self.shift_adjust_step_v_spinbox.blockSignals(True)
+        self.fast_adjust_step_h_spinbox.blockSignals(True)
+        self.fast_adjust_step_v_spinbox.blockSignals(True)
+        self.scale_step_h_spinbox.blockSignals(True)
+        self.scale_step_v_spinbox.blockSignals(True)
+
         # Edge adjustment - normal
         self.adjust_step_h_spinbox.setValue(self.wheel_settings.get("adjust_step_h", 1.0))
         self.adjust_step_v_spinbox.setValue(self.wheel_settings.get("adjust_step_v", 1.0))
@@ -223,6 +234,19 @@ class WheelSettingsDialog(QtWidgets.QDialog):
         # Inner scale
         self.scale_step_h_spinbox.setValue(self.wheel_settings.get("scale_step_h", 3.0))
         self.scale_step_v_spinbox.setValue(self.wheel_settings.get("scale_step_v", 3.0))
+
+        # Unblock signals
+        self.adjust_step_h_spinbox.blockSignals(False)
+        self.adjust_step_v_spinbox.blockSignals(False)
+        self.shift_adjust_step_h_spinbox.blockSignals(False)
+        self.shift_adjust_step_v_spinbox.blockSignals(False)
+        self.fast_adjust_step_h_spinbox.blockSignals(False)
+        self.fast_adjust_step_v_spinbox.blockSignals(False)
+        self.scale_step_h_spinbox.blockSignals(False)
+        self.scale_step_v_spinbox.blockSignals(False)
+
+        # Manually trigger on_value_changed once to update canvas
+        self.on_value_changed()
 
     def get_settings(self):
         """Get current settings from UI."""
@@ -251,9 +275,11 @@ class WheelSettingsDialog(QtWidgets.QDialog):
             self.parent.canvas.rect_scale_step_h = settings["scale_step_h"]
             self.parent.canvas.rect_scale_step_v = settings["scale_step_v"]
 
-            # Save to config file
+            # Save to config file at the correct location (canvas.wheel_rectangle_editing)
             if hasattr(self.parent, '_config'):
-                self.parent._config["wheel_rectangle_editing"] = settings
+                if "canvas" not in self.parent._config:
+                    self.parent._config["canvas"] = {}
+                self.parent._config["canvas"]["wheel_rectangle_editing"] = settings
                 # Import and use the save_config function
                 from anylabeling.config import save_config
                 save_config(self.parent._config)

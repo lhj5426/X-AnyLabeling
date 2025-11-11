@@ -249,6 +249,7 @@ smart_guides_paste_snap_bottom: true  # 粘贴模式：是否启用下边对齐�
 spacing_guide_enabled: true
 spacing_guide_line_width: 2.0
 spacing_guide_line_color: [0, 255, 255]  # 青色
+spacing_guide_text_bg_color: [0, 0, 0, 150]  # 文字背景色（RGBA）
 spacing_guide_opacity: 0.8
 spacing_guide_display_distance: 500  # 间距线显示距离（像素）
 spacing_guide_snap_distance: 10  # 间距线吸附距离（像素）

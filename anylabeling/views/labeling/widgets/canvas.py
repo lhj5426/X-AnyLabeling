@@ -150,31 +150,32 @@ class Canvas(
             "wheel_rectangle_editing", {}
         )
         # Edge adjustment steps (horizontal and vertical)
-        self.rect_adjust_step_h = self.wheel_rectangle_editing.get(
+        # Use max() to ensure values are at least 0.1 to prevent zero or negative values
+        self.rect_adjust_step_h = max(0.1, self.wheel_rectangle_editing.get(
             "adjust_step_h", 1.0
-        )
-        self.rect_adjust_step_v = self.wheel_rectangle_editing.get(
+        ) or 1.0)
+        self.rect_adjust_step_v = max(0.1, self.wheel_rectangle_editing.get(
             "adjust_step_v", 1.0
-        )
-        self.rect_shift_adjust_step_h = self.wheel_rectangle_editing.get(
+        ) or 1.0)
+        self.rect_shift_adjust_step_h = max(0.1, self.wheel_rectangle_editing.get(
             "shift_adjust_step_h", 5.0
-        )
-        self.rect_shift_adjust_step_v = self.wheel_rectangle_editing.get(
+        ) or 5.0)
+        self.rect_shift_adjust_step_v = max(0.1, self.wheel_rectangle_editing.get(
             "shift_adjust_step_v", 5.0
-        )
-        self.rect_fast_adjust_step_h = self.wheel_rectangle_editing.get(
+        ) or 5.0)
+        self.rect_fast_adjust_step_h = max(0.1, self.wheel_rectangle_editing.get(
             "fast_adjust_step_h", 10.0
-        )
-        self.rect_fast_adjust_step_v = self.wheel_rectangle_editing.get(
+        ) or 10.0)
+        self.rect_fast_adjust_step_v = max(0.1, self.wheel_rectangle_editing.get(
             "fast_adjust_step_v", 10.0
-        )
+        ) or 10.0)
         # Inner scale steps (width and height)
-        self.rect_scale_step_h = self.wheel_rectangle_editing.get(
+        self.rect_scale_step_h = max(0.1, self.wheel_rectangle_editing.get(
             "scale_step_h", 3.0
-        )
-        self.rect_scale_step_v = self.wheel_rectangle_editing.get(
+        ) or 3.0)
+        self.rect_scale_step_v = max(0.1, self.wheel_rectangle_editing.get(
             "scale_step_v", 3.0
-        )
+        ) or 3.0)
         self.parent = kwargs.pop("parent")
         
         # Get configuration for colors and settings
@@ -293,6 +294,7 @@ class Canvas(
         self.spacing_guide_selected_only = self._config.get('spacing_guide_selected_only', False)  # 是否仅对选中矩形测距
         self.spacing_guide_line_width = self._config.get('spacing_guide_line_width', 2.0)  # 间距线粗细
         self.spacing_guide_line_color = self._config.get('spacing_guide_line_color', [0, 255, 255])  # 间距线颜色 (RGB) - 青色
+        self.spacing_guide_text_bg_color = self._config.get('spacing_guide_text_bg_color', [0, 0, 0, 150])  # 文字背景色 (RGBA)
         self.spacing_guide_opacity = self._config.get('spacing_guide_opacity', 0.8)  # 间距线透明度
         self.spacing_guide_display_distance = self._config.get('spacing_guide_display_distance', 500)  # 间距线显示距离（默认500像素）
         self.spacing_guide_snap_distance = self._config.get('spacing_guide_snap_distance', 10)  # 间距线吸附距离
@@ -5988,12 +5990,15 @@ class Canvas(
                         text_rect.height() + 2 * bg_padding
                     )
 
-                    # 绘制背景（半透明黑色）
-                    bg_color = QtGui.QColor(0, 0, 0, 150)
+                    # 绘制背景（使用配置的文字背景色，并应用透明度）
+                    bg_r, bg_g, bg_b, bg_a = self.spacing_guide_text_bg_color[:4]
+                    # 应用spacing_guide_opacity到背景色的alpha值
+                    bg_alpha_adjusted = int(bg_a * self.spacing_guide_opacity)
+                    bg_color = QtGui.QColor(bg_r, bg_g, bg_b, bg_alpha_adjusted)
                     p.fillRect(bg_rect, bg_color)
 
-                    # 绘制文字
-                    text_color = QtGui.QColor(r, g, b, 255)
+                    # 绘制文字（使用线条颜色，并应用透明度）
+                    text_color = QtGui.QColor(r, g, b, alpha)
                     p.setPen(text_color)
                     # 使用 QRectF 来绘制文字，确保文字在正确的位置
                     text_draw_rect = QtCore.QRectF(
