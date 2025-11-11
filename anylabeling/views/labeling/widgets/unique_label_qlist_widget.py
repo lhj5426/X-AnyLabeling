@@ -179,7 +179,7 @@ class UniqueLabelQListWidget(EscapableQListWidget):
         if is_multi_select:
             delete_page_action = menu.addAction(
                 utils.new_icon('delete'),
-                self.tr(f"删除本页所有选中标签的矩形 ({len(selected_labels)}个)")
+                self.tr(f"删除本页所有选中标签 ({len(selected_labels)}个)")
             )
             delete_all_action = menu.addAction(
                 utils.new_icon('cancel'),
@@ -194,7 +194,7 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             label = selected_labels[0]
             delete_page_action = menu.addAction(
                 utils.new_icon('delete'),
-                self.tr("删除本页所有该标签矩形")
+                self.tr("删除本页所有该标签")
             )
             delete_all_action = menu.addAction(
                 utils.new_icon('cancel'),
