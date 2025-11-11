@@ -61,7 +61,8 @@ class Shape:
     alpha_idle = 50
     alpha_highlight = 180
     point_type = P_ROUND
-    point_size = 4
+    point_size = 4  # 控制多边形等形状的圆形控制点大小
+    square_size = 4  # 控制矩形的方形控制块大小
     scale = 1.5
     # Base line width
     line_width = 2.0
@@ -572,7 +573,8 @@ class Shape:
             point: QPointF position of the midpoint
             virtual_index: Virtual index (4-7) for highlighting
         """
-        d = self.point_size / self.scale
+        # 使用 square_size 而不是 point_size 来控制矩形方块的大小
+        d = self.square_size / self.scale
 
         # Check if this midpoint is highlighted
         if virtual_index == self._highlight_index:

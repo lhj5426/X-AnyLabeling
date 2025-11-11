@@ -273,15 +273,6 @@ class Canvas(
         self.smart_guides_lines = []  # 当前显示的参考线 [(x1, y1, x2, y2, type), ...]
         self.smart_guides_snap_offset = None  # 吸附偏移量
 
-        # 边缘吸附设置
-        self.edge_snap_enabled = self._config.get('edge_snap_enabled', False)  # 是否启用边缘吸附
-        self.edge_snap_distance = self._config.get('edge_snap_distance', 50)  # 边缘吸附距离（像素）
-        self.edge_snap_release_distance = self._config.get('edge_snap_release_distance', 3)  # 脱离吸附距离（像素）
-        self.edge_snap_left = self._config.get('edge_snap_left', True)  # 左边缘吸附
-        self.edge_snap_right = self._config.get('edge_snap_right', True)  # 右边缘吸附
-        self.edge_snap_top = self._config.get('edge_snap_top', True)  # 上边缘吸附
-        self.edge_snap_bottom = self._config.get('edge_snap_bottom', True)  # 下边缘吸附
-
         # 吸附状态跟踪（用于脱离吸附）
         self.snap_accumulated_offset = QtCore.QPointF(0, 0)  # 累积的反向移动距离
         self.is_snapped = False  # 当前是否处于吸附状态
@@ -2629,9 +2620,8 @@ class Canvas(
                     new_points.append(QtCore.QPointF(pt.x() + total_offset.x(), pt.y() + total_offset.y()))
                 shape.points = new_points
 
-            # 2. 检测智能参考线对齐（边缘吸附已经集成在 detect_smart_guides 方法中）
+            # 2. 检测智能参考线对齐
             # 辅助线吸附：受 smart_guides_enable_snap 控制
-            # 边缘吸附：独立于辅助线，只受 edge_snap_enabled 控制
             actual_enable_snap = enable_snap and self.smart_guides_enable_snap
             snap_offset, guide_lines = self.detect_smart_guides(shapes, enable_snap=actual_enable_snap)
             self.smart_guides_lines = guide_lines
@@ -5369,9 +5359,8 @@ class Canvas(
                 snap_offset: 吸附偏移量 QPointF，如果没有吸附则为None
                 guide_lines: 参考线列表 [(x1, y1, x2, y2, type), ...]
         """
-        # 🎯 修改：即使辅助线关闭，如果边缘吸附开启，也要继续执行
-        # 只有在辅助线和边缘吸附都关闭时才返回
-        if not force_enable and not self.smart_guides_enabled and not self.edge_snap_enabled:
+        # 如果辅助线未启用且未强制启用，则不显示也不吸附
+        if not force_enable and not self.smart_guides_enabled:
             return None, []
 
         if not moving_shapes:
@@ -5610,137 +5599,15 @@ class Canvas(
         guide_lines_with_dist.sort(key=lambda x: x[0])
         guide_lines = [line_data for dist, line_data in guide_lines_with_dist[:self.smart_guides_max_lines]]
 
-        # 🎯 边缘吸附：按方向独立判断优先级
-        # - 边缘吸附独立于辅助线吸附开关（enable_snap），只要 edge_snap_enabled=True 就生效
-        # - 如果辅助线在某个方向有吸附 → 该方向使用辅助线吸附
-        # - 如果辅助线在某个方向没有吸附 → 该方向可以使用边缘吸附
-        # - 倾斜旋转矩形（非0/90/180/270度）不参与边缘吸附
-        edge_snap_x = None
-        edge_snap_y = None
-        if self.edge_snap_enabled and not is_tilted_rotation:
-            edge_snap_offset = self._detect_edge_snap(moving_rects, self.edge_snap_distance)
-            if edge_snap_offset is not None:
-                edge_snap_x = edge_snap_offset.x() if edge_snap_offset.x() != 0 else None
-                edge_snap_y = edge_snap_offset.y() if edge_snap_offset.y() != 0 else None
-
-        # 合并辅助线吸附和边缘吸附：
-        # - 水平方向：辅助线吸附优先（如果 enable_snap=True 且有吸附），否则使用边缘吸附
-        # - 垂直方向：辅助线吸附优先（如果 enable_snap=True 且有吸附），否则使用边缘吸附
-        final_snap_x = snap_x if snap_x is not None else edge_snap_x
-        final_snap_y = snap_y if snap_y is not None else edge_snap_y
-
         # 计算最终吸附偏移量
         snap_offset = None
-        if final_snap_x is not None or final_snap_y is not None:
+        if snap_x is not None or snap_y is not None:
             snap_offset = QtCore.QPointF(
-                final_snap_x if final_snap_x is not None else 0,
-                final_snap_y if final_snap_y is not None else 0
+                snap_x if snap_x is not None else 0,
+                snap_y if snap_y is not None else 0
             )
 
         return snap_offset, guide_lines
-
-    def _detect_edge_snap(self, moving_rects, snap_distance):
-        """
-        检测边缘吸附（矩形边缘贴边）
-
-        注意：倾斜旋转矩形（非0/90/180/270度）不参与边缘吸附
-
-        Args:
-            moving_rects: 正在移动的矩形列表
-            snap_distance: 吸附距离
-
-        Returns:
-            QtCore.QPointF: 吸附偏移量，如果没有吸附则返回None
-        """
-        if not moving_rects:
-            return None
-
-        # 获取所有移动形状的整体边界
-        all_left = min(r['left'] for r in moving_rects)
-        all_right = max(r['right'] for r in moving_rects)
-        all_top = min(r['top'] for r in moving_rects)
-        all_bottom = max(r['bottom'] for r in moving_rects)
-
-        snap_x = None
-        snap_y = None
-        min_dist_x = snap_distance
-        min_dist_y = snap_distance
-
-        # 遍历所有其他形状，检测边缘吸附
-        for other_shape in self.shapes:
-            if not self.is_visible(other_shape):
-                continue
-
-            # 🎯 排除倾斜旋转矩形（非0/90/180/270度）作为吸附目标
-            if other_shape.shape_type in ['rotation', 'rotation3']:
-                angle_rad = getattr(other_shape, 'direction', 0)
-                angle_deg = math.degrees(angle_rad) % 360
-                angle_threshold = 5.0
-                is_horizontal_angle = (
-                    abs(angle_deg) < angle_threshold or
-                    abs(angle_deg - 90) < angle_threshold or
-                    abs(angle_deg - 180) < angle_threshold or
-                    abs(angle_deg - 270) < angle_threshold or
-                    abs(angle_deg - 360) < angle_threshold
-                )
-                # 如果是倾斜角度，跳过这个形状
-                if not is_horizontal_angle:
-                    continue
-
-            # 检查是否是正在移动的形状
-            is_moving = False
-            other_rect = other_shape.bounding_rect()
-            for moving_rect in moving_rects:
-                if (abs(other_rect.left() - moving_rect['left']) < 0.1 and
-                    abs(other_rect.right() - moving_rect['right']) < 0.1 and
-                    abs(other_rect.top() - moving_rect['top']) < 0.1 and
-                    abs(other_rect.bottom() - moving_rect['bottom']) < 0.1):
-                    is_moving = True
-                    break
-
-            if is_moving:
-                continue
-
-            target_left = other_rect.left()
-            target_right = other_rect.right()
-            target_top = other_rect.top()
-            target_bottom = other_rect.bottom()
-
-            # 检测水平边缘吸附（左右边缘贴边）
-            if self.edge_snap_left:
-                # 移动矩形的左边 贴 目标矩形的右边
-                dist = abs(all_left - target_right)
-                if dist < min_dist_x:
-                    min_dist_x = dist
-                    snap_x = target_right - all_left
-
-            if self.edge_snap_right:
-                # 移动矩形的右边 贴 目标矩形的左边
-                dist = abs(all_right - target_left)
-                if dist < min_dist_x:
-                    min_dist_x = dist
-                    snap_x = target_left - all_right
-
-            # 检测垂直边缘吸附（上下边缘贴边）
-            if self.edge_snap_top:
-                # 移动矩形的上边 贴 目标矩形的下边
-                dist = abs(all_top - target_bottom)
-                if dist < min_dist_y:
-                    min_dist_y = dist
-                    snap_y = target_bottom - all_top
-
-            if self.edge_snap_bottom:
-                # 移动矩形的下边 贴 目标矩形的上边
-                dist = abs(all_bottom - target_top)
-                if dist < min_dist_y:
-                    min_dist_y = dist
-                    snap_y = target_top - all_bottom
-
-        # 返回吸附偏移量
-        if snap_x is not None or snap_y is not None:
-            return QtCore.QPointF(snap_x if snap_x is not None else 0, snap_y if snap_y is not None else 0)
-
-        return None
 
     def detect_vertex_smart_guides(self, shape, vertex_index, new_pos):
         """

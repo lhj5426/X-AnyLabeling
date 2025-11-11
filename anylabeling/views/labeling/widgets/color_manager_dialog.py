@@ -96,6 +96,11 @@ class ColorManagerDialog(QDialog):
         self.point_size_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'point_size'], value))
         left_form.addRow(self.tr("点大小:"), self.point_size_spinbox)
 
+        self.square_size_spinbox = QDoubleSpinBox()
+        self.square_size_spinbox.setValue(self.config['shape'].get('square_size', 10))
+        self.square_size_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'square_size'], value))
+        left_form.addRow(self.tr("块大小:"), self.square_size_spinbox)
+
         # Paste preview settings (虚影样式设置)
         self.paste_preview_line_color_button = self.create_color_button('paste_preview_line_color', self.config.get('paste_preview_line_color', [255, 0, 255]))
         left_form.addRow(self.tr("虚影线条颜色:"), self.paste_preview_line_color_button)

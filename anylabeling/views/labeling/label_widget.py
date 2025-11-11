@@ -265,6 +265,8 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Set point size from config file
         Shape.point_size = self._config["shape"]["point_size"]
+        # Set square size from config file (for rectangle edge midpoints)
+        Shape.square_size = self._config["shape"].get("square_size", 10)
         # Set line width from config file
         Shape.line_width = self._config["shape"]["line_width"]
         # Optional specific widths for interaction states
@@ -278,7 +280,6 @@ class LabelingWidget(QtWidgets.QWidget):
         self._no_selection_slot = False
         self._programmatic_selection_change = False
         self._copied_shapes = None
-        self._batch_edit_warning_shown = False
 
         self.brightness_contrast_dialog = BrightnessContrastDialog(
             self.on_new_brightness_contrast, parent=self
@@ -4911,6 +4912,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 self._config['shape']['overlap_color'][3] = value
             elif key == ['shape', 'point_size']:
                 Shape.point_size = value
+            elif key == ['shape', 'square_size']:
+                Shape.square_size = value
             elif key == ['shape', 'line_width']:
                 Shape.line_width = value
             elif key == ['shape', 'select_line_width']:
@@ -5346,120 +5349,6 @@ class LabelingWidget(QtWidgets.QWidget):
                     return True
         return False
 
-        def _on_angle_preview_changed(self, angle_degrees):
-            angle_radians = math.radians(angle_degrees)
-            for shape in self.canvas.selected_shapes:
-                if shape.shape_type == 'rotation':
-                    self.canvas.set_shape_rotation(shape, angle_radians)
-            self.set_dirty()  # Mark as dirty to enable saving
-    
-        def batch_edit_labels(self, shapes):
-            if not self._batch_edit_warning_shown:
-                reply = QtWidgets.QMessageBox.question(
-                    self,
-                    self.tr("Batch Edit"),
-                    self.tr(
-                        "You are about to edit multiple shapes in batch mode. "
-                        "This operation cannot be undone.\n\n"
-                        "This warning will only be shown once. Do you want to continue?"
-                    ),
-                    QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                    QtWidgets.QMessageBox.No,
-                )
-    
-                if reply != QtWidgets.QMessageBox.Yes:
-                    return
-    
-                self._batch_edit_warning_shown = True
-    
-            first_shape = shapes[0]
-    
-            # Check if all selected shapes are of the same type and are rotation
-            are_all_rotation = all(s.shape_type == 'rotation' for s in shapes)
-            
-            # Connect for live preview if all are rotation shapes
-            if are_all_rotation:
-                self.label_dialog.angle_changed.connect(self._on_angle_preview_changed)
-    
-            # For pop_up, we can pass shape_type if all are rotation.
-            # Direction can be None, which will default to 0 in the dialog.
-            shape_type_for_dialog = 'rotation' if are_all_rotation else None
-            
-            result = self.label_dialog.pop_up(
-                text=first_shape.label,
-                flags=first_shape.flags,
-                group_id=first_shape.group_id,
-                description=first_shape.description,
-                difficult=first_shape.difficult,
-                kie_linking=first_shape.kie_linking,
-                move_mode="center",
-                order=None,  # Disable order editing in batch mode
-                shape_type=shape_type_for_dialog,
-                direction=None # Let dialog default to 0 for batch edit
-            )
-    
-            # Disconnect after dialog is closed
-            if are_all_rotation:
-                try:
-                    self.label_dialog.angle_changed.disconnect(self._on_angle_preview_changed)
-                except TypeError:
-                    pass
-    
-            if result[0] is None:
-                # User cancelled, revert any preview changes
-                self.load_shapes(self.canvas.shapes, replace=True)
-                return
-    
-            text, flags, group_id, description, difficult, kie_linking, _, new_direction = result
-    
-            if not self.validate_label(text):
-                self.error_message(
-                    self.tr("Invalid label"),
-                    self.tr("Invalid label '{}' with validation type '{}'").format(
-                        text, self._config["validate_label"]
-                    ),
-                )
-                return
-    
-            for shape in shapes:
-                if self.attributes and text:
-                    text = self.reset_attribute(text)
-    
-                shape.label = text
-                shape.flags = flags
-                shape.group_id = group_id
-                shape.description = description
-                shape.difficult = difficult
-                shape.kie_linking = kie_linking
-                
-                if are_all_rotation and new_direction is not None:
-                    shape.direction = new_direction
-    
-                self._update_shape_color(shape)
-    
-                item = self.label_list.find_item_by_shape(shape)
-                if item is not None:
-                    color = shape.fill_color.getRgb()[:3]
-                    item.setBackground(QtGui.QColor(*color, LABEL_OPACITY))
-    
-            self.label_dialog.add_label_history(text)
-    
-            if not self.unique_label_list.find_items_by_label(text):
-                unique_label_item = self.unique_label_list.create_item_from_label(
-                    text
-                )
-                self.unique_label_list.addItem(unique_label_item)
-                rgb = self._get_rgb_by_label(text)
-                self.unique_label_list.set_item_label(
-                    unique_label_item, text, rgb, LABEL_OPACITY
-                )
-    
-            self.set_dirty()
-            self._update_all_item_orders()
-            self.update_combo_box()
-            self.update_gid_box()
-            self.update_label_counts()
-            self.shape_list_changed.emit()
     def _on_angle_preview_changed(self, angle_degrees):
         angle_radians = math.radians(angle_degrees)
         for shape in self.canvas.selected_shapes:
@@ -5468,24 +5357,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.set_dirty()  # Mark as dirty to enable saving
 
     def batch_edit_labels(self, shapes):
-        if not self._batch_edit_warning_shown:
-            reply = QtWidgets.QMessageBox.question(
-                self,
-                self.tr("Batch Edit"),
-                self.tr(
-                    "You are about to edit multiple shapes in batch mode. "
-                    "This operation cannot be undone.\n\n"
-                    "This warning will only be shown once. Do you want to continue?"
-                ),
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.No,
-            )
-
-            if reply != QtWidgets.QMessageBox.Yes:
-                return
-
-            self._batch_edit_warning_shown = True
-
+        # 直接执行批量编辑，不再显示警告窗口
         first_shape = shapes[0]
 
         # Check if all selected shapes are of the same type and are rotation
