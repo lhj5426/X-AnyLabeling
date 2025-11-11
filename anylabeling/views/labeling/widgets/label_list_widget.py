@@ -58,6 +58,26 @@ class HTMLDelegate(QtWidgets.QStyledItemDelegate):
 
         painter.restore()
 
+        # 如果item被选中，在右侧绘制红点
+        if option.state & QStyle.State_Selected:
+            painter.save()
+
+            # 设置抗锯齿
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+
+            # 绘制红色圆点
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0)))  # 红色
+            painter.setPen(Qt.NoPen)
+
+            # 计算红点位置（右侧居中）
+            dot_radius = 4
+            dot_x = option.rect.right() - dot_radius * 2 - 5
+            dot_y = option.rect.center().y()
+
+            painter.drawEllipse(QtCore.QPointF(dot_x, dot_y), dot_radius, dot_radius)
+
+            painter.restore()
+
     # QT Overload
     def sizeHint(self, _, _2):
         margin_constant = 4
@@ -124,6 +144,11 @@ class LabelListWidget(QtWidgets.QListView):
         self.selectionModel().selectionChanged.connect(
             self.item_selection_changed_event
         )
+
+    def focusOutEvent(self, event):
+        """失去焦点时清除选中状态"""
+        self.clearSelection()
+        super().focusOutEvent(event)
 
     def __len__(self):
         return self.model().rowCount()
