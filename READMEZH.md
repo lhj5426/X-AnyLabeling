@@ -398,7 +398,7 @@ https://github.com/user-attachments/assets/ab349951-140d-41c9-9fab-1a2ae6765b56
 
 https://github.com/user-attachments/assets/df7cf602-b29a-488d-9f42-5dccd2238334
 
-73.增加 PS的对对齐辅助线
+73.增加 PS的对齐辅助线
 
 https://github.com/user-attachments/assets/1f04ad80-7374-4595-b7b4-3d149537771f
 
@@ -417,6 +417,14 @@ https://github.com/user-attachments/assets/ae6a16c1-f74c-4ae6-bcf3-e9b385a3ed0c
 77.4点矩形控制柄改成8点矩形控制柄
 
 https://github.com/user-attachments/assets/23d7b9c5-4eb0-4ac0-b6ec-9de29fcc8779
+
+78.标签页管理器增加 矩形属相面板
+
+https://github.com/user-attachments/assets/778fa69c-9cc8-4826-af8d-ca3ff5e10b3c
+
+79.右侧标签区域增加交互右键菜单
+
+https://github.com/user-attachments/assets/67ce2c57-d73b-4023-ab03-820ec781e8bc
 
 
 
