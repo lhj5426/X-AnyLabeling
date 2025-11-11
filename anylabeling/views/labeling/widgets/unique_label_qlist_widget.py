@@ -9,6 +9,34 @@ from .escapable_qlist_widget import EscapableQListWidget
 from .. import utils
 
 
+class SelectionIndicatorDelegate(QtWidgets.QStyledItemDelegate):
+    """自定义委托，用于在选中的标签上绘制红点标识"""
+
+    def paint(self, painter, option, index):
+        # 先调用父类绘制默认内容
+        super().paint(painter, option, index)
+
+        # 如果item被选中，在右侧绘制红点
+        if option.state & QtWidgets.QStyle.State_Selected:
+            painter.save()
+
+            # 设置抗锯齿
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+
+            # 绘制红色圆点
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0)))  # 红色
+            painter.setPen(Qt.NoPen)
+
+            # 计算红点位置（右侧居中）
+            dot_radius = 4
+            dot_x = option.rect.right() - dot_radius * 2 - 5
+            dot_y = option.rect.center().y()
+
+            painter.drawEllipse(QtCore.QPointF(dot_x, dot_y), dot_radius, dot_radius)
+
+            painter.restore()
+
+
 class UniqueLabelQListWidget(EscapableQListWidget):
     # A signal that is emitted when the visibility of a label changes.
     label_visibility_changed = pyqtSignal(str, bool)  # label, visible
@@ -28,8 +56,8 @@ class UniqueLabelQListWidget(EscapableQListWidget):
         super().__init__(parent)
         self.parent = parent
 
-        # Set the selection mode to allow multiple selections.
-        self.setSelectionMode(QtWidgets.QAbstractItemView.MultiSelection)
+        # Set the selection mode to ExtendedSelection (Ctrl+Click for multi-select, Click for single select)
+        self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.setDragDropMode(QtWidgets.QAbstractItemView.NoDragDrop)
 
         # Connect the itemChanged signal to the on_item_changed slot.
@@ -41,18 +69,26 @@ class UniqueLabelQListWidget(EscapableQListWidget):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
 
+        # 设置自定义委托以绘制选中标识
+        self.setItemDelegate(SelectionIndicatorDelegate(self))
+
     def mousePressEvent(self, event):
         # 只有在未按下Ctrl/Shift时，点击空白才清除选择，保证Ctrl/Shift多选原生行为
         if not self.indexAt(event.pos()).isValid():
             modifiers = QtWidgets.QApplication.keyboardModifiers()
             if not (modifiers & Qt.ControlModifier or modifiers & Qt.ShiftModifier):
                 self.clearSelection()
-        
+
         # 调用父类方法处理点击事件
         super().mousePressEvent(event)
-        
+
         # 确保选中状态正确同步
         self.on_selection_changed()
+
+    def focusOutEvent(self, event):
+        """失去焦点时清除选中状态"""
+        self.clearSelection()
+        super().focusOutEvent(event)
 
     def find_items_by_label(self, label):
         """Find all items with the given label."""
@@ -164,10 +200,16 @@ class UniqueLabelQListWidget(EscapableQListWidget):
         if not item:
             return
 
-        # 获取所有选中的标签
+        # 获取当前选中的items
         selected_items = self.selectedItems()
-        if not selected_items:
-            return
+
+        # 如果右键点击的item不在已选中的items中，则清除其他选中并只选中这个item
+        # 如果右键点击的item已经在选中列表中（多选状态），则保持当前选中状态
+        if item not in selected_items:
+            # 右键点击的item未被选中，清除其他选中并只选中这个item
+            self.clearSelection()
+            item.setSelected(True)
+            selected_items = [item]
 
         selected_labels = [item.data(Qt.UserRole) for item in selected_items]
         is_multi_select = len(selected_labels) > 1
