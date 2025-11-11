@@ -32,6 +32,90 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         # Restore window position and size
         self.restore_window_position()
 
+        # ========== 属性编辑面板 ==========
+        self.properties_group = QtWidgets.QGroupBox(self.tr("选中矩形属性"))
+        properties_layout = QtWidgets.QVBoxLayout()
+
+        # 标签显示（只读）
+        label_layout = QtWidgets.QHBoxLayout()
+        label_layout.setSpacing(5)  # 减小间距
+        label_text = QtWidgets.QLabel(self.tr("标签:"))
+        label_text.setFixedWidth(40)  # 固定标签文字宽度
+        label_layout.addWidget(label_text)
+        self.label_combo = QtWidgets.QComboBox()
+        self.label_combo.setEditable(True)
+        self.label_combo.setPlaceholderText(self.tr("输入或选择标签"))
+        label_layout.addWidget(self.label_combo)
+        properties_layout.addLayout(label_layout)
+
+        # 位置
+        properties_layout.addWidget(QtWidgets.QLabel(self.tr("位置:")))
+        pos_layout = QtWidgets.QHBoxLayout()
+        pos_layout.addWidget(QtWidgets.QLabel("X:"))
+        self.x_spinbox = QtWidgets.QDoubleSpinBox()
+        self.x_spinbox.setRange(-999999, 999999)
+        self.x_spinbox.setDecimals(2)
+        pos_layout.addWidget(self.x_spinbox)
+        pos_layout.addWidget(QtWidgets.QLabel("Y:"))
+        self.y_spinbox = QtWidgets.QDoubleSpinBox()
+        self.y_spinbox.setRange(-999999, 999999)
+        self.y_spinbox.setDecimals(2)
+        pos_layout.addWidget(self.y_spinbox)
+        properties_layout.addLayout(pos_layout)
+
+        # 尺寸
+        properties_layout.addWidget(QtWidgets.QLabel(self.tr("尺寸:")))
+        size_layout = QtWidgets.QHBoxLayout()
+        size_layout.addWidget(QtWidgets.QLabel("W:"))
+        self.w_spinbox = QtWidgets.QDoubleSpinBox()
+        self.w_spinbox.setRange(0, 999999)
+        self.w_spinbox.setDecimals(2)
+        size_layout.addWidget(self.w_spinbox)
+        size_layout.addWidget(QtWidgets.QLabel("H:"))
+        self.h_spinbox = QtWidgets.QDoubleSpinBox()
+        self.h_spinbox.setRange(0, 999999)
+        self.h_spinbox.setDecimals(2)
+        size_layout.addWidget(self.h_spinbox)
+        properties_layout.addLayout(size_layout)
+
+        # 中心点
+        properties_layout.addWidget(QtWidgets.QLabel(self.tr("中心点:")))
+        center_layout = QtWidgets.QHBoxLayout()
+        center_layout.addWidget(QtWidgets.QLabel("CX:"))
+        self.cx_spinbox = QtWidgets.QDoubleSpinBox()
+        self.cx_spinbox.setRange(-999999, 999999)
+        self.cx_spinbox.setDecimals(2)
+        center_layout.addWidget(self.cx_spinbox)
+        center_layout.addWidget(QtWidgets.QLabel("CY:"))
+        self.cy_spinbox = QtWidgets.QDoubleSpinBox()
+        self.cy_spinbox.setRange(-999999, 999999)
+        self.cy_spinbox.setDecimals(2)
+        center_layout.addWidget(self.cy_spinbox)
+        properties_layout.addLayout(center_layout)
+
+        # 旋转角度
+        self.rotation_label = QtWidgets.QLabel(self.tr("旋转角度: (仅旋转矩形)"))
+        properties_layout.addWidget(self.rotation_label)
+        rotation_layout = QtWidgets.QHBoxLayout()
+        self.rotation_spinbox = QtWidgets.QDoubleSpinBox()
+        self.rotation_spinbox.setWrapping(True)
+        self.rotation_spinbox.setRange(0, 359)
+        self.rotation_spinbox.setDecimals(2)
+        rotation_layout.addWidget(self.rotation_spinbox)
+        properties_layout.addLayout(rotation_layout)
+
+        # 新建矩形按钮
+        self.btn_create_rect = QtWidgets.QPushButton(self.tr("新建矩形"))
+        self.btn_create_rect.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        properties_layout.addWidget(self.btn_create_rect)
+
+        self.properties_group.setLayout(properties_layout)
+
+        # 存储当前选中的shape和属性
+        self.current_shape = None
+        self._updating_from_shape = False  # 标记是否正在从shape更新UI
+
+        # ========== 分类控制区域 ==========
         # Left side: Category controls
         self.category_list = LabelCategoryWidget()
         categories = sorted(list(set(item.shape().label for item in items)))
@@ -69,52 +153,61 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_top = QtWidgets.QPushButton(self.tr("置顶"))
         self.btn_move_bottom = QtWidgets.QPushButton(self.tr("置底"))
 
-        # Layouts
-        v_layout_left = QtWidgets.QVBoxLayout()
-        v_layout_left.addWidget(QtWidgets.QLabel(self.tr("分类整体排序")))
-        v_layout_left.addWidget(self.category_list)
+        # Layouts - 三列布局
+        # 最左侧：属性编辑面板
+        v_layout_leftmost = QtWidgets.QVBoxLayout()
+        v_layout_leftmost.addWidget(self.properties_group)
+        v_layout_leftmost.addStretch()
 
-        # 10个按钮，2个一排，排成5排
+        # 中间：分类控制区域
+        v_layout_middle = QtWidgets.QVBoxLayout()
+        v_layout_middle.addWidget(QtWidgets.QLabel(self.tr("分类整体排序")))
+        v_layout_middle.addWidget(self.category_list)
+
+        # 按钮区域 - 2列布局
         # 第1排：置顶分类 | 置底分类
         h_button_layout_1 = QtWidgets.QHBoxLayout()
         h_button_layout_1.addWidget(self.btn_move_category_top)
         h_button_layout_1.addWidget(self.btn_move_category_bottom)
-        v_layout_left.addLayout(h_button_layout_1)
+        v_layout_middle.addLayout(h_button_layout_1)
 
         # 第2排：修改标签 | 按分类删除
         h_button_layout_2 = QtWidgets.QHBoxLayout()
         h_button_layout_2.addWidget(self.btn_edit_label)
         h_button_layout_2.addWidget(self.btn_delete_by_category)
-        v_layout_left.addLayout(h_button_layout_2)
+        v_layout_middle.addLayout(h_button_layout_2)
 
         # 第3排：全选标签 | 删除选中
         h_button_layout_3 = QtWidgets.QHBoxLayout()
         h_button_layout_3.addWidget(self.btn_select_all)
         h_button_layout_3.addWidget(self.btn_delete_selected)
-        v_layout_left.addLayout(h_button_layout_3)
+        v_layout_middle.addLayout(h_button_layout_3)
 
         # 第4排：上移 | 下移
         h_button_layout_4 = QtWidgets.QHBoxLayout()
         h_button_layout_4.addWidget(self.btn_move_up)
         h_button_layout_4.addWidget(self.btn_move_down)
-        v_layout_left.addLayout(h_button_layout_4)
+        v_layout_middle.addLayout(h_button_layout_4)
 
         # 第5排：置顶 | 置底
         h_button_layout_5 = QtWidgets.QHBoxLayout()
         h_button_layout_5.addWidget(self.btn_move_top)
         h_button_layout_5.addWidget(self.btn_move_bottom)
-        v_layout_left.addLayout(h_button_layout_5)
+        v_layout_middle.addLayout(h_button_layout_5)
 
-        v_layout_left.addWidget(self.apply_all_checkbox, 0, QtCore.Qt.AlignRight)
-        v_layout_left.addStretch()
+        # 第6排：应用到全部（复选框，右对齐）
+        v_layout_middle.addWidget(self.apply_all_checkbox, 0, QtCore.Qt.AlignRight)
+        v_layout_middle.addStretch()
 
+        # 最右侧：对象列表
         v_layout_right = QtWidgets.QVBoxLayout()
         v_layout_right.addWidget(QtWidgets.QLabel(self.tr("对象列表 (可拖拽排序)")))
         v_layout_right.addWidget(self.list_widget)
 
         main_layout = QtWidgets.QHBoxLayout(self)
-        main_layout.addLayout(v_layout_left, 3)
-        main_layout.addLayout(v_layout_right, 2)
+        main_layout.addLayout(v_layout_leftmost, 2)  # 最左侧：属性面板
+        main_layout.addLayout(v_layout_middle, 2)     # 中间：分类和按钮
+        main_layout.addLayout(v_layout_right, 3)      # 最右侧：对象列表
 
         # Connections
         self.list_widget.order_changed.connect(self._emit_order_changed)
@@ -134,6 +227,16 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_top.clicked.connect(self.move_to_top)
         self.btn_move_bottom.clicked.connect(self.move_to_bottom)
         self.btn_edit_label.clicked.connect(self.edit_requested.emit)
+
+        # 实时更新连接
+        self.x_spinbox.valueChanged.connect(self._on_position_changed)
+        self.y_spinbox.valueChanged.connect(self._on_position_changed)
+        self.w_spinbox.valueChanged.connect(self._on_size_changed)
+        self.h_spinbox.valueChanged.connect(self._on_size_changed)
+        self.cx_spinbox.valueChanged.connect(self._on_center_changed)
+        self.cy_spinbox.valueChanged.connect(self._on_center_changed)
+        self.rotation_spinbox.valueChanged.connect(self._on_rotation_changed)
+        self.btn_create_rect.clicked.connect(self._on_create_rectangle)
 
         self.update_button_states()
 
@@ -308,7 +411,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
 
         try:
             current_selection = [item.data(QtCore.Qt.UserRole) for item in self.list_widget.selectedItems()]
-            
+
             self.list_widget.clear()
             self.category_list.clear()
 
@@ -318,6 +421,30 @@ class ObjectManagerDialog(QtWidgets.QDialog):
             categories = sorted(list(set(item.shape().label for item in items)))
             for category in categories:
                 self.category_list.add_category(category)
+
+            # 更新标签下拉列表（带颜色）
+            self.label_combo.blockSignals(True)
+            current_text = self.label_combo.currentText()
+            self.label_combo.clear()
+
+            # 为每个标签添加颜色
+            for category in categories:
+                # 查找该标签的颜色
+                color = None
+                for item in items:
+                    if item.shape().label == category:
+                        color = item.background().color()
+                        break
+
+                # 添加带颜色的项
+                self.label_combo.addItem(category)
+                if color:
+                    index = self.label_combo.count() - 1
+                    self.label_combo.setItemData(index, color, QtCore.Qt.BackgroundRole)
+
+            if current_text:
+                self.label_combo.setCurrentText(current_text)
+            self.label_combo.blockSignals(False)
 
             for item in items:
                 new_item = QtWidgets.QListWidgetItem(item.text())
@@ -343,6 +470,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
             selected_shapes.append(item.data(QtCore.Qt.UserRole))
         self.selection_changed.emit(selected_shapes)
         self.update_button_states()
+        self._update_properties_panel(selected_shapes)
 
     def update_button_states(self):
         """Update the enabled state of the buttons based on selection."""
@@ -382,6 +510,8 @@ class ObjectManagerDialog(QtWidgets.QDialog):
                         break
         self.list_widget.blockSignals(False)
         self.update_button_states()
+        # 更新属性面板以反映画布选择
+        self._update_properties_panel(shapes_to_select if shapes_to_select else [])
 
     def restore_window_position(self):
         """Restore window position and size from settings."""
@@ -462,15 +592,376 @@ class ObjectManagerDialog(QtWidgets.QDialog):
 
         if not (self.main_window and hasattr(self.main_window, 'canvas')):
             return
-        
+
         shapes_to_delete = []
         for shape in self.main_window.canvas.shapes:
             if shape.label in checked_categories:
                 shapes_to_delete.append(shape)
-        
+
         if shapes_to_delete:
             # 1. Select the shapes to be deleted.
             self.selection_changed.emit(shapes_to_delete)
             # 2. Request the deletion of the selection.
             # Use a QTimer to ensure the selection signal is processed before the deletion signal.
             QtCore.QTimer.singleShot(0, self.delete_requested.emit)
+
+    # ========== 属性编辑面板方法 ==========
+
+    def _update_properties_panel(self, selected_shapes):
+        """更新属性编辑面板显示选中矩形的属性"""
+        if len(selected_shapes) == 1:
+            shape = selected_shapes[0]
+
+            # 保存当前选中的shape
+            self.current_shape = shape
+
+            # 启用所有控件
+            self.x_spinbox.setEnabled(True)
+            self.y_spinbox.setEnabled(True)
+            self.w_spinbox.setEnabled(True)
+            self.h_spinbox.setEnabled(True)
+            self.cx_spinbox.setEnabled(True)
+            self.cy_spinbox.setEnabled(True)
+
+            # 显示标签 - 查找对应的列表项以获取完整文本和颜色
+            label_text = shape.label
+            label_color = None
+            for i in range(self.list_widget.count()):
+                item = self.list_widget.item(i)
+                if item.data(QtCore.Qt.UserRole) == shape:
+                    label_text = item.text()  # 获取完整文本，如 "14 qipao(8)"
+                    label_color = item.background()  # 获取背景颜色
+                    break
+
+            self.label_combo.setCurrentText(label_text)
+            if label_color:
+                # 设置背景颜色
+                palette = self.label_combo.palette()
+                palette.setColor(QtGui.QPalette.Base, label_color.color())
+                self.label_combo.setPalette(palette)
+
+            # 计算边界框
+            if shape.points:
+                rect = self._get_shape_rect(shape)
+                if rect:
+                    # 标记正在从shape更新UI，避免触发实时更新
+                    self._updating_from_shape = True
+
+                    # 设置位置和尺寸
+                    self.x_spinbox.setValue(rect.left())
+                    self.y_spinbox.setValue(rect.top())
+                    self.w_spinbox.setValue(rect.width())
+                    self.h_spinbox.setValue(rect.height())
+                    self.cx_spinbox.setValue(rect.center().x())
+                    self.cy_spinbox.setValue(rect.center().y())
+
+                    # 保存当前宽高比
+                    if rect.height() > 0:
+                        self.current_aspect_ratio = rect.width() / rect.height()
+
+                    self._updating_from_shape = False
+
+            # 旋转角度（仅旋转矩形）
+            if shape.shape_type in ['rotation', 'rotation3']:
+                self.rotation_spinbox.setEnabled(True)
+
+                # 计算旋转角度
+                if hasattr(shape, 'direction') and shape.direction is not None:
+                    import math
+                    angle_degrees = math.degrees(shape.direction) % 360
+                    self._updating_from_shape = True
+                    self.rotation_spinbox.setValue(angle_degrees)
+                    self._updating_from_shape = False
+                else:
+                    self._updating_from_shape = True
+                    self.rotation_spinbox.setValue(0)
+                    self._updating_from_shape = False
+            else:
+                self.rotation_spinbox.setEnabled(False)
+                self._updating_from_shape = True
+                self.rotation_spinbox.setValue(0)
+                self._updating_from_shape = False
+
+        else:
+            # 多选或未选中，禁用所有控件
+            self._clear_properties_panel()
+
+    def _clear_properties_panel(self):
+        """清空属性编辑面板（但保持启用状态以便新建矩形）"""
+        self.current_shape = None
+
+        self.label_combo.setCurrentText("")
+        self.label_combo.lineEdit().setPlaceholderText(self.tr("输入或选择标签"))
+
+        # 重置背景颜色为默认
+        palette = self.label_combo.palette()
+        palette.setColor(QtGui.QPalette.Base, QtGui.QColor(255, 255, 255))  # 白色
+        self.label_combo.setPalette(palette)
+
+        self.x_spinbox.setValue(0)
+        self.y_spinbox.setValue(0)
+        self.w_spinbox.setValue(0)
+        self.h_spinbox.setValue(0)
+        self.cx_spinbox.setValue(0)
+        self.cy_spinbox.setValue(0)
+        self.rotation_spinbox.setValue(0)
+
+        # 保持所有输入框启用，以便用户可以输入坐标新建矩形
+        self.label_combo.setEnabled(True)
+        self.x_spinbox.setEnabled(True)
+        self.y_spinbox.setEnabled(True)
+        self.w_spinbox.setEnabled(True)
+        self.h_spinbox.setEnabled(True)
+        self.cx_spinbox.setEnabled(True)
+        self.cy_spinbox.setEnabled(True)
+        self.rotation_spinbox.setEnabled(False)  # 旋转角度仅在编辑旋转矩形时启用
+
+    # ========== 实时更新方法 ==========
+
+    def _on_position_changed(self):
+        """位置改变时实时更新shape"""
+        if self._updating_from_shape or not self.current_shape:
+            return
+
+        new_x = self.x_spinbox.value()
+        new_y = self.y_spinbox.value()
+
+        # 计算当前边界框
+        from PyQt5.QtCore import QRectF, QPointF
+        rect = self._get_shape_rect(self.current_shape)
+        if not rect:
+            return
+
+        # 计算偏移量
+        dx = new_x - rect.left()
+        dy = new_y - rect.top()
+
+        # 移动所有点
+        new_points = [QPointF(p.x() + dx, p.y() + dy) for p in self.current_shape.points]
+        self.current_shape.points = new_points
+
+        # 更新中心点显示
+        self._update_center_display()
+        self._update_canvas()
+
+    def _on_size_changed(self):
+        """尺寸改变时实时更新shape"""
+        if self._updating_from_shape or not self.current_shape:
+            return
+
+        new_w = self.w_spinbox.value()
+        new_h = self.h_spinbox.value()
+
+        # 计算当前边界框
+        from PyQt5.QtCore import QRectF, QPointF
+        rect = self._get_shape_rect(self.current_shape)
+        if not rect or rect.width() == 0 or rect.height() == 0:
+            return
+
+        # 计算缩放比例
+        scale_x = new_w / rect.width()
+        scale_y = new_h / rect.height()
+
+        # 缩放所有点（相对于左上角）
+        new_points = []
+        for point in self.current_shape.points:
+            scaled_x = rect.left() + (point.x() - rect.left()) * scale_x
+            scaled_y = rect.top() + (point.y() - rect.top()) * scale_y
+            new_points.append(QPointF(scaled_x, scaled_y))
+
+        self.current_shape.points = new_points
+
+        # 更新中心点显示
+        self._update_center_display()
+        self._update_canvas()
+
+    def _on_center_changed(self):
+        """中心点改变时实时更新shape"""
+        if self._updating_from_shape or not self.current_shape:
+            return
+
+        new_cx = self.cx_spinbox.value()
+        new_cy = self.cy_spinbox.value()
+
+        # 计算当前边界框
+        from PyQt5.QtCore import QRectF, QPointF
+        rect = self._get_shape_rect(self.current_shape)
+        if not rect:
+            return
+
+        # 计算偏移量
+        dx = new_cx - rect.center().x()
+        dy = new_cy - rect.center().y()
+
+        # 移动所有点
+        new_points = [QPointF(p.x() + dx, p.y() + dy) for p in self.current_shape.points]
+        self.current_shape.points = new_points
+
+        # 更新位置显示
+        self._update_position_display()
+        self._update_canvas()
+
+    def _on_rotation_changed(self):
+        """旋转角度改变时实时更新shape"""
+        if self._updating_from_shape or not self.current_shape:
+            return
+
+        if self.current_shape.shape_type not in ['rotation', 'rotation3']:
+            return
+
+        new_rotation = self.rotation_spinbox.value()
+        import math
+        angle_radians = math.radians(new_rotation)
+
+        # 使用canvas.set_shape_rotation来实时更新画布（与CTRL+E对话框相同的方式）
+        if self.main_window and hasattr(self.main_window, 'canvas'):
+            self.main_window.canvas.set_shape_rotation(self.current_shape, angle_radians)
+            self.main_window.set_dirty()
+
+    def _on_create_rectangle(self):
+        """新建矩形"""
+        # 获取标签
+        label = self.label_combo.currentText().strip()
+        if not label:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("警告"),
+                self.tr("请输入标签名称！")
+            )
+            return
+
+        # 获取坐标和尺寸
+        x = self.x_spinbox.value()
+        y = self.y_spinbox.value()
+        w = self.w_spinbox.value()
+        h = self.h_spinbox.value()
+
+        # 检查尺寸
+        if w <= 0 or h <= 0:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("警告"),
+                self.tr("宽度和高度必须大于0！")
+            )
+            return
+
+        # 创建矩形的四个点 (左上, 右上, 右下, 左下)
+        from PyQt5.QtCore import QPointF
+        from views.labeling.shape import Shape
+
+        shape = Shape(shape_type="rectangle")
+        shape.label = label
+        shape.add_point(QPointF(x, y))           # 左上
+        shape.add_point(QPointF(x + w, y))       # 右上
+        shape.add_point(QPointF(x + w, y + h))   # 右下
+        shape.add_point(QPointF(x, y + h))       # 左下
+        shape.close()
+
+        # 添加到画布和标签列表
+        if self.main_window:
+            # 添加到画布
+            if hasattr(self.main_window, 'canvas'):
+                self.main_window.canvas.shapes.append(shape)
+                self.main_window.canvas.store_shapes()
+
+            # 添加到标签列表（这会触发所有必要的更新）
+            if hasattr(self.main_window, 'add_label'):
+                self.main_window.add_label(shape)
+
+            # 更新画布显示
+            if hasattr(self.main_window, 'canvas'):
+                self.main_window.canvas.update()
+
+            # 选中新创建的矩形
+            if hasattr(self.main_window, 'canvas'):
+                self.main_window.canvas.select_shapes([shape])
+
+            # 刷新对象管理器列表
+            if hasattr(self.main_window, 'label_list'):
+                self.update_items([item for item in self.main_window.label_list])
+
+    def _get_shape_rect(self, shape):
+        """获取shape的边界框"""
+        if not shape or not shape.points:
+            return None
+
+        from PyQt5.QtCore import QRectF
+
+        # 获取所有点的x和y坐标
+        x_coords = [p.x() for p in shape.points]
+        y_coords = [p.y() for p in shape.points]
+
+        if not x_coords or not y_coords:
+            return None
+
+        # 计算边界框
+        min_x = min(x_coords)
+        max_x = max(x_coords)
+        min_y = min(y_coords)
+        max_y = max(y_coords)
+
+        # 创建矩形：左上角坐标 + 宽高
+        rect = QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
+        return rect
+
+    def _update_center_display(self):
+        """更新中心点显示"""
+        x = self.x_spinbox.value()
+        y = self.y_spinbox.value()
+        w = self.w_spinbox.value()
+        h = self.h_spinbox.value()
+
+        self.cx_spinbox.blockSignals(True)
+        self.cy_spinbox.blockSignals(True)
+        self.cx_spinbox.setValue(x + w / 2)
+        self.cy_spinbox.setValue(y + h / 2)
+        self.cx_spinbox.blockSignals(False)
+        self.cy_spinbox.blockSignals(False)
+
+    def _update_position_display(self):
+        """更新位置显示"""
+        rect = self._get_shape_rect(self.current_shape)
+        if not rect:
+            return
+
+        self.x_spinbox.blockSignals(True)
+        self.y_spinbox.blockSignals(True)
+        self.x_spinbox.setValue(rect.left())
+        self.y_spinbox.setValue(rect.top())
+        self.x_spinbox.blockSignals(False)
+        self.y_spinbox.blockSignals(False)
+
+    def _update_canvas(self):
+        """更新画布"""
+        if self.main_window and hasattr(self.main_window, 'canvas'):
+            self.main_window.canvas.update()
+            self.main_window.set_dirty()
+
+    def update_properties_from_canvas(self):
+        """从画布更新属性面板（当形状在画布上移动或旋转时调用）"""
+        if not self.current_shape:
+            return
+
+        # 标记正在从shape更新UI，避免触发实时更新
+        self._updating_from_shape = True
+
+        # 计算边界框
+        if self.current_shape.points:
+            rect = self._get_shape_rect(self.current_shape)
+            if rect:
+                # 更新位置和尺寸
+                self.x_spinbox.setValue(rect.left())
+                self.y_spinbox.setValue(rect.top())
+                self.w_spinbox.setValue(rect.width())
+                self.h_spinbox.setValue(rect.height())
+                self.cx_spinbox.setValue(rect.center().x())
+                self.cy_spinbox.setValue(rect.center().y())
+
+        # 更新旋转角度（仅旋转矩形）
+        if self.current_shape.shape_type in ['rotation', 'rotation3']:
+            if hasattr(self.current_shape, 'direction') and self.current_shape.direction is not None:
+                import math
+                angle_degrees = math.degrees(self.current_shape.direction) % 360
+                self.rotation_spinbox.setValue(angle_degrees)
+
+        self._updating_from_shape = False

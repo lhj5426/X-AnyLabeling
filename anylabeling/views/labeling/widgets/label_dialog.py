@@ -1248,7 +1248,7 @@ class LabelDialog(QtWidgets.QDialog):
         # Add angle editor
         self.edit_angle = InvertedWheelSpinBox()
         self.edit_angle.setWrapping(True)
-        self.edit_angle.setRange(0, 360)
+        self.edit_angle.setRange(0, 359)
         self.edit_angle.setSingleStep(0.5)
         self.edit_angle.setDecimals(2)
         self.edit_angle.setPlaceholderText(self.tr("角度"))

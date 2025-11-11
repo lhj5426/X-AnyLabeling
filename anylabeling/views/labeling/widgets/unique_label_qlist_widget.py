@@ -6,6 +6,7 @@ from PyQt5 import QtWidgets, QtGui, QtCore
 from PyQt5.QtCore import Qt, pyqtSignal
 
 from .escapable_qlist_widget import EscapableQListWidget
+from .. import utils
 
 
 class UniqueLabelQListWidget(EscapableQListWidget):
@@ -14,6 +15,14 @@ class UniqueLabelQListWidget(EscapableQListWidget):
     # 新增：选中项变化信号
     selection_changed = pyqtSignal()
     labels_ordered = pyqtSignal(list)
+    # 新增：右键菜单信号
+    delete_current_page_shapes = pyqtSignal(str)  # 删除本页所有该标签的矩形
+    delete_all_label_shapes = pyqtSignal(str)  # 删除所有图片中该标签的矩形和标签
+    change_label_color = pyqtSignal(str)  # 修改标签颜色
+    # 批量操作信号
+    batch_delete_current_page_shapes = pyqtSignal(list)  # 批量删除本页所有选中标签的矩形
+    batch_delete_all_label_shapes = pyqtSignal(list)  # 批量删除所有图片中选中标签的矩形和标签
+    batch_change_label_color = pyqtSignal(list)  # 批量修改标签颜色
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,6 +36,10 @@ class UniqueLabelQListWidget(EscapableQListWidget):
         self.itemChanged.connect(self.on_item_changed)
         # 连接选中变化信号
         self.itemSelectionChanged.connect(self.on_selection_changed)
+
+        # 设置右键菜单
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.show_context_menu)
 
     def mousePressEvent(self, event):
         # 只有在未按下Ctrl/Shift时，点击空白才清除选择，保证Ctrl/Shift多选原生行为
@@ -144,6 +157,80 @@ class UniqueLabelQListWidget(EscapableQListWidget):
         # 选中项变化时发射信号
         self.selection_changed.emit()
 
+    def show_context_menu(self, position):
+        """显示右键菜单（支持多选批量操作）"""
+        # 获取点击位置的item
+        item = self.itemAt(position)
+        if not item:
+            return
+
+        # 获取所有选中的标签
+        selected_items = self.selectedItems()
+        if not selected_items:
+            return
+
+        selected_labels = [item.data(Qt.UserRole) for item in selected_items]
+        is_multi_select = len(selected_labels) > 1
+
+        # 创建菜单
+        menu = QtWidgets.QMenu(self)
+
+        # 添加菜单项（根据是否多选调整文本）
+        if is_multi_select:
+            delete_page_action = menu.addAction(
+                utils.new_icon('delete'),
+                self.tr(f"删除本页所有选中标签的矩形 ({len(selected_labels)}个)")
+            )
+            delete_all_action = menu.addAction(
+                utils.new_icon('cancel'),
+                self.tr(f"删除选中标签(所有图片) ({len(selected_labels)}个)")
+            )
+            menu.addSeparator()
+            change_color_action = menu.addAction(
+                utils.new_icon('color'),
+                self.tr(f"批量修改颜色 ({len(selected_labels)}个)")
+            )
+        else:
+            label = selected_labels[0]
+            delete_page_action = menu.addAction(
+                utils.new_icon('delete'),
+                self.tr("删除本页所有该标签矩形")
+            )
+            delete_all_action = menu.addAction(
+                utils.new_icon('cancel'),
+                self.tr("删除该标签(所有图片)")
+            )
+            menu.addSeparator()
+            change_color_action = menu.addAction(
+                utils.new_icon('color'),
+                self.tr("修改颜色")
+            )
+
+        # 显示菜单并获取选择的动作
+        action = menu.exec_(self.mapToGlobal(position))
+
+        # 处理选择的动作
+        if action == delete_page_action:
+            if is_multi_select:
+                # 批量操作：发送批量信号
+                self.batch_delete_current_page_shapes.emit(selected_labels)
+            else:
+                # 单个操作
+                self.delete_current_page_shapes.emit(selected_labels[0])
+        elif action == delete_all_action:
+            if is_multi_select:
+                # 批量操作：发送批量信号
+                self.batch_delete_all_label_shapes.emit(selected_labels)
+            else:
+                # 单个操作
+                self.delete_all_label_shapes.emit(selected_labels[0])
+        elif action == change_color_action:
+            if is_multi_select:
+                # 批量操作：发送批量信号
+                self.batch_change_label_color.emit(selected_labels)
+            else:
+                # 单个操作
+                self.change_label_color.emit(selected_labels[0])
 
     def get_ordered_labels(self):
         labels = []

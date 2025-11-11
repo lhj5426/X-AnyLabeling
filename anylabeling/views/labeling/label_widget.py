@@ -394,17 +394,31 @@ class LabelingWidget(QtWidgets.QWidget):
             self.shape_dock.titleBarWidget().installEventFilter(self)
 
         self.unique_label_list = UniqueLabelQListWidget(self)
-        self.unique_label_list.setToolTip(
-            self.tr(
-                "Click labels to toggle visibility. "
-                "Press 'Esc' to deselect."
-            )
-        )
         # 连接标签可见性变化信号
         self.unique_label_list.label_visibility_changed.connect(
             self.update_label_visibility
         )
         self.unique_label_list.labels_ordered.connect(self.on_labels_ordered)
+        # 连接右键菜单信号（单个操作）
+        self.unique_label_list.delete_current_page_shapes.connect(
+            self.delete_current_page_shapes_by_label
+        )
+        self.unique_label_list.delete_all_label_shapes.connect(
+            self.delete_all_label_shapes
+        )
+        self.unique_label_list.change_label_color.connect(
+            self.change_label_color
+        )
+        # 连接批量操作信号
+        self.unique_label_list.batch_delete_current_page_shapes.connect(
+            self.batch_delete_current_page_shapes_by_labels
+        )
+        self.unique_label_list.batch_delete_all_label_shapes.connect(
+            self.batch_delete_all_label_shapes
+        )
+        self.unique_label_list.batch_change_label_color.connect(
+            self.batch_change_label_color
+        )
         # 创建标签控制按钮
         self.create_label_control_buttons()
 
@@ -3255,6 +3269,13 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.delete_selected_shape
             )
             self.object_manager_dialog.union_requested.connect(self.union_selection)
+            # 监听形状移动和旋转信号，实时更新属性面板
+            self.canvas.shape_moved.connect(
+                self.object_manager_dialog.update_properties_from_canvas
+            )
+            self.canvas.shape_rotated.connect(
+                self.object_manager_dialog.update_properties_from_canvas
+            )
             self.object_manager_dialog.setAttribute(
                 QtCore.Qt.WA_DeleteOnClose, False
             )
@@ -6353,6 +6374,369 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # 更新导航器显示
         self.update_navigator_shapes()
+
+    def delete_current_page_shapes_by_label(self, label):
+        """删除本页所有该标签的矩形"""
+        # 找到所有该标签的shape
+        shapes_to_delete = [shape for shape in self.canvas.shapes if shape.label == label]
+
+        if not shapes_to_delete:
+            QtWidgets.QMessageBox.information(
+                self,
+                self.tr("提示"),
+                self.tr(f"本页没有标签为 '{label}' 的矩形")
+            )
+            return
+
+        # 确认对话框（显示数量）
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            self.tr("确认删除"),
+            self.tr(f"确定要删除本页所有标签为 '{label}' 的矩形吗？\n共 {len(shapes_to_delete)} 个矩形"),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        # 删除shapes
+        for shape in shapes_to_delete:
+            self.canvas.shapes.remove(shape)
+            item = self.label_list.find_item_by_shape(shape)
+            if item:
+                self.label_list.remove_item(item)
+
+        self.canvas.store_shapes()
+        self.canvas.update()
+        self.set_dirty()
+
+        # 更新标签计数
+        self._update_all_item_orders()
+        self.update_combo_box()
+        self.update_gid_box()
+        self.update_label_counts()
+        self.shape_list_changed.emit()
+
+    def delete_all_label_shapes(self, label):
+        """删除所有图片中该标签的矩形和标签"""
+        if not self.image_list:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("警告"),
+                self.tr("没有加载图像列表。")
+            )
+            return
+
+        # 确认对话框
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            self.tr("确认删除"),
+            self.tr(
+                f"确定要删除所有图片中标签为 '{label}' 的矩形吗？\n"
+                f"这将影响 {len(self.image_list)} 张图片，且无法撤销！"
+            ),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        import os.path as osp
+        import json
+
+        processed_files = 0
+        deleted_shapes_total = 0
+
+        # 遍历所有图片
+        for image_path in self.image_list:
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+            if not osp.exists(label_file_path):
+                continue
+
+            # 读取标注文件
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                # 过滤掉该标签的shapes
+                original_count = len(data.get('shapes', []))
+                data['shapes'] = [s for s in data.get('shapes', []) if s.get('label') != label]
+                deleted_count = original_count - len(data['shapes'])
+
+                if deleted_count > 0:
+                    # 保存文件
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+
+                    processed_files += 1
+                    deleted_shapes_total += deleted_count
+
+            except Exception as e:
+                logger.error(f"处理文件 {label_file_path} 时出错: {e}")
+
+        # 从标签栏删除该标签
+        self.unique_label_list.remove_items_by_label(label)
+
+        # 刷新当前图片
+        if self.filename:
+            self.load_file(self.filename)
+
+        # 显示结果
+        QtWidgets.QMessageBox.information(
+            self,
+            self.tr("删除完成"),
+            self.tr(
+                f"已从 {processed_files} 张图片上\n"
+                f"删除了 {deleted_shapes_total} 个 '{label}' 标签"
+            )
+        )
+
+    def change_label_color(self, label):
+        """修改标签颜色"""
+        from PyQt5.QtWidgets import QColorDialog
+        from PyQt5.QtGui import QColor
+
+        # 获取当前颜色
+        current_rgb = self._get_rgb_by_label(label)
+        current_color = QColor(*current_rgb)
+
+        # 打开颜色选择对话框
+        color = QColorDialog.getColor(current_color, self, self.tr(f"选择 '{label}' 的颜色"))
+
+        if not color.isValid():
+            return
+
+        # 更新颜色配置
+        new_rgb = (color.red(), color.green(), color.blue())
+
+        # 如果使用手动颜色模式，保存到配置
+        if self._config["shape_color"] == "manual":
+            if "label_colors" not in self._config:
+                self._config["label_colors"] = {}
+            self._config["label_colors"][label] = new_rgb
+
+        # 更新所有该标签的shapes颜色
+        for shape in self.canvas.shapes:
+            if shape.label == label:
+                self._update_shape_color(shape)
+                item = self.label_list.find_item_by_shape(shape)
+                if item:
+                    color_rgba = shape.fill_color.getRgb()[:3]
+                    item.setBackground(QtGui.QColor(*color_rgba, LABEL_OPACITY))
+
+        # 更新unique_label_list中的颜色
+        self.unique_label_list.update_item_color(label, new_rgb, LABEL_OPACITY)
+
+        # 更新画布
+        self.canvas.update()
+        self.set_dirty()
+
+    def batch_delete_current_page_shapes_by_labels(self, labels):
+        """批量删除本页所有选中标签的矩形"""
+        if not labels:
+            return
+
+        # 找到所有要删除的shapes
+        shapes_to_delete = [shape for shape in self.canvas.shapes if shape.label in labels]
+
+        if not shapes_to_delete:
+            QtWidgets.QMessageBox.information(
+                self,
+                self.tr("提示"),
+                self.tr(f"本页没有选中标签的矩形")
+            )
+            return
+
+        # 统计每个标签的数量
+        label_counts = {}
+        for shape in shapes_to_delete:
+            label_counts[shape.label] = label_counts.get(shape.label, 0) + 1
+
+        # 构建确认消息
+        labels_info = "\n".join([f"  • {label}: {count}个" for label, count in label_counts.items()])
+
+        # 确认对话框
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            self.tr("确认删除"),
+            self.tr(f"确定要删除本页以下标签的所有矩形吗？\n\n{labels_info}\n\n共 {len(shapes_to_delete)} 个矩形"),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        # 删除shapes
+        for shape in shapes_to_delete:
+            self.canvas.shapes.remove(shape)
+            item = self.label_list.find_item_by_shape(shape)
+            if item:
+                self.label_list.remove_item(item)
+
+        self.canvas.store_shapes()
+        self.canvas.update()
+        self.set_dirty()
+
+        # 更新标签计数
+        self._update_all_item_orders()
+        self.update_combo_box()
+        self.update_gid_box()
+        self.update_label_counts()
+        self.shape_list_changed.emit()
+
+    def batch_delete_all_label_shapes(self, labels):
+        """批量删除所有图片中选中标签的矩形和标签"""
+        if not labels:
+            return
+
+        if not self.image_list:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("警告"),
+                self.tr("没有加载图像列表。")
+            )
+            return
+
+        # 构建确认消息
+        labels_str = "、".join([f"'{label}'" for label in labels])
+
+        # 确认对话框
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            self.tr("确认删除"),
+            self.tr(
+                f"确定要删除所有图片中以下标签的矩形吗？\n\n"
+                f"{labels_str}\n\n"
+                f"这将影响 {len(self.image_list)} 张图片，且无法撤销！"
+            ),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        import os.path as osp
+        import json
+
+        processed_files = 0
+        deleted_shapes_total = 0
+        label_deleted_counts = {label: 0 for label in labels}
+
+        # 遍历所有图片
+        for image_path in self.image_list:
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+            if not osp.exists(label_file_path):
+                continue
+
+            # 读取标注文件
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                # 过滤掉选中标签的shapes，并统计每个标签的删除数量
+                original_count = len(data.get('shapes', []))
+                new_shapes = []
+                for s in data.get('shapes', []):
+                    if s.get('label') in labels:
+                        label_deleted_counts[s.get('label')] += 1
+                    else:
+                        new_shapes.append(s)
+
+                data['shapes'] = new_shapes
+                deleted_count = original_count - len(data['shapes'])
+
+                if deleted_count > 0:
+                    # 保存文件
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+
+                    processed_files += 1
+                    deleted_shapes_total += deleted_count
+
+            except Exception as e:
+                logger.error(f"处理文件 {label_file_path} 时出错: {e}")
+
+        # 从标签栏删除这些标签
+        for label in labels:
+            self.unique_label_list.remove_items_by_label(label)
+
+        # 刷新当前图片
+        if self.filename:
+            self.load_file(self.filename)
+
+        # 构建结果消息
+        labels_info = "\n".join([f"  • {label}: {count}个" for label, count in label_deleted_counts.items() if count > 0])
+
+        # 显示结果
+        QtWidgets.QMessageBox.information(
+            self,
+            self.tr("删除完成"),
+            self.tr(
+                f"已从 {processed_files} 张图片上删除了以下标签：\n\n"
+                f"{labels_info}\n\n"
+                f"共删除 {deleted_shapes_total} 个矩形"
+            )
+        )
+
+    def batch_change_label_color(self, labels):
+        """批量修改标签颜色"""
+        if not labels:
+            return
+
+        from PyQt5.QtWidgets import QColorDialog
+        from PyQt5.QtGui import QColor
+
+        # 获取第一个标签的当前颜色作为默认颜色
+        current_rgb = self._get_rgb_by_label(labels[0])
+        current_color = QColor(*current_rgb)
+
+        # 打开颜色选择对话框
+        labels_str = "、".join([f"'{label}'" for label in labels])
+        color = QColorDialog.getColor(
+            current_color,
+            self,
+            self.tr(f"选择颜色（将应用到 {len(labels)} 个标签）")
+        )
+
+        if not color.isValid():
+            return
+
+        # 更新颜色配置
+        new_rgb = (color.red(), color.green(), color.blue())
+
+        # 如果使用手动颜色模式，保存到配置
+        if self._config["shape_color"] == "manual":
+            if "label_colors" not in self._config:
+                self._config["label_colors"] = {}
+            for label in labels:
+                self._config["label_colors"][label] = new_rgb
+
+        # 更新所有选中标签的shapes颜色
+        for shape in self.canvas.shapes:
+            if shape.label in labels:
+                self._update_shape_color(shape)
+                item = self.label_list.find_item_by_shape(shape)
+                if item:
+                    color_rgba = shape.fill_color.getRgb()[:3]
+                    item.setBackground(QtGui.QColor(*color_rgba, LABEL_OPACITY))
+
+        # 更新unique_label_list中的颜色
+        for label in labels:
+            self.unique_label_list.update_item_color(label, new_rgb, LABEL_OPACITY)
+
+        # 更新画布
+        self.canvas.update()
+        self.set_dirty()
 
     def text_selection_changed(self, index):
         # 禁用这个函数，避免在创建新图形时重置复选框
