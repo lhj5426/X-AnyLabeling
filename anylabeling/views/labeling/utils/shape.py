@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import QProgressDialog
 from anylabeling.views.labeling.logger import logger
 from anylabeling.views.labeling.utils.opencv import get_bounding_boxes
 from anylabeling.views.labeling.widgets import Popup
+from anylabeling.views.labeling.widgets.label_selection_dialog import LabelSelectionDialog
 from anylabeling.views.labeling.utils.qt import new_icon_path
 from anylabeling.views.labeling.utils.style import *
 from anylabeling.services.auto_labeling.utils import calculate_rotation_theta
@@ -23,12 +24,86 @@ def shape_conversion(self, mode):
     if len(label_file_list) == 0:
         return
 
+    # 收集所有相关的标签
+    all_labels = set()
+    for label_file in label_file_list:
+        try:
+            with open(label_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            if not isinstance(data, dict) or "shapes" not in data:
+                continue
+
+            for shape in data["shapes"]:
+                if not isinstance(shape, dict):
+                    continue
+
+                shape_type = shape.get("shape_type")
+                label = shape.get("label")
+
+                # 根据转换模式收集相关标签
+                if mode == "hbb_to_obb" and shape_type == "rectangle":
+                    if label:
+                        all_labels.add(label)
+                elif mode == "obb_to_hbb" and shape_type == "rotation":
+                    if label:
+                        all_labels.add(label)
+                elif mode == "polygon_to_hbb" and shape_type == "polygon":
+                    if label:
+                        all_labels.add(label)
+                elif mode == "polygon_to_obb" and shape_type == "polygon":
+                    if label:
+                        all_labels.add(label)
+        except Exception as e:
+            logger.warning(f"Error reading {label_file}: {e}")
+            continue
+
+    # 如果没有找到可转换的标签，提示用户
+    if not all_labels:
+        QtWidgets.QMessageBox.information(
+            self,
+            self.tr("提示"),
+            self.tr("没有找到可以转换的标签。")
+        )
+        return
+
+    # 弹出标签选择对话框
+    mode_titles = {
+        "hbb_to_obb": "选择要转换为旋转框的标签",
+        "obb_to_hbb": "选择要转换为水平框的标签",
+        "polygon_to_hbb": "选择要转换为水平框的标签",
+        "polygon_to_obb": "选择要转换为旋转框的标签",
+    }
+
+    dialog = LabelSelectionDialog(
+        sorted(list(all_labels)),
+        mode_title=mode_titles.get(mode, "选择要转换的标签"),
+        parent=self
+    )
+
+    if dialog.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    selected_labels = dialog.get_selected_labels()
+
+    # 如果用户没有选择任何标签，直接返回
+    if not selected_labels:
+        QtWidgets.QMessageBox.information(
+            self,
+            self.tr("提示"),
+            self.tr("未选择任何标签，操作已取消。")
+        )
+        return
+
+    # 转换为集合以便快速查找
+    selected_labels_set = set(selected_labels)
+
     response = QtWidgets.QMessageBox()
     response.setIcon(QtWidgets.QMessageBox.Warning)
     response.setWindowTitle("警告")
     response.setText("当前标注将会被改变")
     response.setInformativeText(
-        "您确定要执行此转换吗？"
+        f"您确定要转换选中的 {len(selected_labels)} 个标签吗？"
     )
     response.setStandardButtons(
         QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Ok
@@ -74,6 +149,11 @@ def shape_conversion(self, mode):
                     continue
 
                 shape_type = shape.get("shape_type")
+                shape_label = shape.get("label")
+
+                # 只转换选中的标签
+                if shape_label not in selected_labels_set:
+                    continue
 
                 if mode == "hbb_to_obb" and shape_type == "rectangle":
                     shape["shape_type"] = "rotation"
