@@ -426,6 +426,10 @@ https://github.com/user-attachments/assets/778fa69c-9cc8-4826-af8d-ca3ff5e10b3c
 
 https://github.com/user-attachments/assets/67ce2c57-d73b-4023-ab03-820ec781e8bc
 
+80.水平转旋转矩形 旋转矩形转水平矩形 增加 标签选择对话框 不再无脑全部转换了
+
+https://github.com/user-attachments/assets/377959cc-ee4b-46b6-99b7-3fb229fe1c04
+
 
 
 
