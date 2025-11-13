@@ -1,8 +1,9 @@
 <div align="center">
   <p>
     <a href="https://github.com/CVHub520/X-AnyLabeling/" target="_blank">
-      <img alt="X-AnyLabeling" height="200px" src="https://github.com/user-attachments/assets/d3c760ac-0e11-4293-ba2a-27557e0df762"></a>
+      <img alt="X-AnyLabeling" height="200px" src="https://github.com/user-attachments/assets/36cec719-209d-4eb7-b59b-ff504fb16af5"></a>
   </p>
+
 
 
 X-AnyLabeling 魔改版 基于250903更新的源码进行魔改
