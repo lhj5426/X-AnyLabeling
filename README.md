@@ -1,7 +1,7 @@
 <div align="center">
   <p>
     <a href="https://github.com/CVHub520/X-AnyLabeling/" target="_blank">
-      <img alt="X-AnyLabeling" height="200px" src="https://github.com/user-attachments/assets/0714a182-92bd-4b47-b48d-1c5d7c225176"></a>
+      <img alt="X-AnyLabeling" height="200px" src="https://github.com/user-attachments/assets/d3c760ac-0e11-4293-ba2a-27557e0df762"></a>
   </p>
 
 
