@@ -442,6 +442,19 @@ https://github.com/user-attachments/assets/03c4e3d2-aa08-48c1-8449-d2602ec666a0
 
 https://github.com/user-attachments/assets/47d93b50-8c67-4765-b3d9-2f322b76fbb5
 
+84.高亮增加设置 可以设置根据标签高亮 和切换高亮 并增加混合模式检测
+
+https://github.com/user-attachments/assets/78e16ae9-2dca-4684-83dd-5ec6a3da38ca
+
+85. 增加标签锁 倍锁定的标签进入一种可观测不可触摸的状态 只有使用SHIFT+鼠标左键 路径线插入才可解锁
+
+https://github.com/user-attachments/assets/92171dc0-dd61-412c-ba58-3af2c0e9cd68
+
+86.增加红绿灯系统 默认黄色为标签锁定状态 绿色为已编辑修正过的标签 红色为已选中的标签 蓝色为标签解锁状态 
+
+https://github.com/user-attachments/assets/0468ab88-a631-461b-8ca8-eb69fb9d995c
+
+
 
 
 
