@@ -430,8 +430,17 @@ https://github.com/user-attachments/assets/67ce2c57-d73b-4023-ab03-820ec781e8bc
 
 https://github.com/user-attachments/assets/377959cc-ee4b-46b6-99b7-3fb229fe1c04
 
+81.增加了对 LabelPlus标号器+ 漫画翻译辅助工具 https://github.com/LabelPlus/LabelPlus 格式导入导出的支持 可以使用矩形和点来标
 
+https://github.com/user-attachments/assets/e629ce45-b587-48ce-a289-74227e9268fa
 
+82.为支持LabelPlus标号器 优化了点的操作逻辑 原先鼠标点击 然后松开鼠标 移动指针就可以移动点 现在点击点=选中 方便输入文本 移动需要按住鼠标拖拽和操作矩形的顶点一致
+
+https://github.com/user-attachments/assets/03c4e3d2-aa08-48c1-8449-d2602ec666a0
+
+83. 为支持LabelPlus标号器 增加页文本工具 方便在一个窗口内查看和修改本页所有文本内容
+
+https://github.com/user-attachments/assets/47d93b50-8c67-4765-b3d9-2f322b76fbb5
 
 
 
