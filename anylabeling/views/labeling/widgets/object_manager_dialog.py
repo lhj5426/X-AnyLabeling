@@ -1,10 +1,76 @@
 # -*- encoding: utf-8 -*-
 
 from PyQt5 import QtWidgets, QtCore, QtGui
+from PyQt5.QtCore import Qt
 
 from .. import utils
 from .label_category_widget import LabelCategoryWidget
 from .object_list_widget import ObjectListWidget
+
+
+class TrafficLightDelegate(QtWidgets.QStyledItemDelegate):
+    """Delegate to draw traffic light indicators for object list items"""
+    
+    def __init__(self, parent=None, config=None):
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.config = config or {}
+    
+    def paint(self, painter, option, index):
+        # Draw the default item
+        super().paint(painter, option, index)
+        
+        dot_radius = 4
+        dot_diameter = dot_radius * 2
+        spacing = 2
+        dot_y = option.rect.center().y()
+        
+        # Define fixed positions for each dot from right to left
+        # Position 1 (Rightmost): Selected
+        pos1_x = option.rect.right() - dot_radius - 5
+        
+        # Position 2 (Middle): Locked/Unlocked
+        pos2_x = pos1_x - (dot_diameter + spacing)
+        
+        # Position 3 (Leftmost): Edited
+        pos3_x = pos2_x - (dot_diameter + spacing)
+        
+        shape = index.data(Qt.UserRole)
+        
+        # 1. Draw Selected dot (Position 1)
+        if option.state & QtWidgets.QStyle.State_Selected:
+            painter.save()
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            selected_color_rgb = self.config.get("traffic_light_colors", {}).get("selected", [255, 0, 0])
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(*selected_color_rgb)))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QtCore.QPointF(pos1_x, dot_y), dot_radius, dot_radius)
+            painter.restore()
+        
+        # 2. Draw Locked/Unlocked dot (Position 2)
+        if shape:
+            locked_labels_str = self.config.get('locked_labels', '')
+            locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
+            
+            if shape.label in locked_labels:
+                painter.save()
+                painter.setRenderHint(QtGui.QPainter.Antialiasing)
+                color_rgb = self.config.get("traffic_light_colors", {}).get("unlocked", [0, 0, 255]) if shape.is_session_unlocked else self.config.get("traffic_light_colors", {}).get("locked", [255, 255, 0])
+                color = QtGui.QColor(*color_rgb)
+                painter.setBrush(QtGui.QBrush(color))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(QtCore.QPointF(pos2_x, dot_y), dot_radius, dot_radius)
+                painter.restore()
+        
+        # 3. Draw Edited dot (Position 3)
+        if shape and shape.is_edited:
+            painter.save()
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            edited_color_rgb = self.config.get("traffic_light_colors", {}).get("edited", [0, 255, 0])
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(*edited_color_rgb)))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QtCore.QPointF(pos3_x, dot_y), dot_radius, dot_radius)
+            painter.restore()
 
 
 class ObjectManagerDialog(QtWidgets.QDialog):
@@ -28,6 +94,9 @@ class ObjectManagerDialog(QtWidgets.QDialog):
             QtCore.Qt.WindowMaximizeButtonHint |
             QtCore.Qt.WindowCloseButtonHint
         )
+
+        # Get config from parent
+        self.config = parent._config if parent and hasattr(parent, '_config') else {}
 
         # Restore window position and size
         self.restore_window_position()
@@ -137,6 +206,10 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.list_widget.setDefaultDropAction(QtCore.Qt.MoveAction)
         self.list_widget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.list_widget.installEventFilter(self)
+        
+        # Apply traffic light delegate to show status indicators
+        self.traffic_light_delegate = TrafficLightDelegate(self, self.config)
+        self.list_widget.setItemDelegate(self.traffic_light_delegate)
 
         for item in items:
             new_item = QtWidgets.QListWidgetItem(item.text())

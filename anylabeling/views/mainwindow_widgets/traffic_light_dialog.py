@@ -20,6 +20,8 @@ class TrafficLightDialog(QDialog):
 
     # Signal to emit when "Clear All Edited" button is clicked
     clear_all_edited = pyqtSignal()
+    # Signal to emit when "Clear Current Page Edited" button is clicked
+    clear_current_page_edited = pyqtSignal()
     # Signal to emit when a traffic light color is changed
     color_changed = pyqtSignal(str, QColor) # light_name, new_color
 
@@ -99,6 +101,11 @@ class TrafficLightDialog(QDialog):
         self.clear_button.clicked.connect(self._on_clear_all_edited)
         main_layout.addWidget(self.clear_button)
 
+        # Clear Current Page Edited Button
+        self.clear_current_page_button = QPushButton("清除本页已编辑")
+        self.clear_current_page_button.clicked.connect(self._on_clear_current_page_edited)
+        main_layout.addWidget(self.clear_current_page_button)
+
         # Log Display
         log_group_box = QGroupBox("日志")
         log_layout = QVBoxLayout()
@@ -121,8 +128,12 @@ class TrafficLightDialog(QDialog):
 
 
     def _on_clear_all_edited(self):
-        self.log_message("“清除全部已编辑”按钮被点击。")
+        self.log_message('"清除全部已编辑"按钮被点击。')
         self.clear_all_edited.emit()  # Emit signal for parent to handle
+
+    def _on_clear_current_page_edited(self):
+        self.log_message('"清除本页已编辑"按钮被点击。')
+        self.clear_current_page_edited.emit()  # Emit signal for parent to handle
 
     def log_message(self, message):
         self.log_display.appendPlainText(message)

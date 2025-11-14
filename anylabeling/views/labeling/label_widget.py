@@ -6454,6 +6454,19 @@ class LabelingWidget(QtWidgets.QWidget):
         unique_gid_list.sort()
         self.gid_filter_combobox.update_items(unique_gid_list)
 
+    def _update_file_list_item_color(self, image_path, manually_edited):
+        """Helper function to update file list item color based on manually_edited status"""
+        items = self.file_list_widget.findItems(image_path, Qt.MatchExactly)
+        if len(items) > 0:
+            item = items[0]
+            if manually_edited:
+                edited_color_rgb = self._config.get("traffic_light_colors", {}).get("edited", [0, 255, 0])
+                color = QtGui.QColor(*edited_color_rgb)
+                item.setForeground(color)
+            else:
+                # Reset to default color (black) when not manually edited
+                item.setForeground(QtGui.QColor("#000000"))
+
     def save_labels(self, filename):
         label_file = LabelFile()
         # Get current shapes
@@ -6503,13 +6516,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 item.setCheckState(Qt.Checked)
 
                 # Update color to show manually edited status
-                if self.other_data.get("manually_edited", False):
-                    edited_color_rgb = self._config.get("traffic_light_colors", {}).get("edited", [0, 255, 0])
-                    color = QtGui.QColor(*edited_color_rgb)
-                    item.setForeground(color)
-                else:
-                    # Reset to default color (black) when not manually edited
-                    item.setForeground(QtGui.QColor("#000000"))
+                manually_edited = self.other_data.get("manually_edited", False)
+                self._update_file_list_item_color(self.image_path, manually_edited)
             # disable allows next and previous image to proceed
             # self.filename = filename
             return True
@@ -7792,11 +7800,18 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.other_data.get("description", "")
             )
             self.shape_text_edit.textChanged.connect(self.shape_text_changed)
+            
+            # Update file list item color based on manually_edited status (lazy loading)
+            manually_edited = self.other_data.get("manually_edited", False)
+            self._update_file_list_item_color(filename, manually_edited)
         else:
             self.image_data = LabelFile.load_image_file(filename)
             if self.image_data:
                 self.image_path = filename
             self.label_file = None
+            
+            # No label file, so not manually edited
+            self._update_file_list_item_color(filename, False)
 
         # Reset the label loop count
         self.label_loop_count = -1
@@ -8592,44 +8607,57 @@ class LabelingWidget(QtWidgets.QWidget):
         self.last_open_dir = dirpath
         self.file_list_widget.clear()
         self.fn_to_index = {}
+        
+        # Optimization: Block signals during batch insertion to improve performance
+        self.file_list_widget.blockSignals(True)
+        
+        # Optimization: Collect all filenames first
+        all_filenames = []
         for filename in utils.scan_all_images(dirpath, recursive=recursive):
             if pattern and pattern not in filename:
                 continue
+            all_filenames.append(filename)
+        
+        # Optimization: Batch check label files existence (faster than individual checks)
+        label_files_map = {}
+        manually_edited_map = {}
+        
+        for filename in all_filenames:
             label_file = osp.splitext(filename)[0] + ".json"
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
                 label_file = self.output_dir + "/" + label_file_without_path
-
-            # Check if file was manually edited
-            manually_edited = False
+            
+            label_files_map[filename] = label_file
+            
+            # Only check file existence, defer JSON parsing
             if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(label_file):
-                try:
-                    with open(label_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        manually_edited = data.get("other_data", {}).get("manually_edited", False)
-                except:
-                    pass
-
+                # Mark as having label file, but don't parse yet
+                manually_edited_map[filename] = None  # None means "not checked yet"
+        
+        # Optimization: Create all items in batch
+        for filename in all_filenames:
+            label_file = label_files_map[filename]
+            has_label = filename in manually_edited_map
+            
             # Create list item with actual filename
             item = QtWidgets.QListWidgetItem(filename)
             item.setData(Qt.UserRole, filename)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(
-                label_file
-            ):
+            
+            if has_label:
                 item.setCheckState(Qt.Checked)
             else:
                 item.setCheckState(Qt.Unchecked)
-
-            # Set color for manually edited items
-            if manually_edited:
-                edited_color_rgb = self._config.get("traffic_light_colors", {}).get("edited", [0, 255, 0])
-                color = QtGui.QColor(*edited_color_rgb)
-                item.setForeground(color)
-
+            
+            # Don't check manually_edited status during initial load for performance
+            # It will be checked when the file is actually loaded/displayed
+            
             self.file_list_widget.addItem(item)
             self.fn_to_index[filename] = self.file_list_widget.count() - 1
-            # utils.process_image_exif(filename)
+        
+        # Re-enable signals
+        self.file_list_widget.blockSignals(False)
 
         self.actions.open_next_image.setEnabled(True)
         self.actions.open_prev_image.setEnabled(True)
@@ -9580,6 +9608,7 @@ class LabelingWidget(QtWidgets.QWidget):
         if self.traffic_light_dialog is None:
             self.traffic_light_dialog = TrafficLightDialog(self, config=self._config)
             self.traffic_light_dialog.clear_all_edited.connect(self.on_clear_all_edited_traffic_lights)
+            self.traffic_light_dialog.clear_current_page_edited.connect(self.on_clear_current_page_edited_traffic_lights)
             self.traffic_light_dialog.color_changed.connect(self._on_traffic_light_color_changed)
             self.traffic_light_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
 
@@ -9739,6 +9768,61 @@ class LabelingWidget(QtWidgets.QWidget):
     def _on_clear_edited_error(self, error_message):
         """Slot to log errors from the clear edited thread."""
         self.traffic_light_dialog.log_message(f"错误: {error_message}")
+
+    def on_clear_current_page_edited_traffic_lights(self):
+        """Handle the 'Clear Current Page Edited' signal from the TrafficLightDialog."""
+        if not self.traffic_light_dialog:
+            return
+
+        self.traffic_light_dialog.log_display.clear()
+        self.traffic_light_dialog.log_message('开始清除本页的"已编辑"状态...')
+
+        if not self.filename:
+            self.traffic_light_dialog.log_message("没有打开任何图像文件。")
+            return
+
+        label_file_path = osp.splitext(self.filename)[0] + ".json"
+        if self.output_dir:
+            label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+        if not osp.exists(label_file_path):
+            self.traffic_light_dialog.log_message(f"标签文件不存在: {label_file_path}")
+            return
+
+        try:
+            with open(label_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            file_edited_flag_cleared = False
+            # Clear file-level 'manually_edited' flag
+            if data.get("other_data", {}).get("manually_edited", False):
+                data["other_data"]["manually_edited"] = False
+                file_edited_flag_cleared = True
+
+            # Clear shape-level 'is_edited' flag
+            shapes_modified = False
+            if "shapes" in data:
+                for shape_dict in data["shapes"]:
+                    if shape_dict.get("is_edited", False):
+                        shape_dict["is_edited"] = False
+                        shapes_modified = True
+            
+            if file_edited_flag_cleared or shapes_modified:
+                with open(label_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                self.traffic_light_dialog.log_message('✅ 已清除本页的"已编辑"状态。')
+                
+                # Reload the current file to update the display
+                self.traffic_light_dialog.log_message("正在刷新当前文件以更新显示状态...")
+                self.load_file(self.filename)
+                self.traffic_light_dialog.log_message("当前文件刷新完成。")
+            else:
+                self.traffic_light_dialog.log_message('本页未标记为"已编辑"。')
+
+        except Exception as e:
+            error_msg = f"处理文件时发生错误: {e}"
+            self.traffic_light_dialog.log_message(f"❌ {error_msg}")
+            QtWidgets.QMessageBox.critical(self, "错误", error_msg)
 
 
 
