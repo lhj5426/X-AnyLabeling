@@ -179,6 +179,9 @@ def main():
     anylabeling_config.current_config_file = config_file_or_yaml
     config = get_config(config_file_or_yaml, config_from_args, show_msg=True)
 
+    # 强制将语言设置为中文
+    config["language"] = "zh_CN"
+
     if not config["labels"] and config["validate_label"]:
         logger.error(
             "--labels must be specified with --validatelabel or "

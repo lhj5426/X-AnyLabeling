@@ -46,6 +46,7 @@ class Shape:
         "flags",
         "description",
         "attributes",
+        "is_edited", # Added for edited status dot
     ]
 
     # The following class variables influence the drawing of all shape objects.
@@ -91,6 +92,8 @@ class Shape:
         self.group_id = group_id
         self.description = description
         self.difficult = difficult
+        self.is_edited = False # Initialize edited status
+        self.is_session_unlocked = False # Initialize session unlock status
         self.kie_linking = kie_linking
         self.points = []
         self.fill = True
@@ -104,6 +107,7 @@ class Shape:
         self.cache_label = None
         self.cache_description = None
         self.visible = True
+        self.is_session_unlocked = False
 
         # Rotation setting
         self.direction = direction
@@ -172,6 +176,7 @@ class Shape:
             "flags": self.flags,
             "attributes": self.attributes,
             "kie_linking": self.kie_linking,
+            "is_edited": self.is_edited, # Add is_edited to dict
         }
         if self.shape_type == "rotation":
             dictData["direction"] = self.direction
@@ -231,6 +236,7 @@ class Shape:
         self.flags = data.get("flags", {})
         self.attributes = data.get("attributes", {})
         self.kie_linking = data.get("kie_linking", [])
+        self.is_edited = data.get("is_edited", False) # Load is_edited, default to False
         if self.shape_type == "rotation":
             self.direction = data.get("direction", 0)
         self.other_data = {k: v for k, v in data.items() if k not in self.KEYS}

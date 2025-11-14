@@ -55,6 +55,7 @@ from .widgets import (
     GroupIDFilterComboBox,
     LabelDialog,
     LabelFilterComboBox,
+    HTMLDelegate, # Added for custom item delegate
     LabelListWidget,
     LabelListWidgetItem,
     DigitShortcutDialog,
@@ -84,8 +85,10 @@ from .widgets import (
     SegmentationDialog,
     Rectangle3WidthDialog,
     PageTextDialog,
+    HighlightSettingsDialog,
 )
 from .widgets.rectangle_scale_dialog import RectangleScaleDialog
+from ..mainwindow_widgets.traffic_light_dialog import TrafficLightDialog
 from ...services import merger, tag_sorting
 
 LABEL_COLORMAP = utils.label_colormap()
@@ -152,6 +155,80 @@ class TagSortThread(QtCore.QThread):
         self.finished.emit(outcomes, self._cancelled)
 
 
+class ClearEditedThread(QtCore.QThread):
+    progress = QtCore.pyqtSignal(int, int, str) # current, total, message
+    finished = QtCore.pyqtSignal(str, bool, list) # summary_message, current_filename_modified, modified_file_paths
+    error = QtCore.pyqtSignal(str)
+
+    def __init__(self, image_list, output_dir, current_filename, parent=None):
+        super().__init__(parent)
+        self.image_list = image_list
+        self.output_dir = output_dir
+        self.current_filename = current_filename
+        self._is_interruption_requested = False
+
+    def requestInterruption(self):
+        self._is_interruption_requested = True
+
+    def run(self):
+        processed_files = 0
+        modified_files = 0
+        current_filename_modified = False
+        total_files = len(self.image_list)
+
+        modified_file_paths = [] # New list to store paths of modified files
+
+        for i, image_path in enumerate(self.image_list):
+            if self._is_interruption_requested:
+                self.finished.emit("操作被用户取消。", False, []) # Emit empty list on cancel
+                return
+
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+            if not osp.exists(label_file_path):
+                self.progress.emit(i + 1, total_files, f"跳过 {osp.basename(image_path)}: 标签文件不存在。")
+                continue
+
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                file_edited_flag_cleared = False # Initialize the flag
+                # Clear file-level 'manually_edited' flag
+                if data.get("other_data", {}).get("manually_edited", False):
+                    data["other_data"]["manually_edited"] = False
+                    file_edited_flag_cleared = True
+
+                # Clear shape-level 'is_edited' flag
+                shapes_modified = False
+                if "shapes" in data:
+                    for shape_dict in data["shapes"]:
+                        if shape_dict.get("is_edited", False):
+                            shape_dict["is_edited"] = False
+                            shapes_modified = True
+                
+                if file_edited_flag_cleared or shapes_modified:
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    self.progress.emit(i + 1, total_files, f"✅ 已清除 {osp.basename(image_path)} 的“已编辑”状态。")
+                    modified_files += 1
+                    if image_path == self.current_filename:
+                        current_filename_modified = True
+                    modified_file_paths.append(label_file_path) # Add to list
+                else:
+                    self.progress.emit(i + 1, total_files, f"跳过 {osp.basename(image_path)}: 未标记为“已编辑”。")
+                processed_files += 1
+
+            except Exception as e:
+                self.progress.emit(i + 1, total_files, f"❌ 处理 {osp.basename(image_path)} 失败: {e}")
+                self.error.emit(f"处理文件 {osp.basename(image_path)} 时发生错误: {e}")
+
+        summary_message = f"清除操作完成。共处理 {processed_files} 个文件，修改 {modified_files} 个文件。"
+        self.finished.emit(summary_message, current_filename_modified, modified_file_paths) # Emit the list
+
+
 class LabelingWidget(QtWidgets.QWidget):
     """The main widget for labeling images"""
 
@@ -170,6 +247,12 @@ class LabelingWidget(QtWidgets.QWidget):
     ):
         self.parent = parent
         super().__init__(parent=parent)
+
+        # see configs/anylabeling_config.yaml for valid configuration
+        if config is None:
+            config = get_config()
+        self._config = config
+
         if output is not None:
             logger.warning(
                 "argument output is deprecated, use output_file instead"
@@ -200,6 +283,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.wheel_settings_dialog = None
         self.rectangle3_width_dialog = None
         self.rectangle_scale_dialog = None
+        self.traffic_light_dialog = None # New dialog instance
 
         self.supported_shape = Shape.get_supported_shape()
         self.label_info = {}
@@ -208,6 +292,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.cache_auto_label = None
         self.cache_auto_label_group_id = None
         self.object_manager_dialog = None
+        self.highlight_settings_dialog = HighlightSettingsDialog(parent=self, config=self._config)
         self.expand_margins_dialog = None
         self.merge_tool_dialog = None
         self.merge_progress_dialog = None
@@ -222,11 +307,6 @@ class LabelingWidget(QtWidgets.QWidget):
         self.tag_sort_total = 0
         self.tag_sort_last_payload = None
         self._crosshair_was_toggled_for_drawing = False
-
-        # see configs/anylabeling_config.yaml for valid configuration
-        if config is None:
-            config = get_config()
-        self._config = config
         self.label_flags = self._config["label_flags"]
         self.label_loop_count = -1
         self.digit_to_label = None
@@ -356,12 +436,95 @@ class LabelingWidget(QtWidgets.QWidget):
         btn_highlight = QtWidgets.QPushButton(self.tr("高亮"))
         btn_highlight.setCheckable(True)
         def toggle_highlight():
-            self._highlight_on = not self._highlight_on
-            Shape.highlighting_enabled = self._highlight_on
-            for item in self.label_list:
-                shape = item.shape()
-                shape.selected = self._highlight_on
+            all_shapes = [item.shape() for item in self.label_list]
+            if not all_shapes:
+                btn_highlight.setChecked(False)
+                return
+
+            locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
+            
+            # Filter out shapes that are locked and have not been session-unlocked
+            unlocked_shapes = [
+                s for s in all_shapes 
+                if not (s.label in locked_labels and not s.is_session_unlocked)
+            ]
+
+            positive_labels_str = self._config.get("highlight_positive", "")
+            positive_labels = {label.strip() for label in positive_labels_str.split(',') if label.strip()}
+
+            negative_labels_str = self._config.get("highlight_negative", "")
+            negative_labels = {label.strip() for label in negative_labels_str.split(',') if label.strip()}
+
+            # --- Determine the action based on inputs, using only unlocked_shapes ---
+
+            # Case 1: No labels specified (global toggle)
+            if not positive_labels and not negative_labels:
+                are_all_selected = all(s.selected for s in unlocked_shapes) if unlocked_shapes else False
+                target_state = not are_all_selected
+                for shape in unlocked_shapes:
+                    shape.selected = target_state
+
+            # Case 2: Only positive labels specified (toggle positive, cleanup others)
+            elif positive_labels and not negative_labels:
+                positive_shapes = [s for s in unlocked_shapes if s.label in positive_labels]
+                if not positive_shapes: return
+                are_all_pos_selected = all(s.selected for s in positive_shapes)
+                target_state = not are_all_pos_selected
+                for shape in unlocked_shapes:
+                    shape.selected = target_state if shape in positive_shapes else False
+
+            # Case 3: Only negative labels specified (toggle negative, cleanup others)
+            elif not positive_labels and negative_labels:
+                negative_shapes = [s for s in unlocked_shapes if s.label in negative_labels]
+                if not negative_shapes: return
+                are_all_neg_selected = all(s.selected for s in negative_shapes)
+                target_state = not are_all_neg_selected
+                for shape in unlocked_shapes:
+                    shape.selected = target_state if shape in negative_shapes else False
+
+            # Case 4: Both positive and negative labels specified (new symmetric logic)
+            elif positive_labels and negative_labels:
+                positive_shapes = [s for s in unlocked_shapes if s.label in positive_labels]
+                negative_shapes = [s for s in unlocked_shapes if s.label in negative_labels]
+                
+                num_pos_selected = sum(1 for s in positive_shapes if s.selected)
+                num_neg_selected = sum(1 for s in negative_shapes if s.selected)
+
+                is_pos_chaotic = positive_shapes and 0 < num_pos_selected < len(positive_shapes)
+                is_neg_chaotic = negative_shapes and 0 < num_neg_selected < len(negative_shapes)
+                
+                is_pos_fully_on = positive_shapes and num_pos_selected == len(positive_shapes)
+                is_neg_fully_on = negative_shapes and num_neg_selected == len(negative_shapes)
+
+                # Priority 1: Clean up positive chaotic state
+                if is_pos_chaotic:
+                    for shape in unlocked_shapes:
+                        shape.selected = shape in positive_shapes
+                # Priority 2: Clean up negative chaotic state
+                elif is_neg_chaotic:
+                    for shape in unlocked_shapes:
+                        shape.selected = shape in negative_shapes
+                # Priority 3: If positive is on, switch to negative
+                elif is_pos_fully_on:
+                    for shape in unlocked_shapes:
+                        shape.selected = shape in negative_shapes
+                # Priority 4: If negative is on, switch to positive
+                elif is_neg_fully_on:
+                    for shape in unlocked_shapes:
+                        shape.selected = shape in positive_shapes
+                # Default Action: Turn positive on
+                else:
+                    for shape in unlocked_shapes:
+                        shape.selected = shape in positive_shapes
+            
+            # Final state update for canvas and button
+            is_any_shape_selected = any(s.selected for s in unlocked_shapes)
+            Shape.highlighting_enabled = is_any_shape_selected
+            self._highlight_on = is_any_shape_selected
+            btn_highlight.setChecked(is_any_shape_selected)
+            
             self.canvas.update()
+
         btn_highlight.clicked.connect(toggle_highlight)
 
         # Set shortcuts from config
@@ -510,6 +673,7 @@ class LabelingWidget(QtWidgets.QWidget):
             ],
             config=self._config,
         )
+        self.label_list.setItemDelegate(HTMLDelegate(parent=self))
         self.canvas.zoom_request.connect(self.zoom_request)
 
         self.load_labels(self._config["labels"])
@@ -1157,6 +1321,13 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("使用CTD模型生成文字区域掩膜"),
         )
 
+        traffic_light_tool = action(
+            self.tr("红绿灯窗口"),
+            self.open_traffic_light_dialog,
+            icon="color", # Using a generic color icon for now, ideally a traffic light icon
+            tip=self.tr("设置红绿灯颜色并清除编辑状态"),
+        )
+
         keymap_tool = action(
             self.tr("旋转标签快捷键管理器"),
             self.open_keymap_dialog,
@@ -1199,6 +1370,13 @@ class LabelingWidget(QtWidgets.QWidget):
             self.open_page_text_dialog,
             icon="edit",
             tip=self.tr("查看和编辑当前页面所有标签的文本内容"),
+        )
+
+        highlight_settings_tool = action(
+            self.tr("高亮设置"),
+            self.open_highlight_settings_dialog,
+            icon="color", # Using a generic color icon for now
+            tip=self.tr("配置高亮显示行为和标签"),
         )
 
         open_chatbot = action(
@@ -2146,8 +2324,10 @@ class LabelingWidget(QtWidgets.QWidget):
                 merge_shapes,
                 dual_color_label_tool,
                 mask_generator_tool,
+                traffic_light_tool,
                 rectangle_scale_tool,
                 page_text_tool,
+                highlight_settings_tool,
                 None,
                 # === 管理器工具 ===
                 label_manager,
@@ -4073,6 +4253,20 @@ class LabelingWidget(QtWidgets.QWidget):
             self.page_text_dialog.update_shapes(self.canvas.shapes)
             self.page_text_dialog.raise_()
             self.page_text_dialog.activateWindow()
+
+    def open_highlight_settings_dialog(self):
+        """打开高亮设置工具窗口"""
+        if not hasattr(self, 'highlight_settings_dialog') or self.highlight_settings_dialog is None:
+            self.highlight_settings_dialog = HighlightSettingsDialog(self)
+            self.highlight_settings_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        if not self.highlight_settings_dialog.isVisible():
+            self.highlight_settings_dialog.show()
+        else:
+            self.highlight_settings_dialog.raise_()
+            self.highlight_settings_dialog.activateWindow()
+
+
 
     def on_page_text_description_changed(self, shape_index, new_description):
         """页文本工具中 description 改变时的处理"""
@@ -6310,8 +6504,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
                 # Update color to show manually edited status
                 if self.other_data.get("manually_edited", False):
-                    color = self._config.get("manually_edited_color", "#FFA500")
-                    item.setForeground(QtGui.QColor(color))
+                    edited_color_rgb = self._config.get("traffic_light_colors", {}).get("edited", [0, 255, 0])
+                    color = QtGui.QColor(*edited_color_rgb)
+                    item.setForeground(color)
                 else:
                     # Reset to default color (black) when not manually edited
                     item.setForeground(QtGui.QColor("#000000"))
@@ -7591,7 +7786,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 osp.dirname(label_file),
                 self.label_file.image_path,
             )
-            self.other_data = self.label_file.other_data
+    
             self.shape_text_edit.textChanged.disconnect()
             self.shape_text_edit.setPlainText(
                 self.other_data.get("description", "")
@@ -7683,6 +7878,27 @@ class LabelingWidget(QtWidgets.QWidget):
         else:
             self.set_clean()
         self.canvas.setEnabled(True)
+
+        # Apply highlight rules after loading shapes
+        try:
+            positive_labels_str = self._config.get("highlight_positive", "")
+            positive_labels = {label.strip() for label in positive_labels_str.split(',') if label.strip()}
+
+            # If there are rules, apply them. Otherwise, do nothing.
+            if positive_labels:
+                for shape in self.canvas.shapes:
+                    if shape.label in positive_labels:
+                        shape.selected = True
+                    else:
+                        shape.selected = False
+            
+                # Update global highlight state and canvas
+                is_any_shape_selected = any(s.selected for s in self.canvas.shapes)
+                Shape.highlighting_enabled = is_any_shape_selected
+                self._highlight_on = is_any_shape_selected
+                self.canvas.update()
+        except Exception as e:
+            logger.error(f"Error applying highlight rules on load: {e}")
 
         if self.tag_sort_dialog:
             pixmap_obj = getattr(self.canvas, "pixmap", None)
@@ -8390,7 +8606,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 try:
                     with open(label_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-                        manually_edited = data.get("manually_edited", False)
+                        manually_edited = data.get("other_data", {}).get("manually_edited", False)
                 except:
                     pass
 
@@ -8407,8 +8623,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
             # Set color for manually edited items
             if manually_edited:
-                color = self._config.get("manually_edited_color", "#FFA500")
-                item.setForeground(QtGui.QColor(color))
+                edited_color_rgb = self._config.get("traffic_light_colors", {}).get("edited", [0, 255, 0])
+                color = QtGui.QColor(*edited_color_rgb)
+                item.setForeground(color)
 
             self.file_list_widget.addItem(item)
             self.fn_to_index[filename] = self.file_list_widget.count() - 1
@@ -9357,5 +9574,172 @@ class LabelingWidget(QtWidgets.QWidget):
         self.mask_generator_dialog.show()
         self.mask_generator_dialog.raise_()
         self.mask_generator_dialog.activateWindow()
+
+    def open_traffic_light_dialog(self):
+        """Open the traffic light settings dialog."""
+        if self.traffic_light_dialog is None:
+            self.traffic_light_dialog = TrafficLightDialog(self, config=self._config)
+            self.traffic_light_dialog.clear_all_edited.connect(self.on_clear_all_edited_traffic_lights)
+            self.traffic_light_dialog.color_changed.connect(self._on_traffic_light_color_changed)
+            self.traffic_light_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        if self.traffic_light_dialog.isVisible():
+            self.traffic_light_dialog.raise_()
+            self.traffic_light_dialog.activateWindow()
+        else:
+            self.traffic_light_dialog.show()
+
+    def _on_traffic_light_color_changed(self, light_name_english, new_color_qcolor):
+        """Slot to handle color changes from TrafficLightDialog."""
+        # Update config with new color (RGB tuple)
+        self._config["traffic_light_colors"][light_name_english] = new_color_qcolor.getRgb()[:3]
+        save_config(self._config)
+
+        # Trigger UI refresh based on which color changed
+        if light_name_english == "edited":
+            # Update the color used for manually edited files
+            # The 'manually_edited_color' config key is now effectively replaced by traffic_light_colors['edited']
+            # We need to re-evaluate the color of the current file if it's edited
+            if self.filename:
+                current_item = self.file_list_widget.findItems(self.filename, Qt.MatchExactly)
+                if current_item:
+                    current_item = current_item[0]
+                    # Check if the current file is manually edited (requires reading its JSON)
+                    label_file_path = osp.splitext(self.filename)[0] + ".json"
+                    if self.output_dir:
+                        label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+                    
+                    if osp.exists(label_file_path):
+                        try:
+                            with open(label_file_path, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                            if data.get("other_data", {}).get("manually_edited", False):
+                                current_item.setForeground(new_color_qcolor)
+                            else:
+                                current_item.setForeground(QtGui.QColor("#000000")) # Default black
+                        except Exception as e:
+                            logger.error(f"Error reading label file for color update: {e}")
+                    else:
+                        current_item.setForeground(QtGui.QColor("#000000")) # Default black
+            
+            # For other files in the list, their colors will update when they are loaded
+            # or when import_image_folder is next called (e.g., after a clear operation).
+            # Avoid full import_image_folder here to prevent freeze.
+            self.label_list.viewport().update() # Force repaint of label list to update edited dots
+
+        elif light_name_english == "selected":
+            # This color typically affects selected shapes on canvas
+            # Shape.select_line_color and Shape.select_fill_color are used for selected shapes
+            # We need to update these based on the new 'selected' color
+            Shape.select_line_color = new_color_qcolor
+            Shape.select_fill_color = QtGui.QColor(new_color_qcolor.red(), new_color_qcolor.green(), new_color_qcolor.blue(), Shape.alpha_highlight)
+            self.canvas.update()
+            # Also update navigator select line color, keeping the existing hover color
+            self.navigator_dialog.navigator.set_colors(
+                select_line_color=new_color_qcolor,
+                hover_line_color=self.navigator_dialog.navigator.navigator_hover_line_color
+            )
+            self.navigator_dialog.navigator.update()
+            self.label_list.viewport().update() # Force repaint of label list to update selected dots
+
+        elif light_name_english == "locked":
+            # This color might affect locked shapes or files
+            # For now, just update canvas if shapes are affected
+            self.canvas.update() # Generic update for now
+            self.label_list.viewport().update() # Force repaint of label list to update locked dots
+
+        elif light_name_english == "unlocked":
+            # This color might affect unlocked shapes or files
+            # For now, just update canvas if shapes are affected
+            self.canvas.update() # Generic update for now
+            self.label_list.viewport().update() # Force repaint of label list to update unlocked dots
+        
+        # Generic canvas update for any shape-related color changes
+        self.canvas.update()
+
+    def on_clear_all_edited_traffic_lights(self):
+        """Handle the 'Clear All Edited' signal from the TrafficLightDialog."""
+        if not self.traffic_light_dialog:
+            return
+
+        self.traffic_light_dialog.log_display.clear()
+        self.traffic_light_dialog.log_message("开始清除所有文件的“已编辑”状态...")
+
+        if not self.image_list:
+            self.traffic_light_dialog.log_message("没有加载任何图像文件。")
+            return
+
+        total_files = len(self.image_list)
+        if total_files == 0:
+            self.traffic_light_dialog.log_message("没有图像文件可供处理。")
+            return
+
+        self.clear_edited_thread = ClearEditedThread(
+            self.image_list, self.output_dir, self.filename, parent=self
+        )
+
+        self.progress_dialog = QtWidgets.QProgressDialog(
+            "正在清除“已编辑”状态...", "取消", 0, total_files, self
+        )
+        self.progress_dialog.setWindowTitle("清除“已编辑”状态")
+        self.progress_dialog.setWindowModality(QtCore.Qt.WindowModal)
+        self.progress_dialog.setAutoClose(False)
+        self.progress_dialog.setAutoReset(False)
+        self.progress_dialog.show()
+
+        self.clear_edited_thread.progress.connect(self._on_clear_edited_progress)
+        self.clear_edited_thread.finished.connect(self._on_clear_edited_finished)
+        self.clear_edited_thread.error.connect(self._on_clear_edited_error)
+        self.progress_dialog.canceled.connect(self.clear_edited_thread.requestInterruption)
+
+        self.clear_edited_thread.start()
+
+    def _on_clear_edited_progress(self, current, total, message):
+        """Slot to update progress dialog and log messages."""
+        self.progress_dialog.setValue(current)
+        self.progress_dialog.setLabelText(f"正在处理文件 {current}/{total}: {message}")
+        self.traffic_light_dialog.log_message(message)
+
+    def _on_clear_edited_finished(self, summary_message, current_filename_modified, modified_file_paths):
+        """Slot to handle completion of the clear edited operation."""
+        self.progress_dialog.close()
+        self.traffic_light_dialog.log_message(summary_message)
+
+        if current_filename_modified and self.filename:
+            self.traffic_light_dialog.log_message("正在刷新当前文件以更新显示状态...")
+            self.load_file(self.filename)
+            self.traffic_light_dialog.log_message("当前文件刷新完成。")
+        
+        # Update the file list widget items directly for modified files
+        # This avoids re-scanning the entire directory and prevents UI freeze
+        for label_file_path in modified_file_paths:
+            # Find the corresponding image path from the label file path
+            # This assumes image_path is label_file_path without .json extension
+            # and then finding the actual image file in self.image_list
+            image_base_name = osp.splitext(osp.basename(label_file_path))[0]
+            
+            found_item = None
+            for i in range(self.file_list_widget.count()):
+                item = self.file_list_widget.item(i)
+                item_image_path = item.data(Qt.UserRole) # Get the full image path
+                if osp.splitext(osp.basename(item_image_path))[0] == image_base_name:
+                    found_item = item
+                    break
+            
+            if found_item:
+                found_item.setCheckState(Qt.Unchecked) # Clear the checkmark
+                found_item.setForeground(QtGui.QColor("#000000")) # Reset to default color (black)
+                # If the current file was modified, load_file already handled its UI update,
+                # so we don't need to update its color here again to avoid flicker.
+                # However, the checkState should still be updated.
+
+        self.clear_edited_thread.deleteLater()
+        self.clear_edited_thread = None
+
+    def _on_clear_edited_error(self, error_message):
+        """Slot to log errors from the clear edited thread."""
+        self.traffic_light_dialog.log_message(f"错误: {error_message}")
+
+
 
 

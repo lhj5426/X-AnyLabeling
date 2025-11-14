@@ -25,6 +25,10 @@ class MainWindow(QMainWindow):
         self.setContentsMargins(0, 0, 0, 0)
         self.setWindowTitle(__appname__)
 
+        # Create a menu bar
+        self.menu_bar = self.menuBar()
+        self.setMenuBar(self.menu_bar)
+
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)
         self.labeling_widget = LabelingWrapper(

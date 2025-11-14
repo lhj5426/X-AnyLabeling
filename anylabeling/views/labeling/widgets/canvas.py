@@ -1278,8 +1278,15 @@ class Canvas(
         # 首先清除所有形状的hover状态，确保只有一个形状被hover
         for shape in self.shapes:
             shape.is_hovered = False
+
+        locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
             
         for shape in reversed([s for s in self.shapes if self.is_visible(s)]):
+            # Do not interact with locked shapes on hover
+            is_locked = shape.label in locked_labels and not shape.is_session_unlocked
+            if is_locked:
+                continue
+
             # Look for a nearby vertex to highlight. If that fails,
             # check if we happen to be inside a shape.
             index = shape.nearest_vertex(pos, self.epsilon / self.scale)
@@ -1375,6 +1382,7 @@ class Canvas(
         self.h_vertex = index
         self.h_edge = None
         self.moving_shape = True
+        shape.is_edited = True # Mark shape as edited
 
     def remove_selected_point(self):
         """Remove a point from current shape"""
@@ -1387,6 +1395,7 @@ class Canvas(
         self.h_hape = shape
         self.prev_h_vertex = None
         self.moving_shape = True  # Save changes
+        shape.is_edited = True # Mark shape as edited
 
     def on_auto_decode_timeout(self):
         """Handle auto decode timeout"""
@@ -1821,7 +1830,11 @@ class Canvas(
 
         # Find shapes that intersect with the selection box AND are visible
         newly_selected = []
+        locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
         for shape in self.shapes:
+            # Do not select locked shapes with the selection box
+            if shape.label in locked_labels:
+                continue
             # Only select visible shapes
             if shape.visible and self.shape_intersects_rect(shape, selection_rect):
                 newly_selected.append(shape)
@@ -1988,6 +2001,13 @@ class Canvas(
             # Normal replacement mode
             self.selected_shapes = newly_selected
 
+        # --- Label Lock Override ---
+        # If a locked shape is selected with the path tool, unlock it for the session.
+        locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
+        for shape in self.selected_shapes:
+            if shape.label in locked_labels:
+                shape.is_session_unlocked = True
+        
         self.selection_changed.emit(self.selected_shapes)
 
         # Reset path selection mode
@@ -2273,12 +2293,18 @@ class Canvas(
             return
 
         else:
+            locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
             for shape in reversed(self.shapes):
                 if (
                     self.is_visible(shape)
                     and len(shape.points) > 1
                     and shape.contains_point(point)
                 ):
+                    # Do not select locked shapes by clicking
+                    is_locked = shape.label in locked_labels and not shape.is_session_unlocked
+                    if is_locked:
+                        continue
+
                     self.set_hiding()
                     if shape not in self.selected_shapes:
                         if multiple_selection_mode:
@@ -2436,6 +2462,7 @@ class Canvas(
             shape.move_vertex_by(left_index, left_shift)
         else:
             shape.move_vertex_by(index, new_vertex_pos - point)
+        shape.is_edited = True # Mark shape as edited
 
     def _move_edge_midpoint(self, shape, virtual_index, pos):
         """Move an edge midpoint to adjust rectangle edge
@@ -2515,6 +2542,7 @@ class Canvas(
             # Update the two vertices
             shape.points[v1_index] = new_v1
             shape.points[v2_index] = new_v2
+            shape.is_edited = True # Mark shape as edited
 
         elif shape.shape_type in ["rotation", "rotation3"]:
             # For rotated rectangles, move edge along its perpendicular direction
@@ -2543,6 +2571,8 @@ class Canvas(
             # Update the two vertices
             shape.points[v1_index] = new_v1
             shape.points[v2_index] = new_v2
+            shape.is_edited = True # Mark shape as edited
+
 
     def bounded_move_shapes(self, shapes, pos, enable_snap=True):
         """Move shapes. Adjust position to be bounded by pixmap border
@@ -2643,11 +2673,16 @@ class Canvas(
                     for pt in original_points:
                         new_points.append(QtCore.QPointF(pt.x() + final_offset.x(), pt.y() + final_offset.y()))
                     shape.points = new_points
+                    shape.is_edited = True # Mark shape as edited
 
                 self.smart_guides_snap_offset = snap_offset
             else:
-                # 没有吸附，保持当前位置（已经应用了 total_offset）
+                #没有吸附，保持当前位置（已经应用了 total_offset）
                 self.smart_guides_snap_offset = None
+            
+            # Mark all moved shapes as edited
+            for item in self.moving_shapes_original:
+                item['shape'].is_edited = True
 
             self.prev_point = pos
             return True
@@ -4365,6 +4400,7 @@ class Canvas(
                 # Ctrl+scroll to adjust height, default scroll to adjust width
                 adjust_height = is_ctrl_pressed
                 self._scale_rectangle(shape, wheel_up, adjust_height)
+                shape.is_edited = True # Mark shape as edited
                 self.store_shapes()
                 self.shape_moved.emit()
                 self.update()
@@ -4384,6 +4420,7 @@ class Canvas(
                     self._adjust_rotation_edge(shape, pos, wheel_up, adjust_mode=adjust_mode)
                 else:
                     self._adjust_rectangle_edge(shape, pos, wheel_up, adjust_mode=adjust_mode)
+                shape.is_edited = True # Mark shape as edited
                 self.store_shapes()
                 self.shape_moved.emit()
                 self.update()
@@ -4779,6 +4816,7 @@ class Canvas(
 
         # IMPORTANT: Store the original, non-inverted angle so the UI value is correct.
         shape.direction = angle_radians
+        shape.is_edited = True # Mark shape as edited
         self.update()
 
     def cancel_drawing(self):

@@ -58,24 +58,56 @@ class HTMLDelegate(QtWidgets.QStyledItemDelegate):
 
         painter.restore()
 
-        # 如果item被选中，在右侧绘制红点
+        dot_radius = 4
+        dot_diameter = dot_radius * 2
+        spacing = 2
+        dot_y = option.rect.center().y()
+
+        # Define fixed positions for each dot from right to left
+        # Position 1 (Rightmost): Selected
+        pos1_x = option.rect.right() - dot_radius - 5
+
+        # Position 2 (Middle): Locked/Unlocked
+        pos2_x = pos1_x - (dot_diameter + spacing)
+
+        # Position 3 (Leftmost): Edited
+        pos3_x = pos2_x - (dot_diameter + spacing)
+
+        shape = index.data(Qt.UserRole)
+
+        # 1. Draw Selected dot (Position 1)
         if option.state & QStyle.State_Selected:
             painter.save()
-
-            # 设置抗锯齿
             painter.setRenderHint(QtGui.QPainter.Antialiasing)
-
-            # 绘制红色圆点
-            painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 0)))  # 红色
+            selected_color_rgb = self.parent._config.get("traffic_light_colors", {}).get("selected", [255, 0, 0])
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(*selected_color_rgb)))
             painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QtCore.QPointF(pos1_x, dot_y), dot_radius, dot_radius)
+            painter.restore()
 
-            # 计算红点位置（右侧居中）
-            dot_radius = 4
-            dot_x = option.rect.right() - dot_radius * 2 - 5
-            dot_y = option.rect.center().y()
+        # 2. Draw Locked/Unlocked dot (Position 2)
+        if shape and self.parent and hasattr(self.parent, '_config'):
+            locked_labels_str = self.parent._config.get('locked_labels', '')
+            locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
 
-            painter.drawEllipse(QtCore.QPointF(dot_x, dot_y), dot_radius, dot_radius)
+            if shape.label in locked_labels:
+                painter.save()
+                painter.setRenderHint(QtGui.QPainter.Antialiasing)
+                color_rgb = self.parent._config.get("traffic_light_colors", {}).get("unlocked", [0, 0, 255]) if shape.is_session_unlocked else self.parent._config.get("traffic_light_colors", {}).get("locked", [255, 255, 0])
+                color = QtGui.QColor(*color_rgb)
+                painter.setBrush(QtGui.QBrush(color))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(QtCore.QPointF(pos2_x, dot_y), dot_radius, dot_radius)
+                painter.restore()
 
+        # 3. Draw Edited dot (Position 3)
+        if shape and shape.is_edited:
+            painter.save()
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            edited_color_rgb = self.parent._config.get("traffic_light_colors", {}).get("edited", [0, 255, 0])
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(*edited_color_rgb)))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QtCore.QPointF(pos3_x, dot_y), dot_radius, dot_radius)
             painter.restore()
 
     # QT Overload

@@ -19,7 +19,7 @@ from .label_dialog import (
 )
 from .object_manager_dialog import ObjectManagerDialog
 from .model_dropdown_widget import SearchBar
-from .label_list_widget import LabelListWidget, LabelListWidgetItem
+from .label_list_widget import HTMLDelegate, LabelListWidget, LabelListWidgetItem # Added HTMLDelegate
 from .overview_dialog import OverviewDialog
 from .popup import Popup
 from .toolbar import ToolBar
@@ -43,6 +43,7 @@ from .wheel_settings_dialog import WheelSettingsDialog
 from .rectangle3_width_dialog import Rectangle3WidthDialog
 from .rectangle_scale_dialog import RectangleScaleDialog
 from .page_text_dialog import PageTextDialog
+from .highlight_settings_dialog import HighlightSettingsDialog
 
 
 __all__ = [
@@ -64,6 +65,7 @@ __all__ = [
     "GroupIDModifyDialog",
     "ObjectManagerDialog",
     "SearchBar",
+    "HTMLDelegate", # Added HTMLDelegate
     "LabelListWidget",
     "LabelListWidgetItem",
     "OverviewDialog",
@@ -89,5 +91,6 @@ __all__ = [
     "Rectangle3WidthDialog",
     "RectangleScaleDialog",
     "PageTextDialog",
+    "HighlightSettingsDialog",
     "WheelSettingsDialog",
 ]

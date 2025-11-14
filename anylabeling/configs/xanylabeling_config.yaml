@@ -34,7 +34,12 @@ default_shape_color: [0, 255, 0]
 shape_color: auto  # null, 'auto', 'manual'
 shift_auto_shape_color: 0
 label_colors: null
-manually_edited_color: '#FFA500'  # Color for manually edited files in file list (orange by default)
+
+traffic_light_colors:
+  selected: [255, 0, 0] # Red
+  edited: [0, 255, 0] # Green
+  locked: [255, 255, 0] # Yellow
+  unlocked: [0, 0, 255] # Blue
 
 shape:
   # drawing
@@ -259,3 +264,8 @@ spacing_guide_max_shapes: 0  # 最多检测的矩形数量（0表示检测所有
 paste_preview_line_width: 2.0
 paste_preview_line_color: [255, 0, 255]
 paste_preview_opacity: 0.4
+
+# Highlight settings
+highlight_positive: ""
+highlight_negative: ""
+locked_labels: ""
