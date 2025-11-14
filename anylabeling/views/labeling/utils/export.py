@@ -2451,3 +2451,122 @@ def export_rotated_json_annotation(self):
     self.export_thread.start()
 
     progress_dialog.canceled.connect(self.export_thread.terminate)
+
+
+class ExportLabelPlusThread(QThread):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(
+        self,
+        converter,
+        image_list,
+        label_dir_path,
+        save_path,
+    ):
+        super().__init__()
+        self.converter = converter
+        self.image_list = image_list
+        self.label_dir_path = label_dir_path
+        self.save_path = save_path
+
+    def run(self):
+        try:
+            time.sleep(1)
+            self.converter.custom_to_labelplus(
+                self.image_list,
+                self.label_dir_path,
+                self.save_path,
+            )
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
+def export_labelplus_annotation(self):
+    """
+    Export annotations to LabelPlus format.
+
+    LabelPlus format uses:
+    - Rectangle mode: top-right corner of the rectangle
+    - Point mode: point position
+
+    Coordinates are normalized to [0, 1] range.
+    """
+    if not _check_filename_exist(self):
+        return
+
+    # Get image list
+    image_list = self.image_list if self.image_list else [self.filename]
+    label_dir_path = osp.dirname(self.filename)
+    if self.output_dir:
+        label_dir_path = self.output_dir
+
+    # Ask for save path
+    default_filename = "labelplus_export.txt"
+    if self.filename:
+        default_filename = osp.splitext(osp.basename(self.filename))[0] + "_labelplus.txt"
+
+    default_path = osp.join(osp.dirname(self.filename), default_filename)
+
+    save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+        self,
+        self.tr("导出 LabelPlus 格式"),
+        default_path,
+        "Text Files (*.txt);;All Files (*)",
+    )
+
+    if not save_path:
+        return
+
+    converter = LabelConverter()
+
+    progress_dialog = QProgressDialog(
+        self.tr("正在导出为 LabelPlus 格式..."), self.tr("取消"), 0, 0, self
+    )
+    progress_dialog.setWindowModality(Qt.WindowModal)
+    progress_dialog.setWindowTitle(self.tr("导出进度"))
+    progress_dialog.setMinimumWidth(500)
+    progress_dialog.setMinimumHeight(150)
+    progress_dialog.setRange(0, 0)  # Indeterminate
+    progress_dialog.setStyleSheet(
+        get_progress_dialog_style(color="#1d1d1f", height=20)
+    )
+
+    self.export_thread = ExportLabelPlusThread(
+        converter,
+        image_list,
+        label_dir_path,
+        save_path,
+    )
+
+    def on_export_finished(success, error_msg):
+        progress_dialog.close()
+        if success:
+            template = self.tr(
+                "导出标注成功！\n"
+                "结果已保存到：\n"
+                "%s"
+            )
+            message_text = template % save_path
+            popup = Popup(
+                message_text,
+                self,
+                icon=new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self, popup_height=65, position="center")
+        else:
+            message = self.tr("导出标注时发生错误: %s") % str(error_msg)
+            logger.error(message)
+            popup = Popup(
+                message,
+                self,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self, position="center")
+
+    self.export_thread.finished.connect(on_export_finished)
+
+    progress_dialog.show()
+    self.export_thread.start()
+
+    progress_dialog.canceled.connect(self.export_thread.terminate)

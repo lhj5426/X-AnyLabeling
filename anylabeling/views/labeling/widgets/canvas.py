@@ -1263,25 +1263,9 @@ class Canvas(
                     self.repaint()
             return
 
-        if self.editing() and self.is_move_editing:
-            self.override_cursor(CURSOR_MOVE)
-            if self.selected_vertex():
-                try:
-                    self.bounded_move_vertex(pos)
-                    self.repaint()
-                    self.moving_shape = True
-                except IndexError:
-                    return
-                if self.h_hape.shape_type == "rectangle":
-                    p1 = self.h_hape[0]
-                    p2 = self.h_hape[2]
-                    shape_width = int(abs(p2.x() - p1.x()))
-                    shape_height = int(abs(p2.y() - p1.y()))
-                    self.show_shape.emit(shape_width, shape_height, pos)
-            else:
-                self.is_move_editing = False
-
-            return
+        # 移除 is_move_editing 的鼠标移动逻辑
+        # 现在只有按住左键拖动时才会移动顶点/形状（见上面的代码）
+        # 这样点击选中后，鼠标移动不会导致形状移动
 
         self.show_shape.emit(-1, -1, pos)
 
@@ -1736,12 +1720,11 @@ class Canvas(
                     # Delete point if: left-click + SHIFT on a point
                     self.remove_selected_point()
 
+                # 点击顶点时只选中，不进入移动模式
+                # 移动模式将在 mouseMoveEvent 中按住拖动时激活
                 if self.selected_vertex():
-                    self.is_move_editing = not self.is_move_editing
-                    if self.is_move_editing:
-                        self.override_cursor(CURSOR_MOVE)
-                    else:
-                        self.override_cursor(CURSOR_POINT)
+                    self.is_move_editing = False
+                    self.override_cursor(CURSOR_POINT)
 
                 group_mode = int(ev.modifiers()) == QtCore.Qt.ControlModifier
                 self.select_shape_point(
@@ -2274,20 +2257,20 @@ class Canvas(
         if self.selected_vertex():  # A vertex is marked for selection.
             index, shape = self.h_vertex, self.h_hape
             shape.highlight_vertex(index, shape.MOVE_VERTEX)
-            if shape.shape_type == "rotation":
-                self.set_hiding()
-                if shape not in self.selected_shapes:
-                    if multiple_selection_mode:
-                        self.selection_changed.emit(
-                            self.selected_shapes + [shape]
-                        )
-                    else:
-                        self.selection_changed.emit([shape])
-                    self.h_shape_is_selected = False
+            # 对于所有类型的形状（包括 point），都触发选中事件
+            self.set_hiding()
+            if shape not in self.selected_shapes:
+                if multiple_selection_mode:
+                    self.selection_changed.emit(
+                        self.selected_shapes + [shape]
+                    )
                 else:
-                    self.h_shape_is_selected = True
-                self.calculate_offsets(point)
-                return
+                    self.selection_changed.emit([shape])
+                self.h_shape_is_selected = False
+            else:
+                self.h_shape_is_selected = True
+            self.calculate_offsets(point)
+            return
 
         else:
             for shape in reversed(self.shapes):
@@ -3701,14 +3684,15 @@ class Canvas(
                     if not points:
                         continue
                     point = points[0]
+                    padding = 10  # Add horizontal padding to the right (same as rectangle)
                     rect = QtCore.QRect(
                         int(point.x() + d_react),
                         int(point.y() - 15),
-                        int(bound_rect.width()),
+                        int(bound_rect.width() + padding),
                         int(bound_rect.height()),
                     )
                     text_pos = QtCore.QPoint(
-                        int(point.x()),
+                        int(point.x() + d_react),  # 对齐到矩形左边界
                         int(point.y() - 15 + bound_rect.height() - d_text),
                     )
                 else:

@@ -42,6 +42,7 @@ from .segmentation_dialog import SegmentationDialog
 from .wheel_settings_dialog import WheelSettingsDialog
 from .rectangle3_width_dialog import Rectangle3WidthDialog
 from .rectangle_scale_dialog import RectangleScaleDialog
+from .page_text_dialog import PageTextDialog
 
 
 __all__ = [
@@ -87,4 +88,6 @@ __all__ = [
     "SegmentationDialog",
     "Rectangle3WidthDialog",
     "RectangleScaleDialog",
+    "PageTextDialog",
+    "WheelSettingsDialog",
 ]

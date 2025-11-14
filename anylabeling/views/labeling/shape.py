@@ -537,7 +537,12 @@ class Shape:
         if self._highlight_index is not None:
             self._vertex_fill_color = self.hvertex_fill_color
         else:
-            self._vertex_fill_color = self.vertex_fill_color
+            # For point shapes, use the line color, which is set by the label.
+            # For other shapes, use the default vertex color.
+            if self.shape_type == "point":
+                self._vertex_fill_color = self.line_color
+            else:
+                self._vertex_fill_color = self.vertex_fill_color
         if shape in (self.P_SQUARE, self.P_ROUND):
             if self.difficult and show_difficult:
                 scale_factor = 1.5

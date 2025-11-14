@@ -83,6 +83,7 @@ from .widgets import (
     ShortcutManagerDialog,
     SegmentationDialog,
     Rectangle3WidthDialog,
+    PageTextDialog,
 )
 from .widgets.rectangle_scale_dialog import RectangleScaleDialog
 from ...services import merger, tag_sorting
@@ -1193,6 +1194,13 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("按比例缩放所有矩形标注的坐标位置"),
         )
 
+        page_text_tool = action(
+            self.tr("页文本工具"),
+            self.open_page_text_dialog,
+            icon="edit",
+            tip=self.tr("查看和编辑当前页面所有标签的文本内容"),
+        )
+
         open_chatbot = action(
             self.tr("ChatBot"),
             self.open_chatbot,
@@ -1632,6 +1640,14 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("导入 ImageTrans ipt 项目文件"),
         )
 
+        upload_labelplus_annotation = action(
+            self.tr("导入 LabelPlus 格式"),
+            lambda: utils.upload_labelplus_annotation(self),
+            None,
+            icon="format_coco",
+            tip=self.tr("导入 LabelPlus 格式文件（点模式）"),
+        )
+
         # Export
         export_yolo_hbb_annotation = action(
             self.tr("&Export YOLO-Hbb Annotations"),
@@ -1777,7 +1793,15 @@ class LabelingWidget(QtWidgets.QWidget):
             None,
             icon="format_coco",
             tip="导出 ImageTrans ipt 项目文件",
-        )        # Create action for zoom at mouse
+        )
+        export_labelplus_annotation = action(
+            self.tr("导出 LabelPlus 格式"),
+            lambda: utils.export_labelplus_annotation(self),
+            None,
+            icon="format_coco",
+            tip=self.tr("导出 LabelPlus 格式（使用矩形右上角或点位置）"),
+        )
+        # Create action for zoom at mouse
         zoom_at_mouse = action(
             self.tr("Zoom at Mouse"),
             self.zoom_at_mouse_shortcut_triggered,
@@ -1926,6 +1950,7 @@ class LabelingWidget(QtWidgets.QWidget):
             upload_vlm_r1_ovd_annotation=upload_vlm_r1_ovd_annotation,
             upload_ballontranslator_annotation=upload_ballontranslator_annotation,
             upload_imagetrans_annotation=upload_imagetrans_annotation,
+            upload_labelplus_annotation=upload_labelplus_annotation,
             export_yolo_hbb_annotation=export_yolo_hbb_annotation,
             export_yolo_obb_annotation=export_yolo_obb_annotation,
             export_yolo_seg_annotation=export_yolo_seg_annotation,
@@ -2122,6 +2147,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 dual_color_label_tool,
                 mask_generator_tool,
                 rectangle_scale_tool,
+                page_text_tool,
                 None,
                 # === 管理器工具 ===
                 label_manager,
@@ -2185,6 +2211,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 None,
                 upload_ballontranslator_annotation,
                 upload_imagetrans_annotation,
+                upload_labelplus_annotation,
             ),
         )
         utils.add_actions(
@@ -2216,6 +2243,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 None,
                 export_ballontranslator_annotation,
                 export_imagetrans_annotation,
+                export_labelplus_annotation,
             ),
         )
         utils.add_actions(
@@ -4027,6 +4055,37 @@ class LabelingWidget(QtWidgets.QWidget):
         else:
             self.smart_guides_dialog.raise_()
             self.smart_guides_dialog.activateWindow()
+
+    def open_page_text_dialog(self):
+        """打开页文本工具窗口"""
+        if not hasattr(self, 'page_text_dialog') or self.page_text_dialog is None:
+            self.page_text_dialog = PageTextDialog(self)
+            self.page_text_dialog.description_changed.connect(self.on_page_text_description_changed)
+            # Connect the signal for real-time updates
+            self.shape_list_changed.connect(self.page_text_dialog.refresh_data)
+            self.page_text_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+
+        if not self.page_text_dialog.isVisible():
+            self.page_text_dialog.update_shapes(self.canvas.shapes)
+            self.page_text_dialog.show()
+        else:
+            # 如果窗口已经打开，刷新数据并激活窗口
+            self.page_text_dialog.update_shapes(self.canvas.shapes)
+            self.page_text_dialog.raise_()
+            self.page_text_dialog.activateWindow()
+
+    def on_page_text_description_changed(self, shape_index, new_description):
+        """页文本工具中 description 改变时的处理"""
+        # 更新右侧的 shape_text_edit（如果当前选中的是这个 shape）
+        if (self.canvas.editing() and
+            len(self.canvas.selected_shapes) == 1 and
+            self.canvas.shapes.index(self.canvas.selected_shapes[0]) == shape_index):
+            self.shape_text_edit.textChanged.disconnect()
+            self.shape_text_edit.setPlainText(new_description)
+            self.shape_text_edit.textChanged.connect(self.shape_text_changed)
+
+        # 标记为已修改
+        self.set_dirty()
 
     def open_shortcut_manager_dialog(self):
         """Open the shortcut manager dialog."""
@@ -7687,6 +7746,9 @@ class LabelingWidget(QtWidgets.QWidget):
         # Update rectangle scale dialog page range if open
         self._update_rectangle_scale_page_range()
 
+        # Update page text dialog if open
+        self._update_page_text_dialog()
+
         return True
 
     # QT Overload
@@ -9199,6 +9261,14 @@ class LabelingWidget(QtWidgets.QWidget):
             total_pages = len(self.image_list) if self.image_list else 0
             # 更新页面范围
             self.rectangle_scale_dialog.update_page_range(current_page, total_pages)
+
+    def _update_page_text_dialog(self):
+        """Update page text dialog if it's open and visible."""
+        if (hasattr(self, 'page_text_dialog') and
+            self.page_text_dialog is not None and
+            self.page_text_dialog.isVisible()):
+            # 更新当前页面的形状列表
+            self.page_text_dialog.update_shapes(self.canvas.shapes)
 
     def open_merge_tool(self):
         if not self.image_list:

@@ -58,7 +58,9 @@ class UniqueLabelQListWidget(EscapableQListWidget):
 
         # Set the selection mode to ExtendedSelection (Ctrl+Click for multi-select, Click for single select)
         self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
-        self.setDragDropMode(QtWidgets.QAbstractItemView.NoDragDrop)
+        # 启用拖拽排序
+        self.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
 
         # Connect the itemChanged signal to the on_item_changed slot.
         self.itemChanged.connect(self.on_item_changed)
@@ -294,4 +296,12 @@ class UniqueLabelQListWidget(EscapableQListWidget):
 
     def update_label_order(self):
         ordered_labels = self.get_ordered_labels()
+        print(f"[UniqueLabelQListWidget] 发射 labels_ordered 信号，标签: {ordered_labels}")
         self.labels_ordered.emit(ordered_labels)
+
+    def dropEvent(self, event):
+        """拖拽完成后自动触发顺序更新"""
+        super().dropEvent(event)
+        # 拖拽完成后，自动触发顺序更新信号
+        print("[UniqueLabelQListWidget] 拖拽完成，触发 update_label_order")
+        self.update_label_order()

@@ -1873,3 +1873,72 @@ def upload_imagetrans_annotation(self):
             icon=new_icon_path("error", "svg"),
         )
         popup.show_popup(self, position="center")
+
+def upload_labelplus_annotation(self):
+    if not _check_filename_exist(self):
+        return
+
+    filter = "LabelPlus Files (*.txt);;All Files (*)"
+    input_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+        self,
+        self.tr("选择 LabelPlus 格式文件"),
+        "",
+        filter,
+    )
+
+    if not input_file:
+        return
+
+    output_dir_path = osp.dirname(self.filename)
+    if self.output_dir:
+        output_dir_path = self.output_dir
+
+    # Get image directory
+    image_dir_path = osp.dirname(self.filename)
+
+    response = QtWidgets.QMessageBox()
+    response.setIcon(QtWidgets.QMessageBox.Warning)
+    response.setWindowTitle(self.tr("警告"))
+    response.setText(self.tr("当前标注将会丢失"))
+    response.setInformativeText(
+        self.tr(
+            "您将要为此任务上传新的标注。是否继续？"
+        )
+    )
+    response.setStandardButtons(
+        QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Ok
+    )
+    response.setStyleSheet(get_msg_box_style())
+
+    if response.exec_() != QtWidgets.QMessageBox.Ok:
+        return
+
+    try:
+        converter = LabelConverter()
+        converter.labelplus_to_custom(
+            input_file=input_file,
+            output_dir_path=output_dir_path,
+            image_dir_path=image_dir_path,
+        )
+
+        # Refresh file list and UI
+        current_dir = osp.dirname(self.filename)
+        self.import_image_folder(current_dir, load=True)
+
+        popup = Popup(
+            self.tr("成功导入 LabelPlus 标注！\n标注已保存为点模式。"),
+            self,
+            icon=new_icon_path("copy-green", "svg"),
+        )
+        popup.show_popup(self, popup_height=65, position="center")
+
+    except Exception as e:
+        message = self.tr("导入 LabelPlus 标注时发生错误: %s") % str(e)
+        logger.error(message)
+        popup = Popup(
+            message,
+            self,
+            icon=new_icon_path("error", "svg"),
+        )
+        popup.show_popup(self, position="center")
+

@@ -2633,3 +2633,267 @@ class LabelConverter:
                 with open(ppocr_kie_file, "a", encoding="utf-8") as f:
                     f.write(item)
             return class_set
+
+    def custom_to_labelplus(self, image_list, label_dir_path, save_path):
+        """
+        Export annotations to LabelPlus format.
+
+        LabelPlus format uses the top-right corner of rectangles or point positions
+        as normalized coordinates [x, y, 1].
+
+        Args:
+            image_list: List of image file paths
+            label_dir_path: Directory containing label JSON files
+            save_path: Output file path for LabelPlus format
+        """
+        # Collect all unique labels
+        all_labels = set()
+        annotations_by_image = {}
+
+        # First pass: collect labels and annotations
+        for image_file in image_list:
+            image_name = osp.basename(image_file)
+            label_file_name = osp.splitext(image_name)[0] + ".json"
+            label_file = osp.join(label_dir_path, label_file_name)
+
+            if not osp.exists(label_file):
+                label_file = osp.join(osp.dirname(image_file), label_file_name)
+
+            if not osp.exists(label_file):
+                continue
+
+            with open(label_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            image_width = data["imageWidth"]
+            image_height = data["imageHeight"]
+
+            annotations = []
+            for shape in data["shapes"]:
+                label = shape["label"]
+                all_labels.add(label)
+                shape_type = shape["shape_type"]
+                points = shape["points"]
+
+                # Extract coordinate based on shape type
+                if shape_type == "point" and len(points) >= 1:
+                    # For point annotation, use the point position
+                    x = points[0][0]
+                    y = points[0][1]
+                elif shape_type in ["rectangle", "rotation", "rotation3", "rectangle3"] and len(points) >= 2:
+                    # For rectangle, use top-right corner
+                    # Find the point with maximum x and minimum y (top-right)
+                    x_coords = [p[0] for p in points]
+                    y_coords = [p[1] for p in points]
+
+                    # Top-right corner: max x, min y
+                    max_x = max(x_coords)
+                    min_y = min(y_coords)
+
+                    # Find the actual top-right point (closest to max_x and min_y)
+                    min_dist = float('inf')
+                    top_right_x, top_right_y = max_x, min_y
+
+                    for px, py in points:
+                        dist = (px - max_x) ** 2 + (py - min_y) ** 2
+                        if dist < min_dist:
+                            min_dist = dist
+                            top_right_x, top_right_y = px, py
+
+                    x = top_right_x
+                    y = top_right_y
+                else:
+                    # Skip unsupported shape types
+                    continue
+
+                # Normalize coordinates
+                norm_x = x / image_width
+                norm_y = y / image_height
+
+                # Get description text
+                description = shape.get("description", "")
+
+                annotations.append({
+                    'label': label,
+                    'coords': [norm_x, norm_y],
+                    'description': description
+                })
+
+            if annotations:
+                annotations_by_image[image_name] = annotations
+
+        # Write LabelPlus format file
+        with open(save_path, "w", encoding="utf-8") as f:
+            # Write header
+            f.write("1,0\n")
+            f.write("-\n")
+
+            # Write labels
+            sorted_labels = sorted(all_labels)
+            label_to_index = {label: idx for idx, label in enumerate(sorted_labels)}
+
+            for label in sorted_labels:
+                f.write(f"{label}\n")
+
+            f.write("-\n")
+            f.write("Default Comment\n")
+            f.write(" You can edit me\n")
+            f.write("\n")
+
+            # Write annotations for each image
+            for image_name in sorted(annotations_by_image.keys()):
+                annotations = annotations_by_image[image_name]
+
+                f.write(f"\n>>>>>>>>[{image_name}]<<<<<<<<\n")
+
+                for idx, ann in enumerate(annotations, start=1):
+                    # Label index starts from 1 (not 0)
+                    label_index = label_to_index[ann['label']] + 1
+                    coords_str = f"{ann['coords'][0]:.3f},{ann['coords'][1]:.3f},{label_index}"
+
+                    f.write(f"----------------[{idx}]----------------[{coords_str}]\n")
+
+                    # Write description (or empty line if no description)
+                    description = ann.get('description', '').strip()
+                    f.write(f"{description}\n")
+
+                    # Always write a second empty line
+                    f.write("\n")
+
+                # Extra empty line between images
+                f.write("\n")
+
+    def labelplus_to_custom(self, input_file, output_dir_path, image_dir_path):
+        """
+        将 LabelPlus 格式导入为 X-AnyLabeling 格式
+
+        参数:
+            input_file: LabelPlus 格式文本文件路径
+            output_dir_path: 保存 JSON 文件的目录
+            image_dir_path: 包含图像文件的目录
+        """
+        with open(input_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        # 解析文件头获取标签列表
+        labels = []
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if line == "-":
+                i += 1
+                # 读取标签直到下一个 "-"
+                while i < len(lines):
+                    line = lines[i].strip()
+                    if line == "-":
+                        break
+                    if line:
+                        labels.append(line)
+                    i += 1
+                break
+            i += 1
+
+        # 按图像解析标注
+        annotations_by_image = {}
+        current_image = None
+        i = 0
+
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # 检查图像标记
+            if line.startswith(">>>>>>>>[") and line.endswith("]<<<<<<<<"):
+                current_image = line[9:-9]  # 提取图像名称
+                annotations_by_image[current_image] = []
+                i += 1
+                continue
+
+            # 检查标注行
+            if line.startswith("----------------[") and current_image:
+                # 解析格式: ----------------[1]----------------[0.967,0.433,2]
+                parts = line.split("]----------------[")
+                if len(parts) == 2:
+                    coords_str = parts[1].rstrip("]")
+                    coords = coords_str.split(",")
+
+                    if len(coords) == 3:
+                        norm_x = float(coords[0])
+                        norm_y = float(coords[1])
+                        label_index = int(coords[2]) - 1  # 从1开始转换为从0开始
+
+                        logger.info(f"解析坐标: norm_x={norm_x}, norm_y={norm_y}, label_index={label_index}")
+
+                        # 获取下一行的 description 文本
+                        description = ""
+                        if i + 1 < len(lines):
+                            next_line = lines[i + 1].rstrip("\n")
+                            if next_line and not next_line.startswith(">>>>>>>>[") and not next_line.startswith("----------------["):
+                                description = next_line
+
+                        # 获取标签名称
+                        label = labels[label_index] if 0 <= label_index < len(labels) else "unknown"
+
+                        annotations_by_image[current_image].append({
+                            'x': norm_x,
+                            'y': norm_y,
+                            'label': label,
+                            'description': description
+                        })
+
+            i += 1
+
+        # Create JSON files for each image
+        for image_name, annotations in annotations_by_image.items():
+            image_path = osp.join(image_dir_path, image_name)
+
+            if not osp.exists(image_path):
+                logger.warning(f"Image not found: {image_path}")
+                continue
+
+            # Get image dimensions
+            try:
+                with Image.open(image_path) as img:
+                    image_width, image_height = img.size
+            except Exception as e:
+                logger.error(f"Failed to open image {image_path}: {e}")
+                continue
+
+            # 创建标注形状
+            shapes = []
+            for ann in annotations:
+                # LabelPlus 存储的是归一化坐标（0-1范围），需要转换为像素坐标
+                x = ann['x'] * image_width
+                y = ann['y'] * image_height
+
+                logger.info(f"图像 {image_name}: 归一化坐标 ({ann['x']:.3f}, {ann['y']:.3f}) -> 像素坐标 ({x:.1f}, {y:.1f}), 图像尺寸 {image_width}x{image_height}")
+
+                shape = {
+                    "label": ann['label'],
+                    "score": None,
+                    "points": [[x, y]],
+                    "group_id": None,
+                    "description": ann['description'],
+                    "difficult": False,
+                    "shape_type": "point",
+                    "flags": {},
+                    "attributes": {},
+                    "kie_linking": []
+                }
+                shapes.append(shape)
+
+            # Create output JSON
+            output_data = {
+                "version": __version__,
+                "flags": {},
+                "shapes": shapes,
+                "imagePath": image_name,
+                "imageData": None,
+                "imageHeight": image_height,
+                "imageWidth": image_width,
+                "description": ""
+            }
+
+            # Save JSON file
+            output_file = osp.join(output_dir_path, osp.splitext(image_name)[0] + ".json")
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(output_data, f, ensure_ascii=False, indent=2)
