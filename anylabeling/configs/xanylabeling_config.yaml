@@ -264,11 +264,13 @@ spacing_guide_max_shapes: 0  # 最多检测的矩形数量（0表示检测所有
 paste_preview_line_width: 2.0
 paste_preview_line_color: [255, 0, 255]
 paste_preview_opacity: 0.4
+paste_preview_fill_opacity: 0.3
 
 # Highlight settings
 highlight_positive: ""
 highlight_negative: ""
 highlight_mixed_mode: false
+highlight_enabled_by_default: true
 locked_labels: ""
 pin_labels: ""
 no_highlight_labels: ""

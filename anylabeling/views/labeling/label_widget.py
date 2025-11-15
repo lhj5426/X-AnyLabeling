@@ -4337,7 +4337,7 @@ class LabelingWidget(QtWidgets.QWidget):
     def open_highlight_settings_dialog(self):
         """打开高亮设置工具窗口"""
         if not hasattr(self, 'highlight_settings_dialog') or self.highlight_settings_dialog is None:
-            self.highlight_settings_dialog = HighlightSettingsDialog(self)
+            self.highlight_settings_dialog = HighlightSettingsDialog(parent=self, config=self._config)
             self.highlight_settings_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
 
         if not self.highlight_settings_dialog.isVisible():
@@ -4346,7 +4346,26 @@ class LabelingWidget(QtWidgets.QWidget):
             self.highlight_settings_dialog.raise_()
             self.highlight_settings_dialog.activateWindow()
 
-
+    def apply_default_highlight_setting(self, is_enabled):
+        """应用默认高亮设置，实时生效到所有标注"""
+        if is_enabled:
+            # 勾选：常驻高亮，所有标注默认高亮
+            for shape in self.canvas.shapes:
+                shape.selected = True
+            self._highlight_on = True
+            Shape.highlighting_enabled = True
+            if hasattr(self, 'btn_highlight'):
+                self.btn_highlight.setChecked(True)
+        else:
+            # 不勾选：默认不高亮，清除所有高亮
+            for shape in self.canvas.shapes:
+                shape.selected = False
+            self._highlight_on = False
+            Shape.highlighting_enabled = False
+            if hasattr(self, 'btn_highlight'):
+                self.btn_highlight.setChecked(False)
+        
+        self.canvas.update()
 
     def on_page_text_description_changed(self, shape_index, new_description):
         """页文本工具中 description 改变时的处理"""
@@ -5293,6 +5312,9 @@ class LabelingWidget(QtWidgets.QWidget):
             elif key == 'paste_preview_opacity':
                 # 虚影透明度
                 self.canvas.paste_preview_opacity = value
+            elif key == 'paste_preview_fill_opacity':
+                # 虚影填充透明度
+                self.canvas.paste_preview_fill_opacity = value
             elif key == 'smart_guides_line_width':
                 # 辅助线线条粗细
                 self.canvas.smart_guides_line_width = value
@@ -7996,21 +8018,45 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Apply highlight rules after loading shapes
         try:
-            positive_labels_str = self._config.get("highlight_positive", "")
-            positive_labels = {label.strip() for label in positive_labels_str.split(',') if label.strip()}
-
-            # If there are rules, apply them. Otherwise, do nothing.
-            if positive_labels:
-                for shape in self.canvas.shapes:
-                    if shape.label in positive_labels:
-                        shape.selected = True
-                    else:
-                        shape.selected = False
+            # Reload config to get latest settings
+            from ...config import get_config
+            current_config = get_config()
             
+            # Check if default highlight is enabled (常驻高亮)
+            highlight_enabled_by_default = current_config.get("highlight_enabled_by_default", True)
+            
+            if highlight_enabled_by_default:
+                # 启用常驻高亮：根据规则应用高亮，或者全部高亮
+                positive_labels_str = current_config.get("highlight_positive", "")
+                positive_labels = {label.strip() for label in positive_labels_str.split(',') if label.strip()}
+
+                if positive_labels:
+                    # 有规则：按规则高亮
+                    for shape in self.canvas.shapes:
+                        if shape.label in positive_labels:
+                            shape.selected = True
+                        else:
+                            shape.selected = False
+                else:
+                    # 无规则：全部高亮
+                    for shape in self.canvas.shapes:
+                        shape.selected = True
+                
                 # Update global highlight state and canvas
                 is_any_shape_selected = any(s.selected for s in self.canvas.shapes)
                 Shape.highlighting_enabled = is_any_shape_selected
                 self._highlight_on = is_any_shape_selected
+                if hasattr(self, 'btn_highlight'):
+                    self.btn_highlight.setChecked(is_any_shape_selected)
+                self.canvas.update()
+            else:
+                # 不启用常驻高亮：所有标注默认不高亮
+                for shape in self.canvas.shapes:
+                    shape.selected = False
+                Shape.highlighting_enabled = False
+                self._highlight_on = False
+                if hasattr(self, 'btn_highlight'):
+                    self.btn_highlight.setChecked(False)
                 self.canvas.update()
         except Exception as e:
             logger.error(f"Error applying highlight rules on load: {e}")

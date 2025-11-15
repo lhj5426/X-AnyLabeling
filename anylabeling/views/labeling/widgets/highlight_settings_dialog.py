@@ -63,13 +63,20 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.mixed_mode_layout.addWidget(self.mixed_mode_checkbox)
         self.mixed_mode_group.setLayout(self.mixed_mode_layout)
 
+        # Default Highlight Enabled
+        self.default_highlight_group = QtWidgets.QGroupBox("高亮常驻设置")
+        self.default_highlight_layout = QtWidgets.QVBoxLayout()
+        self.default_highlight_checkbox = QtWidgets.QCheckBox("启用常驻高亮")
+        self.default_highlight_layout.addWidget(self.default_highlight_checkbox)
+        self.default_highlight_group.setLayout(self.default_highlight_layout)
+
         self.layout.addWidget(self.positive_group)
         self.layout.addWidget(self.negative_group)
         self.layout.addWidget(self.lock_group)
         self.layout.addWidget(self.pin_group)
         self.layout.addWidget(self.no_highlight_group)
         self.layout.addWidget(self.mixed_mode_group)
-        self.layout.addWidget(self.mixed_mode_group)
+        self.layout.addWidget(self.default_highlight_group)
 
         # 添加最小化按钮，移除帮助按钮
         self.setWindowFlags(
@@ -86,6 +93,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.pin_input.textChanged.connect(self._realtime_save_settings)
         self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
         self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
+        self.default_highlight_checkbox.stateChanged.connect(self._on_default_highlight_changed)
 
         self.load_settings()
 
@@ -99,6 +107,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.pin_input.textChanged.disconnect(self._realtime_save_settings)
             self.no_highlight_input.textChanged.disconnect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.disconnect(self._realtime_save_settings)
+            self.default_highlight_checkbox.stateChanged.disconnect(self._on_default_highlight_changed)
 
             positive_labels = self._config.get("highlight_positive", "")
             negative_labels = self._config.get("highlight_negative", "")
@@ -106,12 +115,14 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             pin_labels = self._config.get("pin_labels", "")
             no_highlight_labels = self._config.get("no_highlight_labels", "")
             mixed_mode_enabled = self._config.get("highlight_mixed_mode", False)
+            default_highlight_enabled = self._config.get("highlight_enabled_by_default", True)
             self.positive_input.setText(positive_labels)
             self.negative_input.setText(negative_labels)
             self.lock_input.setText(locked_labels)
             self.pin_input.setText(pin_labels)
             self.no_highlight_input.setText(no_highlight_labels)
             self.mixed_mode_checkbox.setChecked(mixed_mode_enabled)
+            self.default_highlight_checkbox.setChecked(default_highlight_enabled)
 
             # Reconnect signals
             self.positive_input.textChanged.connect(self._realtime_save_settings)
@@ -120,6 +131,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.pin_input.textChanged.connect(self._realtime_save_settings)
             self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
+            self.default_highlight_checkbox.stateChanged.connect(self._on_default_highlight_changed)
 
     def _realtime_save_settings(self):
         """Saves the current settings from the line edits to the config file in real-time."""
@@ -131,6 +143,17 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["no_highlight_labels"] = self.no_highlight_input.text()
             self._config["highlight_mixed_mode"] = self.mixed_mode_checkbox.isChecked()
             save_config(self._config)
+
+    def _on_default_highlight_changed(self, state):
+        """Handle default highlight checkbox state change with real-time effect."""
+        if self._config:
+            is_enabled = self.default_highlight_checkbox.isChecked()
+            self._config["highlight_enabled_by_default"] = is_enabled
+            save_config(self._config)
+            
+            # Apply the change immediately to all shapes in the parent (label_widget)
+            if self.parent() and hasattr(self.parent(), 'apply_default_highlight_setting'):
+                self.parent().apply_default_highlight_setting(is_enabled)
 
     def showEvent(self, event):
         """Override showEvent to reload settings every time the dialog is shown."""

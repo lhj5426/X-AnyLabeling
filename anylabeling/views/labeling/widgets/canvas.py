@@ -309,6 +309,7 @@ class Canvas(
         self.paste_preview_line_width = self._config.get('paste_preview_line_width', 2.0)  # 虚影线条粗细
         self.paste_preview_line_color = self._config.get('paste_preview_line_color', [255, 0, 255])  # 虚影线条颜色 (RGB)
         self.paste_preview_opacity = self._config.get('paste_preview_opacity', 0.4)  # 虚影透明度
+        self.paste_preview_fill_opacity = self._config.get('paste_preview_fill_opacity', 0.3)  # 虚影填充透明度
         # self.line represents:
         #   - create_mode == 'polygon': edge from last point to current
         #   - create_mode == 'rectangle': diagonal line of the rectangle
@@ -6203,12 +6204,15 @@ class Canvas(
             # 绘制形状（半透明）
             # 保存原始透明度
             p.save()
-            p.setOpacity(self.paste_preview_opacity)  # 使用配置的透明度
+            p.setOpacity(self.paste_preview_opacity)  # 使用配置的整体透明度
 
-            # 绘制填充
+            # 绘制填充 - 使用单独的填充透明度
             if preview_shape.fill:
                 color = preview_shape.fill_color
-                p.setBrush(QtGui.QBrush(color))
+                # 创建带有填充透明度的颜色
+                fill_color = QtGui.QColor(color)
+                fill_color.setAlphaF(self.paste_preview_fill_opacity)
+                p.setBrush(QtGui.QBrush(fill_color))
             else:
                 p.setBrush(QtCore.Qt.NoBrush)
 

@@ -175,6 +175,13 @@ class ColorManagerDialog(QDialog):
         self.paste_preview_opacity_spinbox.valueChanged.connect(lambda value: self._on_setting_changed('paste_preview_opacity', value))
         right_form.addRow(self.tr("虚影透明度:"), self.paste_preview_opacity_spinbox)
 
+        self.paste_preview_fill_opacity_spinbox = QDoubleSpinBox()
+        self.paste_preview_fill_opacity_spinbox.setRange(0.0, 1.0)
+        self.paste_preview_fill_opacity_spinbox.setSingleStep(0.1)
+        self.paste_preview_fill_opacity_spinbox.setValue(self.config.get('paste_preview_fill_opacity', 0.3))
+        self.paste_preview_fill_opacity_spinbox.valueChanged.connect(lambda value: self._on_setting_changed('paste_preview_fill_opacity', value))
+        right_form.addRow(self.tr("虚影填充透明度:"), self.paste_preview_fill_opacity_spinbox)
+
         # Smart guides settings (辅助线样式设置)
         self.smart_guides_line_width_spinbox = QDoubleSpinBox()
         self.smart_guides_line_width_spinbox.setRange(0.5, 10.0)
