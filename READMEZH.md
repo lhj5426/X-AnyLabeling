@@ -454,12 +454,9 @@ https://github.com/user-attachments/assets/92171dc0-dd61-412c-ba58-3af2c0e9cd68
 
 https://github.com/user-attachments/assets/0468ab88-a631-461b-8ca8-eb69fb9d995c
 
+87.高亮设置增加 创建后置顶 和创建后不高亮
 
-
-
-
-
-
+https://github.com/user-attachments/assets/dc94dc79-5f25-4353-8671-596016b49997
 
 
 
