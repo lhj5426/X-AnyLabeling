@@ -56,11 +56,20 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.no_highlight_layout.addWidget(self.no_highlight_input)
         self.no_highlight_group.setLayout(self.no_highlight_layout)
 
+        # Mixed Mode Detection
+        self.mixed_mode_group = QtWidgets.QGroupBox("混合模式检测")
+        self.mixed_mode_layout = QtWidgets.QVBoxLayout()
+        self.mixed_mode_checkbox = QtWidgets.QCheckBox("启用混合模式检测")
+        self.mixed_mode_layout.addWidget(self.mixed_mode_checkbox)
+        self.mixed_mode_group.setLayout(self.mixed_mode_layout)
+
         self.layout.addWidget(self.positive_group)
         self.layout.addWidget(self.negative_group)
         self.layout.addWidget(self.lock_group)
         self.layout.addWidget(self.pin_group)
         self.layout.addWidget(self.no_highlight_group)
+        self.layout.addWidget(self.mixed_mode_group)
+        self.layout.addWidget(self.mixed_mode_group)
 
         # 添加最小化按钮，移除帮助按钮
         self.setWindowFlags(
@@ -76,6 +85,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_input.textChanged.connect(self._realtime_save_settings)
         self.pin_input.textChanged.connect(self._realtime_save_settings)
         self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
+        self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
 
         self.load_settings()
 
@@ -88,17 +98,20 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.lock_input.textChanged.disconnect(self._realtime_save_settings)
             self.pin_input.textChanged.disconnect(self._realtime_save_settings)
             self.no_highlight_input.textChanged.disconnect(self._realtime_save_settings)
+            self.mixed_mode_checkbox.stateChanged.disconnect(self._realtime_save_settings)
 
             positive_labels = self._config.get("highlight_positive", "")
             negative_labels = self._config.get("highlight_negative", "")
             locked_labels = self._config.get("locked_labels", "")
             pin_labels = self._config.get("pin_labels", "")
             no_highlight_labels = self._config.get("no_highlight_labels", "")
+            mixed_mode_enabled = self._config.get("highlight_mixed_mode", False)
             self.positive_input.setText(positive_labels)
             self.negative_input.setText(negative_labels)
             self.lock_input.setText(locked_labels)
             self.pin_input.setText(pin_labels)
             self.no_highlight_input.setText(no_highlight_labels)
+            self.mixed_mode_checkbox.setChecked(mixed_mode_enabled)
 
             # Reconnect signals
             self.positive_input.textChanged.connect(self._realtime_save_settings)
@@ -106,6 +119,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.lock_input.textChanged.connect(self._realtime_save_settings)
             self.pin_input.textChanged.connect(self._realtime_save_settings)
             self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
+            self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
 
     def _realtime_save_settings(self):
         """Saves the current settings from the line edits to the config file in real-time."""
@@ -115,6 +129,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["locked_labels"] = self.lock_input.text()
             self._config["pin_labels"] = self.pin_input.text()
             self._config["no_highlight_labels"] = self.no_highlight_input.text()
+            self._config["highlight_mixed_mode"] = self.mixed_mode_checkbox.isChecked()
             save_config(self._config)
 
     def showEvent(self, event):

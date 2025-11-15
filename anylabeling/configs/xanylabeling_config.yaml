@@ -268,6 +268,7 @@ paste_preview_opacity: 0.4
 # Highlight settings
 highlight_positive: ""
 highlight_negative: ""
+highlight_mixed_mode: false
 locked_labels: ""
 pin_labels: ""
 no_highlight_labels: ""

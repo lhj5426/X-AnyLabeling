@@ -441,7 +441,11 @@ class LabelingWidget(QtWidgets.QWidget):
                 btn_highlight.setChecked(False)
                 return
 
-            locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
+            # Reload config to get latest settings
+            from ...config import get_config
+            current_config = get_config()
+            
+            locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
             
             # Filter out shapes that are locked and have not been session-unlocked
             unlocked_shapes = [
@@ -449,40 +453,92 @@ class LabelingWidget(QtWidgets.QWidget):
                 if not (s.label in locked_labels and not s.is_session_unlocked)
             ]
 
-            positive_labels_str = self._config.get("highlight_positive", "")
+            positive_labels_str = current_config.get("highlight_positive", "")
             positive_labels = {label.strip() for label in positive_labels_str.split(',') if label.strip()}
 
-            negative_labels_str = self._config.get("highlight_negative", "")
+            negative_labels_str = current_config.get("highlight_negative", "")
             negative_labels = {label.strip() for label in negative_labels_str.split(',') if label.strip()}
+
+            # Get mixed mode setting - always read fresh from config
+            mixed_mode_enabled = current_config.get("highlight_mixed_mode", False)
 
             # --- Determine the action based on inputs, using only unlocked_shapes ---
 
             # Case 1: No labels specified (global toggle)
             if not positive_labels and not negative_labels:
-                are_all_selected = all(s.selected for s in unlocked_shapes) if unlocked_shapes else False
-                target_state = not are_all_selected
-                for shape in unlocked_shapes:
-                    shape.selected = target_state
+                if mixed_mode_enabled:
+                    # Mixed mode: highlight unhighlighted shapes first
+                    num_selected = sum(1 for s in unlocked_shapes if s.selected)
+                    if 0 < num_selected < len(unlocked_shapes):
+                        # Some are highlighted, highlight the rest
+                        for shape in unlocked_shapes:
+                            shape.selected = True
+                    else:
+                        # All or none highlighted, toggle all
+                        are_all_selected = all(s.selected for s in unlocked_shapes) if unlocked_shapes else False
+                        target_state = not are_all_selected
+                        for shape in unlocked_shapes:
+                            shape.selected = target_state
+                else:
+                    # Normal mode: toggle all
+                    are_all_selected = all(s.selected for s in unlocked_shapes) if unlocked_shapes else False
+                    target_state = not are_all_selected
+                    for shape in unlocked_shapes:
+                        shape.selected = target_state
 
             # Case 2: Only positive labels specified (toggle positive, cleanup others)
             elif positive_labels and not negative_labels:
                 positive_shapes = [s for s in unlocked_shapes if s.label in positive_labels]
-                if not positive_shapes: return
-                are_all_pos_selected = all(s.selected for s in positive_shapes)
-                target_state = not are_all_pos_selected
-                for shape in unlocked_shapes:
-                    shape.selected = target_state if shape in positive_shapes else False
+                if not positive_shapes:
+                    return
+                
+                if mixed_mode_enabled:
+                    # Mixed mode: highlight unhighlighted positive shapes first
+                    num_pos_selected = sum(1 for s in positive_shapes if s.selected)
+                    if 0 < num_pos_selected < len(positive_shapes):
+                        # Some positive shapes are highlighted, highlight the rest
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in positive_shapes
+                    else:
+                        # All or none highlighted, toggle
+                        are_all_pos_selected = all(s.selected for s in positive_shapes)
+                        target_state = not are_all_pos_selected
+                        for shape in unlocked_shapes:
+                            shape.selected = target_state if shape in positive_shapes else False
+                else:
+                    # Normal mode: toggle all positive shapes
+                    are_all_pos_selected = all(s.selected for s in positive_shapes)
+                    target_state = not are_all_pos_selected
+                    for shape in unlocked_shapes:
+                        shape.selected = target_state if shape in positive_shapes else False
 
             # Case 3: Only negative labels specified (toggle negative, cleanup others)
             elif not positive_labels and negative_labels:
                 negative_shapes = [s for s in unlocked_shapes if s.label in negative_labels]
-                if not negative_shapes: return
-                are_all_neg_selected = all(s.selected for s in negative_shapes)
-                target_state = not are_all_neg_selected
-                for shape in unlocked_shapes:
-                    shape.selected = target_state if shape in negative_shapes else False
+                if not negative_shapes:
+                    return
+                
+                if mixed_mode_enabled:
+                    # Mixed mode: highlight unhighlighted negative shapes first
+                    num_neg_selected = sum(1 for s in negative_shapes if s.selected)
+                    if 0 < num_neg_selected < len(negative_shapes):
+                        # Some negative shapes are highlighted, highlight the rest
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in negative_shapes
+                    else:
+                        # All or none highlighted, toggle
+                        are_all_neg_selected = all(s.selected for s in negative_shapes)
+                        target_state = not are_all_neg_selected
+                        for shape in unlocked_shapes:
+                            shape.selected = target_state if shape in negative_shapes else False
+                else:
+                    # Normal mode: toggle all negative shapes
+                    are_all_neg_selected = all(s.selected for s in negative_shapes)
+                    target_state = not are_all_neg_selected
+                    for shape in unlocked_shapes:
+                        shape.selected = target_state if shape in negative_shapes else False
 
-            # Case 4: Both positive and negative labels specified (new symmetric logic)
+            # Case 4: Both positive and negative labels specified
             elif positive_labels and negative_labels:
                 positive_shapes = [s for s in unlocked_shapes if s.label in positive_labels]
                 negative_shapes = [s for s in unlocked_shapes if s.label in negative_labels]
@@ -496,26 +552,50 @@ class LabelingWidget(QtWidgets.QWidget):
                 is_pos_fully_on = positive_shapes and num_pos_selected == len(positive_shapes)
                 is_neg_fully_on = negative_shapes and num_neg_selected == len(negative_shapes)
 
-                # Priority 1: Clean up positive chaotic state
-                if is_pos_chaotic:
-                    for shape in unlocked_shapes:
-                        shape.selected = shape in positive_shapes
-                # Priority 2: Clean up negative chaotic state
-                elif is_neg_chaotic:
-                    for shape in unlocked_shapes:
-                        shape.selected = shape in negative_shapes
-                # Priority 3: If positive is on, switch to negative
-                elif is_pos_fully_on:
-                    for shape in unlocked_shapes:
-                        shape.selected = shape in negative_shapes
-                # Priority 4: If negative is on, switch to positive
-                elif is_neg_fully_on:
-                    for shape in unlocked_shapes:
-                        shape.selected = shape in positive_shapes
-                # Default Action: Turn positive on
+                if mixed_mode_enabled:
+                    # Mixed mode logic for positive/negative
+                    # Priority 1: Complete positive chaotic state (highlight remaining positive)
+                    if is_pos_chaotic:
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in positive_shapes
+                    # Priority 2: Complete negative chaotic state (highlight remaining negative)
+                    elif is_neg_chaotic:
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in negative_shapes
+                    # Priority 3: If positive is fully on, switch to negative
+                    elif is_pos_fully_on:
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in negative_shapes
+                    # Priority 4: If negative is fully on, switch to positive
+                    elif is_neg_fully_on:
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in positive_shapes
+                    # Default: Turn positive on
+                    else:
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in positive_shapes
                 else:
-                    for shape in unlocked_shapes:
-                        shape.selected = shape in positive_shapes
+                    # Normal mode: directly toggle between positive and negative
+                    # Priority 1: If positive is fully on, switch to negative
+                    if is_pos_fully_on:
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in negative_shapes
+                    # Priority 2: If negative is fully on, switch to positive
+                    elif is_neg_fully_on:
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in positive_shapes
+                    # Priority 3: If positive has any selection (including chaotic), switch to negative
+                    elif num_pos_selected > 0:
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in negative_shapes
+                    # Priority 4: If negative has any selection (including chaotic), switch to positive
+                    elif num_neg_selected > 0:
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in positive_shapes
+                    # Default Action: Turn positive on
+                    else:
+                        for shape in unlocked_shapes:
+                            shape.selected = shape in positive_shapes
             
             # Final state update for canvas and button
             is_any_shape_selected = any(s.selected for s in unlocked_shapes)
