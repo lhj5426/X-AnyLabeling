@@ -36,20 +36,15 @@ https://www.basiccat.org/zh/imagetrans/
 
 https://github.com/lhj5426/YSG
 
-不同类型可以分不同颜色的,你行吗
-
-看不清是可以加深颜色的,你可以吗
-
-每个矩形都是可以微调的,你做的到吗
-
-可以加载不同的检测模型,你来的了吗
-
-识别完是可以直接训练的,你能吗
-
 [魔改项说明](https://github.com/lhj5426/X-AnyLabeling/blob/mogai/READMEZH.md)
 
+魔改全部代码全部使用自然语言对话由AI编写
 
+手写一行代码都算我输
 
+使用AI 御三家
+
+CHATGPT GEMINI CLAUDE
 
 
 
