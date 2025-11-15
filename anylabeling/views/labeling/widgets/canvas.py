@@ -2645,12 +2645,16 @@ class Canvas(
             if self.spacing_guide_enabled:
                 # 🎯 只对可见的形状进行间距线检测
                 visible_shapes = [s for s in self.shapes if self.is_visible(s)]
+                # 获取锁定的标签列表
+                locked_labels_str = self._config.get('locked_labels', '')
+                locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
                 spacing_snap_offset, spacing_lines = RectangleSpacingGuide.detect_spacing_lines(
                     shapes, visible_shapes,
                     display_distance=self.spacing_guide_display_distance,
                     snap_distance=self.spacing_guide_snap_distance,
                     max_shapes=self.spacing_guide_max_shapes,
-                    selected_only=self.spacing_guide_selected_only
+                    selected_only=self.spacing_guide_selected_only,
+                    locked_labels=locked_labels
                 )
                 self.spacing_guide_lines = spacing_lines
                 self.spacing_guide_snap_offset = spacing_snap_offset
@@ -4026,6 +4030,10 @@ class Canvas(
 
             # 🎯 只对可见的形状进行间距线检测
             visible_shapes = [s for s in self.shapes if self.is_visible(s)]
+            
+            # 获取锁定的标签列表
+            locked_labels_str = self._config.get('locked_labels', '')
+            locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
 
             # 如果启用了"仅选中矩形测距"，则只对选中的矩形进行测距
             if self.spacing_guide_selected_only:
@@ -4036,7 +4044,8 @@ class Canvas(
                         display_distance=self.spacing_guide_display_distance,
                         snap_distance=self.spacing_guide_snap_distance,
                         max_shapes=self.spacing_guide_max_shapes,
-                        selected_only=True
+                        selected_only=True,
+                        locked_labels=locked_labels
                     )
                     self.spacing_guide_lines = spacing_lines
                 else:
@@ -4047,7 +4056,8 @@ class Canvas(
                     display_distance=self.spacing_guide_display_distance,
                     snap_distance=self.spacing_guide_snap_distance,
                     max_shapes=self.spacing_guide_max_shapes,
-                    selected_only=False
+                    selected_only=False,
+                    locked_labels=locked_labels
                 )
                 self.spacing_guide_lines = spacing_lines
             logger.debug(f"paintEvent: spacing_guide_lines={len(self.spacing_guide_lines)}")
@@ -5455,9 +5465,18 @@ class Canvas(
                     is_tilted_rotation = True
                     break
 
+        # 获取锁定的标签列表
+        locked_labels_str = self._config.get('locked_labels', '')
+        locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
+
         for shape in self.shapes:
             if shape in moving_shapes or not self.is_visible(shape):
                 continue
+            
+            # 跳过锁定的图形（检查标签在锁定列表中且未被临时解锁）
+            if hasattr(shape, 'label') and shape.label in locked_labels:
+                if not hasattr(shape, 'is_session_unlocked') or not shape.is_session_unlocked:
+                    continue
 
             rect = shape.bounding_rect()
             target = {
@@ -6116,12 +6135,16 @@ class Canvas(
 
         # 虚影模式下的间距线
         if self.spacing_guide_enabled:
+            # 获取锁定的标签列表
+            locked_labels_str = self._config.get('locked_labels', '')
+            locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
             spacing_snap_offset, spacing_lines = RectangleSpacingGuide.detect_spacing_lines(
                 temp_shapes, self.shapes,
                 display_distance=self.spacing_guide_display_distance,
                 snap_distance=self.spacing_guide_snap_distance,
                 max_shapes=self.spacing_guide_max_shapes,
-                selected_only=self.spacing_guide_selected_only
+                selected_only=self.spacing_guide_selected_only,
+                locked_labels=locked_labels
             )
             self.spacing_guide_lines = spacing_lines
         else:

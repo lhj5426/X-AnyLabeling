@@ -38,16 +38,44 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_layout.addWidget(self.lock_input)
         self.lock_group.setLayout(self.lock_layout)
 
+        # Label Pin to Top
+        self.pin_group = QtWidgets.QGroupBox("创建后置顶")
+        self.pin_layout = QtWidgets.QVBoxLayout()
+        self.pin_label = QtWidgets.QLabel("创建后置顶的标签 (英文逗号分隔):")
+        self.pin_input = QtWidgets.QLineEdit()
+        self.pin_layout.addWidget(self.pin_label)
+        self.pin_layout.addWidget(self.pin_input)
+        self.pin_group.setLayout(self.pin_layout)
+
+        # No Highlight After Creation
+        self.no_highlight_group = QtWidgets.QGroupBox("创建后不高亮")
+        self.no_highlight_layout = QtWidgets.QVBoxLayout()
+        self.no_highlight_label = QtWidgets.QLabel("创建后不高亮的标签 (英文逗号分隔):")
+        self.no_highlight_input = QtWidgets.QLineEdit()
+        self.no_highlight_layout.addWidget(self.no_highlight_label)
+        self.no_highlight_layout.addWidget(self.no_highlight_input)
+        self.no_highlight_group.setLayout(self.no_highlight_layout)
+
         self.layout.addWidget(self.positive_group)
         self.layout.addWidget(self.negative_group)
         self.layout.addWidget(self.lock_group)
+        self.layout.addWidget(self.pin_group)
+        self.layout.addWidget(self.no_highlight_group)
 
-        self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowContextHelpButtonHint)
+        # 添加最小化按钮，移除帮助按钮
+        self.setWindowFlags(
+            self.windowFlags() 
+            | QtCore.Qt.WindowMinimizeButtonHint 
+            | QtCore.Qt.WindowMaximizeButtonHint 
+            & ~QtCore.Qt.WindowContextHelpButtonHint
+        )
 
         # Connect signals for real-time saving
         self.positive_input.textChanged.connect(self._realtime_save_settings)
         self.negative_input.textChanged.connect(self._realtime_save_settings)
         self.lock_input.textChanged.connect(self._realtime_save_settings)
+        self.pin_input.textChanged.connect(self._realtime_save_settings)
+        self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
 
         self.load_settings()
 
@@ -58,18 +86,26 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.positive_input.textChanged.disconnect(self._realtime_save_settings)
             self.negative_input.textChanged.disconnect(self._realtime_save_settings)
             self.lock_input.textChanged.disconnect(self._realtime_save_settings)
+            self.pin_input.textChanged.disconnect(self._realtime_save_settings)
+            self.no_highlight_input.textChanged.disconnect(self._realtime_save_settings)
 
             positive_labels = self._config.get("highlight_positive", "")
             negative_labels = self._config.get("highlight_negative", "")
             locked_labels = self._config.get("locked_labels", "")
+            pin_labels = self._config.get("pin_labels", "")
+            no_highlight_labels = self._config.get("no_highlight_labels", "")
             self.positive_input.setText(positive_labels)
             self.negative_input.setText(negative_labels)
             self.lock_input.setText(locked_labels)
+            self.pin_input.setText(pin_labels)
+            self.no_highlight_input.setText(no_highlight_labels)
 
             # Reconnect signals
             self.positive_input.textChanged.connect(self._realtime_save_settings)
             self.negative_input.textChanged.connect(self._realtime_save_settings)
             self.lock_input.textChanged.connect(self._realtime_save_settings)
+            self.pin_input.textChanged.connect(self._realtime_save_settings)
+            self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
 
     def _realtime_save_settings(self):
         """Saves the current settings from the line edits to the config file in real-time."""
@@ -77,6 +113,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["highlight_positive"] = self.positive_input.text()
             self._config["highlight_negative"] = self.negative_input.text()
             self._config["locked_labels"] = self.lock_input.text()
+            self._config["pin_labels"] = self.pin_input.text()
+            self._config["no_highlight_labels"] = self.no_highlight_input.text()
             save_config(self._config)
 
     def showEvent(self, event):

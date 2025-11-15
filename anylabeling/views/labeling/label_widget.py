@@ -6121,14 +6121,26 @@ class LabelingWidget(QtWidgets.QWidget):
         selected_shapes = self.canvas.selected_shapes
         self.navigator_dialog.update_title_with_selection(selected_shapes)
 
-    def add_label(self, shape, update_last_label=True):
+    def add_label(self, shape, update_last_label=True, is_new_shape=False):
         global_order = len(self.label_list) + 1
 
         # Text will be set in _update_all_item_orders
         text = shape.label
 
         label_list_item = LabelListWidgetItem(text, shape)
-        self.label_list.addItem(label_list_item)
+        
+        # 只在创建新图形时检测置顶
+        if is_new_shape:
+            pin_labels_str = self._config.get("pin_labels", "")
+            pin_labels = {label.strip() for label in pin_labels_str.split(',') if label.strip()}
+            if text in pin_labels:
+                # 置顶：插入到第一个位置
+                self.label_list.model().insertRow(0, label_list_item)
+            else:
+                self.label_list.addItem(label_list_item)
+        else:
+            self.label_list.addItem(label_list_item)
+        
         if not self.unique_label_list.find_items_by_label(shape.label):
             item = self.unique_label_list.create_item_from_label(shape.label)
             self.unique_label_list.addItem(item)
@@ -7141,7 +7153,15 @@ class LabelingWidget(QtWidgets.QWidget):
             shape.kie_linking = kie_linking
             if shape.shape_type == "rotation" and new_direction is not None:
                 shape.direction = new_direction
-            self.add_label(shape)
+            
+            # 检查是否在"创建后不高亮"列表中
+            no_highlight_labels_str = self._config.get("no_highlight_labels", "")
+            no_highlight_labels = {label.strip() for label in no_highlight_labels_str.split(',') if label.strip()}
+            if text in no_highlight_labels:
+                shape.selected = False
+                shape.fill = False
+            
+            self.add_label(shape, is_new_shape=True)
 
             # 重新连接信号
             self.unique_label_list.label_visibility_changed.connect(self.update_label_visibility)

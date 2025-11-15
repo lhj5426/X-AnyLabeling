@@ -124,7 +124,8 @@ class RectangleSpacingGuide:
                             display_distance: float = 500,
                             snap_distance: float = 10,
                             max_shapes: int = 0,
-                            selected_only: bool = False) -> Tuple[Optional[QtCore.QPointF], List]:
+                            selected_only: bool = False,
+                            locked_labels: set = None) -> Tuple[Optional[QtCore.QPointF], List]:
         """
         检测矩形之间的间距线
 
@@ -140,12 +141,16 @@ class RectangleSpacingGuide:
             snap_distance: 吸附距离（像素）
             max_shapes: 最多检测的矩形数量（0表示检测所有）
             selected_only: 是否仅对选中的矩形测距（True时只检测moving_shapes与其他矩形的距离）
+            locked_labels: 锁定的标签集合，这些标签的图形会被忽略
 
         Returns:
             (snap_offset, spacing_lines)
         """
         if not moving_shapes or not all_shapes:
             return None, []
+
+        if locked_labels is None:
+            locked_labels = set()
 
         spacing_lines = []
         snap_offset = None
@@ -163,6 +168,11 @@ class RectangleSpacingGuide:
                 # 跳过自己
                 if target_shape is moving_shape:
                     continue
+
+                # 跳过锁定的图形（检查标签在锁定列表中且未被临时解锁）
+                if hasattr(target_shape, 'label') and target_shape.label in locked_labels:
+                    if not hasattr(target_shape, 'is_session_unlocked') or not target_shape.is_session_unlocked:
+                        continue
 
                 target_type = RectangleSpacingGuide.get_rectangle_type(target_shape)
                 target_rect = RectangleSpacingGuide.get_rect_bounds(target_shape)

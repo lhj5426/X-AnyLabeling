@@ -269,3 +269,5 @@ paste_preview_opacity: 0.4
 highlight_positive: ""
 highlight_negative: ""
 locked_labels: ""
+pin_labels: ""
+no_highlight_labels: ""
