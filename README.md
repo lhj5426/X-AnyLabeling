@@ -46,10 +46,11 @@ https://github.com/lhj5426/YSG
 
 CHATGPT GEMINI CLAUDE
 
+姑且写一下
 
+[关于安装 请查看原版 快速入门指南](https://github.com/CVHub520/X-AnyLabeling/blob/main/docs/zh_cn/get_started.md)
 
-
-
+[关于模型加载 请查看原版 模型加载说明](https://github.com/CVHub520/X-AnyLabeling/blob/main/docs/zh_cn/custom_model.md)
 
 
 
