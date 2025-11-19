@@ -35,6 +35,8 @@ shape_color: auto  # null, 'auto', 'manual'
 shift_auto_shape_color: 0
 label_colors: null
 
+manually_edited_color: '#0000FF'  # Blue - 手动编辑颜色
+
 traffic_light_colors:
   selected: [255, 0, 0] # Red
   edited: [0, 255, 0] # Green

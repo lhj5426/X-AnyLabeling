@@ -1,6 +1,7 @@
 import os
 import csv
 import json
+import re
 import zipfile
 
 from PyQt5 import QtWidgets
@@ -10,6 +11,7 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QProgressDialog,
     QTableWidget,
@@ -24,6 +26,15 @@ from anylabeling.views.labeling.widgets.popup import Popup
 
 
 overview_dialog_styles = f"""
+    QLineEdit {{
+        padding: 5px 8px;
+        background: white;
+        border: 1px solid #d2d2d7;
+        border-radius: 6px;
+        min-height: 24px;
+        selection-background-color: #0071e3;
+    }}
+    
     QSpinBox {{
         padding: 5px 8px;
         background: white;
@@ -99,6 +110,9 @@ class OverviewDialog(QtWidgets.QDialog):
         self.start_index = 1
         self.end_index = len(self.image_file_list)
         self.showing_label_infos = True
+        self.all_shape_infos = []  # 保存所有shape数据用于搜索
+        self.displayed_shape_infos = []  # 当前显示的shape数据（用于跳转）
+        self.search_text = ""  # 当前搜索文本
         # Shape type translation mapping
         self.shape_type_translation = {
             "polygon": self.tr("多边形"),
@@ -128,20 +142,51 @@ class OverviewDialog(QtWidgets.QDialog):
         self.move_to_center()
 
         layout = QVBoxLayout(self)
+        
+        # 添加搜索框（仅在Shape视图显示）
+        self.search_layout = QHBoxLayout()
+        search_label = QLabel(self.tr("搜索:"))
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText(self.tr("支持正则表达式"))
+        self.search_input.textChanged.connect(self.on_search_text_changed)
+        
+        # 添加清除按钮
+        self.clear_search_btn = QPushButton(self.tr("清除"))
+        self.clear_search_btn.setProperty("class", "secondary-button")
+        self.clear_search_btn.clicked.connect(self.clear_search)
+        
+        self.search_layout.addWidget(search_label)
+        self.search_layout.addWidget(self.search_input)
+        self.search_layout.addWidget(self.clear_search_btn)
+        self.search_layout.addStretch()
+        
+        # 创建搜索容器widget，初始隐藏
+        self.search_widget = QtWidgets.QWidget()
+        self.search_widget.setLayout(self.search_layout)
+        self.search_widget.setVisible(False)
+        layout.addWidget(self.search_widget)
+        
         self.table = QTableWidget(self)
+        
+        # 连接双击事件
+        self.table.cellDoubleClicked.connect(self.on_cell_double_clicked)
+        
+        # 连接单元格选择改变事件（用于方向键导航）
+        self.table.currentCellChanged.connect(self.on_current_cell_changed)
 
         self.populate_table()
 
         layout.addWidget(self.table)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        # 允许手动调整列宽
         self.table.horizontalHeader().setSectionResizeMode(
-            QtWidgets.QHeaderView.ResizeToContents
+            QtWidgets.QHeaderView.Interactive
         )
 
         range_layout = QHBoxLayout()
         range_layout.addStretch(1)
 
-        from_label = QLabel("From:")
+        from_label = QLabel(self.tr("从:"))
         self.from_input = QSpinBox()
         self.from_input.setMinimum(1)
         self.from_input.setMaximum(len(self.image_file_list))
@@ -151,7 +196,7 @@ class OverviewDialog(QtWidgets.QDialog):
         range_layout.addWidget(from_label)
         range_layout.addWidget(self.from_input)
 
-        to_label = QLabel("To:")
+        to_label = QLabel(self.tr("到:"))
         self.to_input = QSpinBox()
         self.to_input.setMinimum(1)
         self.to_input.setMaximum(len(self.image_file_list))
@@ -161,7 +206,7 @@ class OverviewDialog(QtWidgets.QDialog):
         range_layout.addWidget(to_label)
         range_layout.addWidget(self.to_input)
 
-        self.range_button = QPushButton("Go")
+        self.range_button = QPushButton(self.tr("跳转"))
         self.range_button.setProperty("class", "primary-button")
         range_layout.addWidget(self.range_button)
         self.range_button.clicked.connect(self.update_range)
@@ -190,7 +235,7 @@ class OverviewDialog(QtWidgets.QDialog):
 
         self.setStyleSheet(overview_dialog_styles)
 
-        self.exec_()
+        self.show()
 
     def move_to_center(self):
         """
@@ -371,9 +416,24 @@ class OverviewDialog(QtWidgets.QDialog):
             for row, info in enumerate(data):
                 for col, value in enumerate(info):
                     item = QTableWidgetItem(value)
+                    # 第一列（标签列）左对齐，其他列居中
+                    if col > 0:
+                        item.setTextAlignment(Qt.AlignCenter)
                     self.table.setItem(row, col, item)
+            
+            # 自适应列宽
+            self.table.resizeColumnsToContents()
         else:
             _, shape_infos = self.get_label_infos(start_index, end_index)
+            self.all_shape_infos = shape_infos  # 保存完整数据
+            
+            # 应用搜索过滤
+            if self.search_text:
+                shape_infos = self.filter_shapes(shape_infos, self.search_text)
+            
+            # 保存当前显示的shape数据（用于跳转定位）
+            self.displayed_shape_infos = shape_infos
+            
             headers, table_data = self.get_shape_infos_table(shape_infos)
             self.table.setRowCount(len(table_data))
             self.table.setColumnCount(len(headers))
@@ -384,9 +444,12 @@ class OverviewDialog(QtWidgets.QDialog):
                     item = QTableWidgetItem(value)
                     item.setToolTip(value)
                     self.table.setItem(row, col, item)
+            # 允许手动调整列宽
             self.table.horizontalHeader().setSectionResizeMode(
-                QtWidgets.QHeaderView.Stretch
+                QtWidgets.QHeaderView.Interactive
             )
+            # 自动调整列宽以适应内容
+            self.table.resizeColumnsToContents()
 
     def update_range(self):
         """
@@ -424,8 +487,6 @@ class OverviewDialog(QtWidgets.QDialog):
         )
         if not directory:
             return
-
-        self.accept()
 
         try:
             label_infos, shape_infos = self.get_total_infos(
@@ -506,6 +567,186 @@ class OverviewDialog(QtWidgets.QDialog):
         self.showing_label_infos = not self.showing_label_infos
         if self.showing_label_infos:
             self.toggle_button.setText(self.tr("Shape"))
+            self.search_widget.setVisible(False)
         else:
             self.toggle_button.setText(self.tr("Label"))
+            self.search_widget.setVisible(True)
         self.populate_table(self.start_index, self.end_index)
+    
+    def filter_shapes(self, shape_infos, search_text):
+        """
+        根据搜索文本过滤shape数据，支持正则表达式
+        """
+        if not search_text:
+            return shape_infos
+        
+        filtered = []
+        
+        # 尝试编译正则表达式
+        try:
+            pattern = re.compile(search_text, re.IGNORECASE)
+            use_regex = True
+        except re.error:
+            # 如果不是有效的正则表达式，使用普通文本搜索
+            search_text = search_text.lower()
+            use_regex = False
+        
+        for shape in shape_infos:
+            # 在所有字段中搜索
+            searchable_text = " ".join([
+                str(shape.get("filename", "")),
+                str(shape.get("label", "")),
+                str(shape.get("shape_type", "")),
+                str(shape.get("description", "")),
+                str(shape.get("group_id", "")),
+                str(shape.get("difficult", "")),
+                str(shape.get("flags", "")),
+            ])
+            
+            # 使用正则或普通搜索
+            if use_regex:
+                if pattern.search(searchable_text):
+                    filtered.append(shape)
+            else:
+                if search_text in searchable_text.lower():
+                    filtered.append(shape)
+        
+        return filtered
+    
+    def on_search_text_changed(self, text):
+        """
+        搜索文本改变时的处理
+        """
+        self.search_text = text
+        if not self.showing_label_infos:  # 只在Shape视图时搜索
+            # 使用已加载的数据进行过滤，无需重新加载
+            if self.all_shape_infos:
+                filtered_shapes = self.filter_shapes(self.all_shape_infos, text)
+                headers, table_data = self.get_shape_infos_table(filtered_shapes)
+                self.table.setRowCount(len(table_data))
+                self.table.setColumnCount(len(headers))
+                self.table.setHorizontalHeaderLabels(headers)
+
+                for row, data in enumerate(table_data):
+                    for col, value in enumerate(data):
+                        item = QTableWidgetItem(value)
+                        item.setToolTip(value)
+                        self.table.setItem(row, col, item)
+    
+    def clear_search(self):
+        """
+        清除搜索框内容
+        """
+        self.search_input.clear()
+    
+    def on_current_cell_changed(self, current_row, current_column, previous_row, previous_column):
+        """
+        当前单元格改变时（包括方向键导航），自动跳转并选中对应对象
+        """
+        # 只在Shape视图时支持
+        if self.showing_label_infos or current_row < 0:
+            return
+        
+        # 调用跳转逻辑
+        self.jump_to_shape(current_row)
+    
+    def on_cell_double_clicked(self, row, column):
+        """
+        双击表格单元格时跳转到对应文件和标注对象
+        """
+        # 只在Shape视图时支持跳转
+        if self.showing_label_infos:
+            return
+        
+        self.jump_to_shape(row)
+    
+    def jump_to_shape(self, row):
+        """
+        跳转到指定行对应的标注对象
+        """
+        # 从displayed_shape_infos获取该行对应的原始shape数据
+        if row >= len(self.displayed_shape_infos):
+            return
+        
+        shape_info = self.displayed_shape_infos[row]
+        filename = shape_info.get("filename", "")
+        label_name = shape_info.get("label", "")
+        points = shape_info.get("points", [])
+        
+        # 在父窗口的文件列表中查找并加载该文件
+        try:
+            # 查找文件在列表中的索引
+            file_index = None
+            for i in range(self.parent.file_list_widget.count()):
+                item = self.parent.file_list_widget.item(i)
+                if item and filename in item.text():
+                    file_index = i
+                    break
+            
+            if file_index is not None:
+                # 检查是否需要切换文件
+                current_row = self.parent.file_list_widget.currentRow()
+                need_load_file = (current_row != file_index)
+                
+                if need_load_file:
+                    # 需要加载新文件
+                    self.parent.file_list_widget.setCurrentRow(file_index)
+                
+                # 无论是否切换文件，都使用延迟来确保选中操作在文件加载完成后执行
+                if label_name and points:
+                    from PyQt5.QtCore import QTimer
+                    # 如果需要加载文件，延迟时间长一些；否则短一些
+                    delay = 300 if need_load_file else 50
+                    QTimer.singleShot(delay, lambda: self.select_shape_by_points(label_name, points))
+        
+        except Exception as e:
+            logger.error(f"跳转到文件失败: {e}")
+    
+    def select_shape_by_points(self, label_name, points):
+        """
+        根据标签名和坐标点精确选中对象
+        points: 原始坐标点列表 [[x1,y1], [x2,y2], ...]
+        """
+        try:
+            # 遍历标签列表，找到匹配的标签和坐标
+            found_item = None
+            for item in self.parent.label_list:
+                if item and item.shape() and item.shape().label == label_name:
+                    # 如果提供了坐标点，进行精确匹配
+                    if points:
+                        shape_points = item.shape().points
+                        
+                        # 比较坐标点数量
+                        if len(points) == len(shape_points):
+                            # 比较每个点（允许小的浮点误差）
+                            all_match = True
+                            for json_point, shape_point in zip(points, shape_points):
+                                if abs(json_point[0] - shape_point.x()) > 0.01 or abs(json_point[1] - shape_point.y()) > 0.01:
+                                    all_match = False
+                                    break
+                            
+                            if all_match:
+                                found_item = item
+                                break
+                    else:
+                        # 没有坐标信息，匹配第一个同标签的对象
+                        found_item = item
+                        break
+            
+            if found_item and found_item.shape():
+                shape = found_item.shape()
+                
+                # 清除之前的选择
+                self.parent.label_list.clearSelection()
+                # 获取item的索引并设置为当前选中
+                index = self.parent.label_list.model().indexFromItem(found_item)
+                self.parent.label_list.setCurrentIndex(index)
+                # 滚动到该项
+                self.parent.label_list.scroll_to_item(found_item)
+                
+                # 在画布上选中该形状（使用select_shapes方法）
+                if hasattr(self.parent, 'canvas'):
+                    self.parent.canvas.select_shapes([shape])
+                    
+        except Exception as e:
+            logger.error(f"选中对象失败: {e}")

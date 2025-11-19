@@ -112,7 +112,10 @@ class LabelFile:
 
         # Add new fields if not available
         other_data["description"] = other_data.get("description", "")
-        other_data["manually_edited"] = other_data.get("manually_edited", False)
+        
+        # Read manually_edited from root level (old format) or other_data (new format)
+        # Priority: root level > other_data
+        manually_edited = data.get("manually_edited", other_data.get("manually_edited", False))
 
         # Only replace data after everything is loaded.
         self.flags = flags
@@ -121,6 +124,7 @@ class LabelFile:
         self.image_data = image_data
         self.filename = filename
         self.other_data = other_data
+        self.manually_edited = manually_edited
 
     @staticmethod
     def _check_image_height_and_width(image_data, image_height, image_width):

@@ -24,14 +24,14 @@ class SearchBar(QLineEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setClearButtonEnabled(True)
-        self.setPlaceholderText("Search models")
+        # 移除占位符文本，保持简洁
         self.setFixedHeight(DEFAULT_FIXED_HEIGHT)
         self.setStyleSheet(
             f"""
             QLineEdit {{
                 background-color: #d4d4d8;
                 border-radius: {BORDER_RADIUS};
-                padding: 5px 5px 5px 32px;
+                padding: 5px 60px 5px 32px;
                 font-size: {FONT_SIZE_SMALL};
             }}
             QLineEdit:focus {{
@@ -46,14 +46,29 @@ class SearchBar(QLineEdit):
         )
         self.search_icon.setFixedSize(self.search_icon.pixmap().size())
         self.search_icon.setStyleSheet("background-color: transparent;")
+        
+        # 添加文件数量标签
+        self.count_label = QLabel("0", self)
+        self.count_label.setStyleSheet("background-color: transparent; color: #666; font-size: 12px;")
+        self.count_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        
         self.resizeEvent = self.on_resize
 
     def on_resize(self, event):
         icon_height = self.search_icon.height()
         y_position = (self.height() - icon_height) // 2
         self.search_icon.move(10, y_position)
+        
+        # 定位文件数量标签在右侧（预留5位数字的宽度）
+        count_width = 55  # 足够容纳99999
+        count_x = self.width() - count_width - 35  # 35是清除按钮的宽度
+        self.count_label.setGeometry(count_x, 0, count_width, self.height())
 
         super().resizeEvent(event)
+    
+    def set_file_count(self, count):
+        """设置文件数量"""
+        self.count_label.setText(str(count))
 
 
 class ModelItem(QFrame):

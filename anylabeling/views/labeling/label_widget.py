@@ -52,6 +52,7 @@ from .widgets import (
     VQADialog,
     CrosshairSettingsDialog,
     FileDialogPreview,
+    FileFilterDialog,
     GroupIDFilterComboBox,
     LabelDialog,
     LabelFilterComboBox,
@@ -154,6 +155,40 @@ class TagSortThread(QtCore.QThread):
             self.progress.emit(index, total, outcome)
         self.finished.emit(outcomes, self._cancelled)
 
+
+class LoadColorsThread(QtCore.QThread):
+    """后台线程：加载文件的manually_edited状态并设置颜色"""
+    color_loaded = QtCore.pyqtSignal(str, bool, int)  # filename, manually_edited, thread_id
+    
+    def __init__(self, files_to_check, output_dir, last_open_dir, thread_id, parent=None):
+        super().__init__(parent)
+        self.files_to_check = files_to_check  # [(filename, label_file), ...]
+        self.output_dir = output_dir
+        self.last_open_dir = last_open_dir
+        self.thread_id = thread_id
+        self._is_stopped = False
+    
+    def run(self):
+        for filename, label_file in self.files_to_check:
+            if self._is_stopped:
+                break
+            
+            try:
+                with open(label_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                # 优先从根级别读取（旧格式），如果没有再从other_data读取（新格式）
+                manually_edited = data.get("manually_edited", data.get("other_data", {}).get("manually_edited", False))
+                
+                # 发送信号前再次检查是否已停止
+                if not self._is_stopped:
+                    # 总是发送信号，让主线程决定如何处理
+                    self.color_loaded.emit(filename, manually_edited, self.thread_id)
+            except Exception:
+                # 如果读取失败，忽略错误
+                pass
+    
+    def stop(self):
+        self._is_stopped = True
 
 class ClearEditedThread(QtCore.QThread):
     progress = QtCore.pyqtSignal(int, int, str) # current, total, message
@@ -302,6 +337,8 @@ class LabelingWidget(QtWidgets.QWidget):
         self.mask_generator_dialog = None
         self.keymap_dialog = None # New dialog instance
         self.tag_sort_thread = None
+        self.load_colors_thread = None
+        self.load_colors_thread_id = 0  # 线程ID计数器
         self.tag_sort_scope = None
         self.tag_sort_files = []
         self.tag_sort_total = 0
@@ -379,6 +416,13 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.label_list = LabelListWidget()
         self.last_open_dir = None
+        
+        # 文件过滤相关
+        self.file_filter_dialog = None
+        self.current_filter_config = {
+            'mode': 'none',
+            'value': None
+        }
 
         self.flag_dock = self.flag_widget = None
         self.flag_dock = QtWidgets.QDockWidget(self.tr("Flags"), self)
@@ -687,9 +731,36 @@ class LabelingWidget(QtWidgets.QWidget):
             "QDockWidget::title {" "text-align: center;" "padding: 0px;" "}"
         )
 
+        # 搜索栏和过滤按钮
+        search_filter_layout = QHBoxLayout()
+        search_filter_layout.setContentsMargins(0, 0, 0, 0)
+        search_filter_layout.setSpacing(2)  # 减小间距，让搜索框和齿轮更靠近
+        
         self.file_search = SearchBar()
-        self.file_search.setPlaceholderText(self.tr("Search Filename"))
         self.file_search.textChanged.connect(self.file_search_changed)
+        search_filter_layout.addWidget(self.file_search)
+        
+        # 过滤按钮
+        self.filter_button = QtWidgets.QPushButton("⚙")
+        self.filter_button.setToolTip("文件过滤")
+        self.filter_button.setFixedSize(32, 32)
+        self.filter_button.setStyleSheet("""
+            QPushButton {
+                font-size: 16px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background-color: #f0f0f0;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        self.filter_button.clicked.connect(self.show_file_filter_dialog)
+        search_filter_layout.addWidget(self.filter_button)
+        
         self.file_list_widget = QtWidgets.QListWidget()
         self.file_list_widget.itemSelectionChanged.connect(
             self.file_selection_changed
@@ -697,7 +768,7 @@ class LabelingWidget(QtWidgets.QWidget):
         file_list_layout = QtWidgets.QVBoxLayout()
         file_list_layout.setContentsMargins(0, 4, 0, 0)
         file_list_layout.setSpacing(4)
-        file_list_layout.addWidget(self.file_search)
+        file_list_layout.addLayout(search_filter_layout)
         file_list_layout.addWidget(self.file_list_widget)
         self.file_dock = QtWidgets.QDockWidget("", self)
         self.file_dock.setObjectName("Files")
@@ -3037,6 +3108,8 @@ class LabelingWidget(QtWidgets.QWidget):
         # Mark as manually edited only if requested (user changes, not AI inference)
         if mark_as_manually_edited:
             self.other_data["manually_edited"] = True
+            # 立即更新状态指示器
+            self._update_edit_status_indicator(True)
 
         # Even if we autosave the file, we keep the ability to undo
         self.actions.undo.setEnabled(self.canvas.is_shape_restorable)
@@ -5276,7 +5349,40 @@ class LabelingWidget(QtWidgets.QWidget):
                 # 间距线文字背景色
                 self.canvas.spacing_guide_text_bg_color = value if isinstance(value, list) else [color.red(), color.green(), color.blue(), color.alpha()]
             elif key == 'manually_edited_color':
-                pass
+                # 手动编辑颜色改变时，更新所有已手动编辑文件的显示
+                new_color = self._get_manually_edited_color()
+                
+                # 遍历文件列表中的所有项
+                for i in range(self.file_list_widget.count()):
+                    item = self.file_list_widget.item(i)
+                    filename = item.data(Qt.UserRole) if item.data(Qt.UserRole) else item.text()
+                    
+                    # 只处理有标注文件的项
+                    if item.checkState() == Qt.Checked:
+                        # 获取标注文件路径
+                        label_file = osp.splitext(filename)[0] + ".json"
+                        if self.output_dir:
+                            label_file = osp.join(self.output_dir, osp.basename(label_file))
+                        elif self.last_open_dir and not osp.isabs(filename):
+                            label_file = osp.join(self.last_open_dir, label_file)
+                        
+                        # 读取JSON文件检查manually_edited状态
+                        try:
+                            if osp.exists(label_file):
+                                with open(label_file, 'r', encoding='utf-8') as f:
+                                    data = json.load(f)
+                                
+                                # 优先从根级别读取（旧格式），如果没有再从other_data读取（新格式）
+                                manually_edited = data.get("manually_edited", data.get("other_data", {}).get("manually_edited", False))
+                                
+                                if manually_edited:
+                                    item.setForeground(new_color)
+                        except Exception:
+                            pass
+                
+                # 强制刷新UI
+                self.file_list_widget.viewport().update()
+                QtWidgets.QApplication.processEvents()
         else:
             # Handle non-color values and color components like alpha
             if key == ['shape', 'overlap_color_alpha']:
@@ -5957,6 +6063,7 @@ class LabelingWidget(QtWidgets.QWidget):
             self.last_open_dir,
             pattern=pattern,
             load=False,
+            filter_config=self.current_filter_config,
         )
         if not pattern and current_file in self.fn_to_index:
             try:
@@ -5969,6 +6076,49 @@ class LabelingWidget(QtWidgets.QWidget):
                     self._programmatic_selection_change = False
             except KeyError:
                 # This can happen if the file is no longer in the list after a filter change, which is fine.
+                pass
+    
+    def show_file_filter_dialog(self):
+        """显示文件过滤对话框"""
+        if not self.file_filter_dialog:
+            # 获取所有可用的标签
+            available_labels = self._config.get("labels", [])
+            self.file_filter_dialog = FileFilterDialog(self, available_labels)
+            self.file_filter_dialog.filter_applied.connect(self.apply_file_filter)
+        else:
+            # 更新可用标签列表
+            available_labels = self._config.get("labels", [])
+            self.file_filter_dialog.update_label_list(available_labels)
+        
+        self.file_filter_dialog.show()
+    
+    def apply_file_filter(self, filter_config):
+        """应用文件过滤"""
+        self.current_filter_config = filter_config
+        
+        # 清空搜索框，避免与条件过滤冲突
+        self.file_search.clear()
+        
+        # 重新加载文件列表，应用过滤条件
+        current_file = self.filename
+        self.import_image_folder(
+            self.last_open_dir,
+            pattern="",
+            load=False,
+            filter_config=filter_config,
+        )
+        
+        # 尝试恢复当前文件的选择
+        if current_file and current_file in self.fn_to_index:
+            try:
+                index = self.fn_to_index[current_file]
+                item = self.file_list_widget.item(index)
+                if item:
+                    self._programmatic_selection_change = True
+                    self.file_list_widget.setCurrentItem(item)
+                    self.file_list_widget.scrollToItem(item)
+                    self._programmatic_selection_change = False
+            except KeyError:
                 pass
 
     def file_selection_changed(self):
@@ -6568,18 +6718,64 @@ class LabelingWidget(QtWidgets.QWidget):
         unique_gid_list.sort()
         self.gid_filter_combobox.update_items(unique_gid_list)
 
+    def _get_manually_edited_color(self):
+        """获取手动编辑颜色配置"""
+        color_value = self._config.get("manually_edited_color", "#FFA500")  # 默认橙色
+        if isinstance(color_value, list):
+            # 如果是RGB列表格式
+            return QtGui.QColor(*color_value[:3])
+        else:
+            # 如果是十六进制字符串格式
+            return QtGui.QColor(color_value)
+    
     def _update_file_list_item_color(self, image_path, manually_edited):
         """Helper function to update file list item color based on manually_edited status"""
         items = self.file_list_widget.findItems(image_path, Qt.MatchExactly)
         if len(items) > 0:
             item = items[0]
             if manually_edited:
-                edited_color_rgb = self._config.get("traffic_light_colors", {}).get("edited", [0, 255, 0])
-                color = QtGui.QColor(*edited_color_rgb)
+                # 使用颜色管理器中配置的手动编辑颜色
+                color = self._get_manually_edited_color()
                 item.setForeground(color)
             else:
                 # Reset to default color (black) when not manually edited
                 item.setForeground(QtGui.QColor("#000000"))
+        
+        # 同时更新右下角的状态指示器
+        self._update_edit_status_indicator(manually_edited)
+    
+    def _on_color_loaded(self, filename, manually_edited, thread_id):
+        """后台线程加载颜色完成的回调"""
+        # 只处理最新线程的信号，忽略旧线程的信号
+        if thread_id != self.load_colors_thread_id:
+            return
+        
+        items = self.file_list_widget.findItems(filename, Qt.MatchExactly)
+        if items:
+            if manually_edited:
+                color = self._get_manually_edited_color()
+                items[0].setForeground(color)
+            else:
+                # 清除颜色，恢复默认黑色
+                items[0].setForeground(QtGui.QColor("#000000"))
+    
+    def _update_edit_status_indicator(self, manually_edited):
+        """更新右下角的编辑状态指示器"""
+        if manually_edited:
+            # 使用颜色管理器中配置的手动编辑颜色
+            color = self._get_manually_edited_color()
+        else:
+            # 使用默认颜色（黑色表示未编辑）
+            color = QtGui.QColor("#000000")
+        
+        # 更新状态栏或其他UI元素的颜色
+        # 注意：这里需要根据实际的UI结构来更新
+        # 如果有专门的状态指示器widget，在这里更新它
+        if hasattr(self, 'edit_status_indicator'):
+            self.edit_status_indicator.setStyleSheet(f"background-color: {color.name()};")
+        
+        # 如果状态指示器是通过其他方式实现的（比如状态栏），在这里更新
+        # 例如：self.parent.statusBar().setStyleSheet(f"background-color: {color.name()};")
 
     def save_labels(self, filename):
         label_file = LabelFile()
@@ -7916,6 +8112,9 @@ class LabelingWidget(QtWidgets.QWidget):
                 osp.dirname(label_file),
                 self.label_file.image_path,
             )
+            
+            # 从label_file中恢复other_data（包括manually_edited状态）
+            self.other_data = self.label_file.other_data
     
             self.shape_text_edit.textChanged.disconnect()
             self.shape_text_edit.setPlainText(
@@ -7924,7 +8123,8 @@ class LabelingWidget(QtWidgets.QWidget):
             self.shape_text_edit.textChanged.connect(self.shape_text_changed)
             
             # Update file list item color based on manually_edited status (lazy loading)
-            manually_edited = self.other_data.get("manually_edited", False)
+            # 优先从根级别读取（旧格式），如果没有再从other_data读取（新格式）
+            manually_edited = self.label_file.manually_edited if hasattr(self.label_file, 'manually_edited') else self.other_data.get("manually_edited", False)
             self._update_file_list_item_color(filename, manually_edited)
         else:
             self.image_data = LabelFile.load_image_file(filename)
@@ -8733,7 +8933,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.open_next_image()
 
-    def import_image_folder(self, dirpath, pattern=None, load=True, recursive=None):
+    def import_image_folder(self, dirpath, pattern=None, load=True, recursive=None, filter_config=None):
         if recursive is None:
             recursive = self._config.get("load_subfolders", False)
         if not self.may_continue() or not dirpath:
@@ -8781,6 +8981,14 @@ class LabelingWidget(QtWidgets.QWidget):
                 # Mark as having label file, but don't parse yet
                 manually_edited_map[filename] = None  # None means "not checked yet"
         
+        # 应用过滤条件
+        if filter_config and self._should_apply_filter(filter_config):
+            filtered_filenames = []
+            for filename in all_filenames:
+                if self._file_matches_filter(filename, label_files_map[filename], filter_config):
+                    filtered_filenames.append(filename)
+            all_filenames = filtered_filenames
+        
         # Optimization: Create all items in batch
         for filename in all_filenames:
             label_file = label_files_map[filename]
@@ -8793,17 +9001,46 @@ class LabelingWidget(QtWidgets.QWidget):
             
             if has_label:
                 item.setCheckState(Qt.Checked)
+                # 不在这里读取JSON文件检查manually_edited状态，以保持性能
+                # 颜色将在文件被加载时通过load_file方法设置
             else:
                 item.setCheckState(Qt.Unchecked)
-            
-            # Don't check manually_edited status during initial load for performance
-            # It will be checked when the file is actually loaded/displayed
             
             self.file_list_widget.addItem(item)
             self.fn_to_index[filename] = self.file_list_widget.count() - 1
         
         # Re-enable signals
         self.file_list_widget.blockSignals(False)
+        
+        # 更新文件数量显示（在搜索框右侧内部）
+        file_count = self.file_list_widget.count()
+        self.file_search.set_file_count(file_count)
+        
+        # 启动后台线程加载颜色
+        # 停止之前的线程（如果存在）
+        if self.load_colors_thread and self.load_colors_thread.isRunning():
+            self.load_colors_thread.stop()
+            self.load_colors_thread.wait()
+        
+        # 准备需要检查的文件列表
+        files_to_check = [(filename, label_files_map[filename]) 
+                          for filename in all_filenames 
+                          if filename in manually_edited_map]
+        
+        if files_to_check:
+            # 增加线程ID，用于忽略旧线程的信号
+            self.load_colors_thread_id += 1
+            current_thread_id = self.load_colors_thread_id
+            
+            self.load_colors_thread = LoadColorsThread(
+                files_to_check, 
+                self.output_dir, 
+                self.last_open_dir,
+                current_thread_id,
+                self
+            )
+            self.load_colors_thread.color_loaded.connect(self._on_color_loaded)
+            self.load_colors_thread.start()
 
         self.actions.open_next_image.setEnabled(True)
         self.actions.open_prev_image.setEnabled(True)
@@ -8832,6 +9069,116 @@ class LabelingWidget(QtWidgets.QWidget):
         if load:
             self.filename = None
             self.open_next_image(load=load)
+    
+    def _should_apply_filter(self, filter_config):
+        """检查是否需要应用过滤"""
+        if not filter_config:
+            return False
+        
+        # 如果模式是none，则不需要过滤
+        if filter_config.get('mode') == 'none':
+            return False
+        
+        return True
+    
+    def _file_matches_filter(self, filename, label_file, filter_config):
+        """检查文件是否匹配过滤条件（互斥模式）"""
+        mode = filter_config.get('mode')
+        value = filter_config.get('value')
+        
+        # 无过滤
+        if mode == 'none':
+            return True
+        
+        # 检查标注状态
+        has_label = QtCore.QFile.exists(label_file) and LabelFile.is_label_file(label_file)
+        
+        # 标注状态过滤
+        if mode == 'status':
+            if value == 'labeled':
+                # 已标注：有JSON文件且有shapes
+                if not has_label:
+                    return False
+                try:
+                    with open(label_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    shapes = data.get("shapes", [])
+                    return len(shapes) > 0
+                except Exception:
+                    return False
+            elif value == 'unlabeled':
+                # 未标注：没有JSON文件，或者有JSON但shapes为空
+                if not has_label:
+                    return True
+                try:
+                    with open(label_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    shapes = data.get("shapes", [])
+                    return len(shapes) == 0
+                except Exception:
+                    return True
+        
+        # 如果没有标注文件，其他过滤条件无法检查，直接返回False
+        if not has_label:
+            return False
+        
+        # 读取标注文件内容
+        try:
+            with open(label_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            return False  # 如果读取失败，过滤掉该文件
+        
+        # 编辑状态过滤
+        if mode == 'edit':
+            # 优先从根级别读取（旧格式），如果没有再从other_data读取（新格式）
+            manually_edited = data.get("manually_edited", data.get("other_data", {}).get("manually_edited", False))
+            if value == 'manually':
+                return manually_edited
+            elif value == 'not_manually':
+                return not manually_edited
+        
+        # 文本内容过滤
+        if mode == 'text':
+            # 检查shapes中是否有description字段（文本内容）
+            shapes = data.get("shapes", [])
+            has_text = False
+            for shape in shapes:
+                description = shape.get("description")
+                if description and str(description).strip() and str(description).strip().lower() != "null":
+                    has_text = True
+                    break
+            
+            if value == 'has_text':
+                return has_text
+            elif value == 'no_text':
+                return not has_text
+        
+        # 标签过滤
+        if mode == 'labels':
+            # 兼容旧格式（直接是标签列表）和新格式（包含match_mode的字典）
+            if isinstance(value, dict):
+                selected_labels = value.get('labels', [])
+                match_mode = value.get('match_mode', 'any')
+            else:
+                selected_labels = value
+                match_mode = 'any'
+            
+            if not selected_labels:  # 如果没有选择任何标签，显示全部
+                return True
+            
+            shapes = data.get("shapes", [])
+            file_labels = set(shape.get("label", "") for shape in shapes)
+            selected_labels_set = set(selected_labels)
+            
+            if match_mode == 'all':
+                # "同时包含所有标签"模式：文件必须包含所有选中的标签
+                return selected_labels_set.issubset(file_labels)
+            else:
+                # "包含任一标签"模式：文件包含任何一个选中的标签即可
+                return bool(file_labels.intersection(selected_labels_set))
+        
+        return True
 
     def toggle_auto_labeling_widget(self):
         """Toggle auto labeling widget visibility."""
@@ -8872,6 +9219,10 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Clear manually_edited flag when AI re-inference
         self.other_data["manually_edited"] = False
+        
+        # Update file list item color to reflect the cleared manually_edited status
+        if self.filename:
+            self._update_file_list_item_color(self.filename, False)
 
         # Mark as dirty but not as manually edited (this is AI inference, not user edit)
         self.set_dirty(mark_as_manually_edited=False)

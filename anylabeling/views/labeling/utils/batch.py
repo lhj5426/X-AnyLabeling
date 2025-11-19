@@ -3,7 +3,7 @@ import json
 import os.path as osp
 from PIL import Image
 
-from PyQt5 import QtWidgets
+from PyQt5 import QtWidgets, QtGui
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QVBoxLayout,
@@ -155,8 +155,12 @@ def get_image_size(image_path):
 
 
 def finish_processing(self, progress_dialog):
-    self.filename = self.image_list[self.current_index]
-    self.import_image_folder(osp.dirname(self.filename))
+    current_filename = self.image_list[self.current_index]
+    self.filename = current_filename
+    
+    # 重新导入文件夹，这会重新加载文件列表和当前文件
+    # 从而正确更新manually_edited状态和颜色
+    self.import_image_folder(osp.dirname(self.filename), load=True)
 
     del self.text_prompt
     del self.run_tracker
@@ -201,7 +205,7 @@ def save_auto_labeling_result(self, image_file, auto_labeling_result):
             if replace:
                 data["shapes"] = new_shapes
                 data["description"] = new_description
-                # Clear manually_edited flag when AI batch inference
+                # Clear manually_edited flag when AI batch inference (use root level format for compatibility)
                 data["manually_edited"] = False
             else:
                 data["shapes"].extend(new_shapes)
@@ -209,7 +213,7 @@ def save_auto_labeling_result(self, image_file, auto_labeling_result):
                     data["description"] += new_description
                 else:
                     data["description"] = new_description
-                # Clear manually_edited flag when AI batch inference
+                # Clear manually_edited flag when AI batch inference (use root level format for compatibility)
                 data["manually_edited"] = False
         else:
             if self._config["store_data"]:
