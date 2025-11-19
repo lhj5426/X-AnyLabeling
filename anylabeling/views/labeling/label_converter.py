@@ -1492,67 +1492,6 @@ class LabelConverter:
         except Exception as e:
             raise IOError(f"Failed to save output file: {e}")
 
-        if shape.get('shape_type') == 'rotation' and len(points) == 4:
-            p1, p2, p3, p4 = points[0], points[1], points[2], points[3]
-            
-            angle_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
-            angle_deg = math.degrees(angle_rad)
-
-            x_coords = [p[0] for p in points]
-            y_coords = [p[1] for p in points]
-            x_min, y_min = min(x_coords), min(y_coords)
-            x_max, y_max = max(x_coords), max(y_coords)
-            
-            x1, y1 = math.floor(x_min), math.floor(y_min)
-            x2, y2 = math.ceil(x_max), math.ceil(y_max)
-            w, h = x2 - x1, y2 - y1
-
-            final_lines = [[[x1, y1], [x2, y1], [x2, y2], [x1, y2]]]
-
-        else:
-            x_coords = [p[0] for p in points]
-            y_coords = [p[1] for p in points]
-            x_min, y_min = min(x_coords), min(y_coords)
-            x_max, y_max = max(x_coords), max(y_coords)
-            
-            x1, y1 = math.floor(x_min), math.floor(y_min)
-            x2, y2 = math.ceil(x_max), math.ceil(y_max)
-            w, h = x2 - x1, y2 - y1
-            final_lines = [[[x1, y1], [x2, y1], [x2, y2], [x1, y2]]]
-
-        is_vertical = h >= w
-
-        obj = {
-            "label": label_text,
-            "xyxy": [x1, y1, x2, y2],
-            "lines": final_lines,
-            "language": "unknown",
-            "distance": None,
-            "angle": angle_deg,
-            "vec": None,
-            "norm": -1,
-            "merged": False,
-            "text": [description_text],
-            "translation": "", "rich_text": "",
-            "_bounding_rect": [x1, y1, w, h],
-            "src_is_vertical": is_vertical,
-            "det_model": "XAL_Import",
-            "region_mask": None, "region_inpaint_dict": None,
-            "fontformat": {
-                "font_family": "", "font_size": 24.0, "stroke_width": 0.0,
-                "frgb": [0, 0, 0], "srgb": [0, 0, 0], "bold": False,
-                "underline": False, "italic": False, "alignment": 0,
-                "vertical": is_vertical, "font_weight": 400, "line_spacing": 1.2,
-                "letter_spacing": 1.15, "opacity": 1.0, "shadow_radius": 0.0,
-                "shadow_strength": 1.0, "shadow_color": [0, 0, 0],
-                "shadow_offset": [0.0, 0.0], "gradient_enabled": False,
-                "gradient_start_color": [0, 0, 0], "gradient_end_color": [255, 255, 255],
-                "gradient_angle": 0.0, "gradient_size": 1.0, "_style_name": "",
-                "line_spacing_type": 0, "deprecated_attributes": {}
-            }
-        }
-        return obj
-
     def custom_to_rotated_json(self, image_list, label_dir_path, output_file, excluded_labels=None):
         if excluded_labels is None:
             excluded_labels = []
