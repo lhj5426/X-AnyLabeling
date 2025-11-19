@@ -622,6 +622,10 @@ class OverviewDialog(QtWidgets.QDialog):
             # 使用已加载的数据进行过滤，无需重新加载
             if self.all_shape_infos:
                 filtered_shapes = self.filter_shapes(self.all_shape_infos, text)
+                
+                # 更新displayed_shape_infos以匹配过滤后的结果
+                self.displayed_shape_infos = filtered_shapes
+                
                 headers, table_data = self.get_shape_infos_table(filtered_shapes)
                 self.table.setRowCount(len(table_data))
                 self.table.setColumnCount(len(headers))
