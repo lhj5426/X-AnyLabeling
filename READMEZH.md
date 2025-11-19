@@ -458,6 +458,14 @@ https://github.com/user-attachments/assets/0468ab88-a631-461b-8ca8-eb69fb9d995c
 
 https://github.com/user-attachments/assets/dc94dc79-5f25-4353-8671-596016b49997
 
+88.界面搜索增强 增加按条件过滤 搜索 增加 数量显示
+
+https://github.com/user-attachments/assets/3a6bc7e4-ccf8-4f58-aac0-75d8cc37142d
+
+89.统计总览优化增强 增加搜索可交互
+
+https://github.com/user-attachments/assets/e2405603-f9f5-4887-af5f-59bda4828d48
+
 
 
 
