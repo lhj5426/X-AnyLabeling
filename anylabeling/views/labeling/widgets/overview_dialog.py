@@ -20,6 +20,8 @@ from PyQt5.QtWidgets import (
     QComboBox,
 )
 
+from anylabeling.views.labeling.widgets.model_dropdown_widget import SearchBar
+
 from anylabeling.views.labeling.logger import logger
 from anylabeling.views.labeling.utils.qt import new_icon_path
 from anylabeling.views.labeling.utils.style import get_progress_dialog_style
@@ -180,7 +182,8 @@ class OverviewDialog(QtWidgets.QDialog):
         """
         Initialize the UI components for the overview dialog.
         """
-        self.setWindowTitle(self.tr("Overview"))
+        # 初始标题，稍后会更新
+        self.update_window_title()
         self.setWindowFlags(
             self.windowFlags()
             | Qt.WindowMinimizeButtonHint
@@ -227,8 +230,8 @@ class OverviewDialog(QtWidgets.QDialog):
         self.condition_combo.currentIndexChanged.connect(self.on_condition_changed)
         self.condition_combo.setFixedWidth(100)
         
-        # 搜索输入框 - 固定宽度以实现精确对齐
-        self.search_input = QLineEdit()
+        # 搜索输入框 - 使用SearchBar组件，支持显示搜索结果数量
+        self.search_input = SearchBar()
         self.search_input.setPlaceholderText(self.tr("输入搜索内容后按回车"))
         self.search_input.returnPressed.connect(self.perform_search)  # 按回车键触发搜索
         self.search_input.setFixedWidth(262)
@@ -375,6 +378,35 @@ class OverviewDialog(QtWidgets.QDialog):
         cp = QtWidgets.QDesktopWidget().availableGeometry().center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
+    
+    def update_window_title(self):
+        """
+        更新窗口标题，显示文件总数和包含标签的文件数
+        """
+        total_files = len(self.image_file_list)
+        
+        # 统计包含标签的文件数（有JSON文件且有shapes的）
+        files_with_labels = 0
+        for image_file in self.image_file_list:
+            label_dir, filename = os.path.split(image_file)
+            if self.parent.output_dir:
+                label_dir = self.parent.output_dir
+            label_file = os.path.join(
+                label_dir, os.path.splitext(filename)[0] + ".json"
+            )
+            if os.path.exists(label_file):
+                try:
+                    with open(label_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    shapes = data.get("shapes", [])
+                    if shapes:  # 只统计有shapes的文件
+                        files_with_labels += 1
+                except:
+                    pass
+        
+        # 设置标题
+        title = self.tr(f"统计总览 -- 文件总数: {total_files} | 包含标签的文件: {files_with_labels}")
+        self.setWindowTitle(title)
 
     def get_image_file_list(self):
         """
@@ -566,6 +598,22 @@ class OverviewDialog(QtWidgets.QDialog):
             # 保存当前显示的shape数据（用于跳转定位）
             self.displayed_shape_infos = shape_infos
             
+            # 统计不同文件的数量（去重）
+            unique_files = set()
+            for shape in shape_infos:
+                filename = shape.get("filename", "")
+                if filename:
+                    unique_files.add(filename)
+            
+            # 更新搜索框中的显示：文件数|标签数
+            file_count = len(unique_files)
+            label_count = len(shape_infos)
+            display_text = f"{file_count}|{label_count}"
+            self.search_input.count_label.setText(display_text)
+            
+            # 更新窗口标题
+            self.update_window_title()
+            
             headers, table_data = self.get_shape_infos_table(shape_infos)
             self.table.setRowCount(len(table_data))
             self.table.setColumnCount(len(headers))
@@ -704,6 +752,9 @@ class OverviewDialog(QtWidgets.QDialog):
             self.toggle_button.setText(self.tr("Label"))
             self.search_widget.setVisible(True)
         self.populate_table(self.start_index, self.end_index)
+        
+        # 切换视图后更新标题
+        self.update_window_title()
     
     def filter_shapes(self, shape_infos, search_text):
         """
@@ -1045,6 +1096,7 @@ class OverviewDialog(QtWidgets.QDialog):
             return
         
         # 隐藏不在搜索结果中的文件
+        visible_count = 0
         for i in range(self.parent.file_list_widget.count()):
             item = self.parent.file_list_widget.item(i)
             if item:
@@ -1052,10 +1104,16 @@ class OverviewDialog(QtWidgets.QDialog):
                 # 检查文件名是否在搜索结果中
                 should_show = any(fn in item_filename for fn in filtered_filenames)
                 item.setHidden(not should_show)
+                if should_show:
+                    visible_count += 1
+        
+        # 更新文件数量显示
+        if hasattr(self.parent, 'file_search'):
+            self.parent.file_search.set_file_count(visible_count)
         
         # 显示成功提示
         popup = Popup(
-            self.tr(f"已过滤地址栏，显示 {len(filtered_filenames)} 个文件"),
+            self.tr(f"已过滤地址栏，显示 {visible_count} 个文件"),
             self.parent,
             msec=2000,
             icon=new_icon_path("copy-green", "svg"),
@@ -1067,14 +1125,20 @@ class OverviewDialog(QtWidgets.QDialog):
         重置文件列表，显示所有文件
         """
         # 显示所有文件
+        total_count = 0
         for i in range(self.parent.file_list_widget.count()):
             item = self.parent.file_list_widget.item(i)
             if item:
                 item.setHidden(False)
+                total_count += 1
+        
+        # 更新文件数量显示
+        if hasattr(self.parent, 'file_search'):
+            self.parent.file_search.set_file_count(total_count)
         
         # 显示成功提示
         popup = Popup(
-            self.tr("已重置地址栏，显示所有文件"),
+            self.tr(f"已重置地址栏，显示所有 {total_count} 个文件"),
             self.parent,
             msec=2000,
             icon=new_icon_path("copy-green", "svg"),
