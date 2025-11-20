@@ -5,7 +5,7 @@ import re
 import zipfile
 
 from PyQt5 import QtWidgets
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QSpinBox,
     QFileDialog,
@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QComboBox,
 )
 
 from anylabeling.views.labeling.logger import logger
@@ -33,6 +34,32 @@ overview_dialog_styles = f"""
         border-radius: 6px;
         min-height: 24px;
         selection-background-color: #0071e3;
+    }}
+    
+    QComboBox {{
+        padding: 5px 8px;
+        background: white;
+        border: 1px solid #d2d2d7;
+        border-radius: 6px;
+        min-height: 24px;
+    }}
+    QComboBox::drop-down {{
+        border: none;
+        width: 20px;
+    }}
+    QComboBox::down-arrow {{
+        image: url({new_icon_path("caret-down", "svg")});
+        width: 12px;
+        height: 12px;
+    }}
+    QComboBox:hover {{
+        border: 1px solid #0071e3;
+    }}
+    QComboBox QAbstractItemView {{
+        background: white;
+        border: 1px solid #d2d2d7;
+        selection-background-color: #0071e3;
+        selection-color: white;
     }}
     
     QSpinBox {{
@@ -77,6 +104,23 @@ overview_dialog_styles = f"""
     .secondary-button:pressed {{
         background-color: #d5d5d5;
     }}
+    
+    .small-button {{
+        background-color: #f5f5f7;
+        color: #1d1d1f;
+        border: 1px solid #d2d2d7;
+        border-radius: 8px;
+        font-weight: 500;
+        min-width: 30px;
+        height: 36px;
+        padding: 0 5px;
+    }}
+    .small-button:hover {{
+        background-color: #e5e5e5;
+    }}
+    .small-button:pressed {{
+        background-color: #d5d5d5;
+    }}
 
     .primary-button {{
         background-color: #0071e3;
@@ -113,6 +157,10 @@ class OverviewDialog(QtWidgets.QDialog):
         self.all_shape_infos = []  # 保存所有shape数据用于搜索
         self.displayed_shape_infos = []  # 当前显示的shape数据（用于跳转）
         self.search_text = ""  # 当前搜索文本
+        self.search_field = "all"  # 当前搜索字段
+        self.saved_rules = []  # 保存的搜索规则
+        self.last_selected_rule_index = -1  # 记住最后选择的规则索引
+        self.load_saved_rules()  # 加载已保存的规则
         # Shape type translation mapping
         self.shape_type_translation = {
             "polygon": self.tr("多边形"),
@@ -144,27 +192,109 @@ class OverviewDialog(QtWidgets.QDialog):
         layout = QVBoxLayout(self)
         
         # 添加搜索框（仅在Shape视图显示）
-        self.search_layout = QHBoxLayout()
-        search_label = QLabel(self.tr("搜索:"))
+        self.search_layout = QVBoxLayout()
+        self.search_layout.setSpacing(4)  # 减小行间距
+        self.search_layout.setContentsMargins(0, 0, 0, 0)  # 去掉边距
+        
+        # 第一行：过滤条件
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(4)  # 减小控件间距
+        filter_row.setContentsMargins(0, 0, 0, 0)
+        
+        # 字段选择下拉框 - 固定宽度
+        self.field_combo = QComboBox()
+        self.field_combo.addItems([
+            self.tr("文件名"),
+            self.tr("标签"),
+            self.tr("描述"),
+            self.tr("类型"),
+            self.tr("组ID"),
+        ])
+        self.field_combo.currentIndexChanged.connect(self.on_field_changed)
+        self.field_combo.setFixedWidth(100)
+        
+        # 条件选择下拉框 - 固定宽度
+        self.condition_combo = QComboBox()
+        self.condition_combo.addItems([
+            self.tr("包含"),
+            self.tr("等于"),
+            self.tr("不包含"),
+            self.tr("不等于"),
+            self.tr("正则匹配"),
+            self.tr("为空"),
+            self.tr("不为空"),
+        ])
+        self.condition_combo.currentIndexChanged.connect(self.on_condition_changed)
+        self.condition_combo.setFixedWidth(100)
+        
+        # 搜索输入框 - 固定宽度以实现精确对齐
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText(self.tr("支持正则表达式"))
-        self.search_input.textChanged.connect(self.on_search_text_changed)
+        self.search_input.setPlaceholderText(self.tr("输入搜索内容后按回车"))
+        self.search_input.returnPressed.connect(self.perform_search)  # 按回车键触发搜索
+        self.search_input.setFixedWidth(262)
+        
+        # 添加过滤地址栏按钮（放在第一行）
+        self.filter_filelist_btn = QPushButton(self.tr("过滤地址栏"))
+        self.filter_filelist_btn.setProperty("class", "primary-button")
+        self.filter_filelist_btn.clicked.connect(self.filter_file_list)
+        self.filter_filelist_btn.setFixedWidth(100)
+        
+        filter_row.addWidget(self.field_combo)
+        filter_row.addWidget(self.condition_combo)
+        filter_row.addWidget(self.search_input)
+        filter_row.addWidget(self.filter_filelist_btn)
+        filter_row.addStretch()
+        
+        # 第二行：操作按钮
+        action_row = QHBoxLayout()
+        action_row.setSpacing(4)  # 减小控件间距
+        action_row.setContentsMargins(0, 0, 0, 0)
+        
+        # 保存当前规则按钮 - 固定宽度
+        self.save_rule_btn = QPushButton(self.tr("保存规则"))
+        self.save_rule_btn.setProperty("class", "secondary-button")
+        self.save_rule_btn.clicked.connect(self.save_current_rule)
+        self.save_rule_btn.setFixedWidth(100)
+        
+        # 已保存规则下拉框 - 固定宽度
+        self.saved_rules_combo = QComboBox()
+        self.saved_rules_combo.addItem(self.tr("已保存规则"))
+        self.saved_rules_combo.currentIndexChanged.connect(self.on_saved_rule_selected)
+        self.saved_rules_combo.setFixedWidth(150)
+        
+        # 删除规则按钮
+        self.delete_rule_btn = QPushButton(self.tr("删除"))
+        self.delete_rule_btn.setProperty("class", "secondary-button")
+        self.delete_rule_btn.clicked.connect(self.delete_saved_rule)
         
         # 添加清除按钮
         self.clear_search_btn = QPushButton(self.tr("清除"))
         self.clear_search_btn.setProperty("class", "secondary-button")
         self.clear_search_btn.clicked.connect(self.clear_search)
         
-        self.search_layout.addWidget(search_label)
-        self.search_layout.addWidget(self.search_input)
-        self.search_layout.addWidget(self.clear_search_btn)
-        self.search_layout.addStretch()
+        # 添加重置按钮（放在第二行）
+        self.reset_filelist_btn = QPushButton(self.tr("重置"))
+        self.reset_filelist_btn.setProperty("class", "secondary-button")
+        self.reset_filelist_btn.clicked.connect(self.reset_file_list)
+        
+        action_row.addWidget(self.save_rule_btn)
+        action_row.addWidget(self.saved_rules_combo)
+        action_row.addWidget(self.delete_rule_btn)
+        action_row.addWidget(self.clear_search_btn)
+        action_row.addWidget(self.reset_filelist_btn)
+        action_row.addStretch()
+        
+        self.search_layout.addLayout(filter_row)
+        self.search_layout.addLayout(action_row)
         
         # 创建搜索容器widget，初始隐藏
         self.search_widget = QtWidgets.QWidget()
         self.search_widget.setLayout(self.search_layout)
         self.search_widget.setVisible(False)
         layout.addWidget(self.search_widget)
+        
+        # 初始化已保存规则下拉框
+        self.update_saved_rules_combo()
         
         self.table = QTableWidget(self)
         
@@ -428,7 +558,9 @@ class OverviewDialog(QtWidgets.QDialog):
             self.all_shape_infos = shape_infos  # 保存完整数据
             
             # 应用搜索过滤
-            if self.search_text:
+            # 注意："为空"和"不为空"条件不需要搜索文本，也要执行过滤
+            condition = self.condition_combo.currentText()
+            if self.search_text or condition in [self.tr("为空"), self.tr("不为空")]:
                 shape_infos = self.filter_shapes(shape_infos, self.search_text)
             
             # 保存当前显示的shape数据（用于跳转定位）
@@ -575,73 +707,354 @@ class OverviewDialog(QtWidgets.QDialog):
     
     def filter_shapes(self, shape_infos, search_text):
         """
-        根据搜索文本过滤shape数据，支持正则表达式
+        根据搜索文本过滤shape数据，支持多种条件和字段选择
         """
-        if not search_text:
+        # 获取当前条件
+        condition = self.condition_combo.currentText()
+        
+        # "为空"和"不为空"条件不需要搜索文本
+        if condition in [self.tr("为空"), self.tr("不为空")]:
+            pass  # 这些条件不需要搜索文本
+        elif not search_text:
             return shape_infos
         
         filtered = []
         
-        # 尝试编译正则表达式
-        try:
-            pattern = re.compile(search_text, re.IGNORECASE)
-            use_regex = True
-        except re.error:
-            # 如果不是有效的正则表达式，使用普通文本搜索
-            search_text = search_text.lower()
-            use_regex = False
+        # 字段映射
+        field_map = {
+            self.tr("文件名"): "filename",
+            self.tr("标签"): "label",
+            self.tr("描述"): "description",
+            self.tr("类型"): "shape_type",
+            self.tr("组ID"): "group_id",
+        }
+        
+        current_field_name = self.field_combo.currentText()
+        search_field = field_map.get(current_field_name, "filename")
         
         for shape in shape_infos:
-            # 在所有字段中搜索
-            searchable_text = " ".join([
-                str(shape.get("filename", "")),
-                str(shape.get("label", "")),
-                str(shape.get("shape_type", "")),
-                str(shape.get("description", "")),
-                str(shape.get("group_id", "")),
-                str(shape.get("difficult", "")),
-                str(shape.get("flags", "")),
-            ])
+            field_value = str(shape.get(search_field, ""))
+            match = False
             
-            # 使用正则或普通搜索
-            if use_regex:
-                if pattern.search(searchable_text):
-                    filtered.append(shape)
-            else:
-                if search_text in searchable_text.lower():
-                    filtered.append(shape)
+            # 根据条件进行匹配
+            if condition == self.tr("包含"):
+                match = search_text.lower() in field_value.lower()
+            elif condition == self.tr("等于"):
+                match = search_text.lower() == field_value.lower()
+            elif condition == self.tr("不包含"):
+                match = search_text.lower() not in field_value.lower()
+            elif condition == self.tr("不等于"):
+                match = search_text.lower() != field_value.lower()
+            elif condition == self.tr("正则匹配"):
+                try:
+                    pattern = re.compile(search_text, re.IGNORECASE)
+                    match = pattern.search(field_value) is not None
+                except re.error:
+                    # 正则表达式错误，使用普通包含匹配
+                    match = search_text.lower() in field_value.lower()
+            elif condition == self.tr("为空"):
+                # 判断为空：空字符串、"None"字符串、null、或者只有空白字符
+                match = (not field_value or 
+                        field_value.strip() == "" or 
+                        field_value == "None" or
+                        field_value == "null" or
+                        field_value == "{}")
+            elif condition == self.tr("不为空"):
+                # 判断不为空：有实际内容的字符串（排除None、null、空字符串等）
+                match = (field_value and 
+                        field_value.strip() != "" and 
+                        field_value != "None" and
+                        field_value != "null" and
+                        field_value != "{}")
+            
+            if match:
+                filtered.append(shape)
         
         return filtered
     
-    def on_search_text_changed(self, text):
+    def perform_search(self):
         """
-        搜索文本改变时的处理
+        执行搜索（按回车键触发）
         """
-        self.search_text = text
+        self.search_text = self.search_input.text()
         if not self.showing_label_infos:  # 只在Shape视图时搜索
-            # 使用已加载的数据进行过滤，无需重新加载
-            if self.all_shape_infos:
-                filtered_shapes = self.filter_shapes(self.all_shape_infos, text)
-                
-                # 更新displayed_shape_infos以匹配过滤后的结果
-                self.displayed_shape_infos = filtered_shapes
-                
-                headers, table_data = self.get_shape_infos_table(filtered_shapes)
-                self.table.setRowCount(len(table_data))
-                self.table.setColumnCount(len(headers))
-                self.table.setHorizontalHeaderLabels(headers)
-
-                for row, data in enumerate(table_data):
-                    for col, value in enumerate(data):
-                        item = QTableWidgetItem(value)
-                        item.setToolTip(value)
-                        self.table.setItem(row, col, item)
+            # 重新加载指定范围的数据并应用搜索
+            self.populate_table(self.start_index, self.end_index)
     
     def clear_search(self):
         """
-        清除搜索框内容
+        清除搜索框内容并恢复显示所有数据
         """
         self.search_input.clear()
+        self.field_combo.setCurrentIndex(0)
+        self.condition_combo.setCurrentIndex(0)
+        self.saved_rules_combo.setCurrentIndex(0)
+        self.last_selected_rule_index = -1
+        self.search_text = ""
+        
+        # 重新加载数据，显示所有记录
+        if not self.showing_label_infos:
+            self.populate_table(self.start_index, self.end_index)
+    
+    def on_field_changed(self, index):
+        """
+        字段选择改变时的处理
+        """
+        # 字段改变时不自动搜索，需要用户按回车
+    
+    def on_condition_changed(self, index):
+        """
+        条件选择改变时的处理
+        """
+        condition = self.condition_combo.currentText()
+        
+        # "为空"和"不为空"条件不需要输入框
+        if condition in [self.tr("为空"), self.tr("不为空")]:
+            self.search_input.setEnabled(False)
+            self.search_input.setPlaceholderText(self.tr("此条件无需输入，按回车搜索"))
+            # 自动执行搜索（因为不需要输入）
+            self.perform_search()
+        else:
+            self.search_input.setEnabled(True)
+            self.search_input.setPlaceholderText(self.tr("输入搜索内容后按回车"))
+    
+    def load_saved_rules(self):
+        """
+        从配置文件加载已保存的搜索规则
+        """
+        try:
+            config_dir = os.path.join(os.path.expanduser("~"), ".anylabeling")
+            os.makedirs(config_dir, exist_ok=True)
+            rules_file = os.path.join(config_dir, "overview_search_rules.json")
+            
+            if os.path.exists(rules_file):
+                with open(rules_file, "r", encoding="utf-8") as f:
+                    self.saved_rules = json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load saved rules: {e}")
+            self.saved_rules = []
+    
+    def save_rules_to_file(self):
+        """
+        保存搜索规则到配置文件
+        """
+        try:
+            config_dir = os.path.join(os.path.expanduser("~"), ".anylabeling")
+            os.makedirs(config_dir, exist_ok=True)
+            rules_file = os.path.join(config_dir, "overview_search_rules.json")
+            
+            with open(rules_file, "w", encoding="utf-8") as f:
+                json.dump(self.saved_rules, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save rules: {e}")
+    
+    def save_current_rule(self):
+        """
+        保存当前的搜索规则
+        """
+        field = self.field_combo.currentText()
+        condition = self.condition_combo.currentText()
+        search_text = self.search_input.text()
+        
+        # 如果是"为空"或"不为空"，不需要搜索文本
+        if condition not in [self.tr("为空"), self.tr("不为空")] and not search_text:
+            popup = Popup(
+                self.tr("请输入搜索内容"),
+                self.parent,
+                msec=2000,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self.parent)
+            return
+        
+        # 弹出对话框让用户输入规则名称
+        from PyQt5.QtWidgets import QInputDialog
+        rule_name, ok = QInputDialog.getText(
+            self,
+            self.tr("保存搜索规则"),
+            self.tr("请输入规则名称:"),
+            QLineEdit.Normal,
+            f"{field}-{condition}"
+        )
+        
+        if ok and rule_name:
+            # 检查是否已存在同名规则
+            for i, rule in enumerate(self.saved_rules):
+                if rule.get("name") == rule_name:
+                    # 更新已存在的规则
+                    self.saved_rules[i] = {
+                        "name": rule_name,
+                        "field": field,
+                        "condition": condition,
+                        "search_text": search_text
+                    }
+                    self.save_rules_to_file()
+                    self.update_saved_rules_combo()
+                    popup = Popup(
+                        self.tr(f"规则 '{rule_name}' 已更新"),
+                        self.parent,
+                        msec=2000,
+                        icon=new_icon_path("copy-green", "svg"),
+                    )
+                    popup.show_popup(self.parent)
+                    return
+            
+            # 添加新规则
+            new_rule = {
+                "name": rule_name,
+                "field": field,
+                "condition": condition,
+                "search_text": search_text
+            }
+            self.saved_rules.append(new_rule)
+            self.save_rules_to_file()
+            self.update_saved_rules_combo()
+            
+            popup = Popup(
+                self.tr(f"规则 '{rule_name}' 已保存"),
+                self.parent,
+                msec=2000,
+                icon=new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self.parent)
+    
+    def update_saved_rules_combo(self):
+        """
+        更新已保存规则下拉框
+        """
+        self.saved_rules_combo.clear()
+        self.saved_rules_combo.addItem(self.tr("已保存规则"))
+        for rule in self.saved_rules:
+            self.saved_rules_combo.addItem(rule.get("name", ""))
+    
+    def on_saved_rule_selected(self, index):
+        """
+        选择已保存的规则时应用该规则并自动搜索
+        """
+        if index == 0:  # "已保存规则"选项
+            self.last_selected_rule_index = -1
+            return
+        
+        # 记住选择的规则索引
+        self.last_selected_rule_index = index - 1
+        
+        if self.last_selected_rule_index < len(self.saved_rules):
+            rule = self.saved_rules[self.last_selected_rule_index]
+            
+            # 应用规则
+            self.field_combo.setCurrentText(rule.get("field", ""))
+            self.condition_combo.setCurrentText(rule.get("condition", ""))
+            self.search_input.setText(rule.get("search_text", ""))
+            
+            # 自动执行搜索
+            self.perform_search()
+        
+        # 保持选中状态，下拉框会显示选中的规则名称
+    
+    def delete_saved_rule(self):
+        """
+        删除最后选择的规则
+        """
+        # 使用记住的规则索引，而不是当前下拉框的索引
+        if self.last_selected_rule_index < 0:
+            popup = Popup(
+                self.tr("请先从下拉框选择要删除的规则"),
+                self.parent,
+                msec=2000,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self.parent)
+            return
+        
+        if self.last_selected_rule_index < len(self.saved_rules):
+            rule_name = self.saved_rules[self.last_selected_rule_index].get("name", "")
+            
+            # 确认删除
+            from PyQt5.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self,
+                self.tr("确认删除"),
+                self.tr(f"确定要删除规则 '{rule_name}' 吗？"),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                del self.saved_rules[self.last_selected_rule_index]
+                self.last_selected_rule_index = -1  # 重置
+                self.save_rules_to_file()
+                self.update_saved_rules_combo()
+                
+                popup = Popup(
+                    self.tr(f"规则 '{rule_name}' 已删除"),
+                    self.parent,
+                    msec=2000,
+                    icon=new_icon_path("copy-green", "svg"),
+                )
+                popup.show_popup(self.parent)
+    
+    def filter_file_list(self):
+        """
+        根据搜索结果过滤主窗口的文件列表
+        """
+        if self.showing_label_infos:
+            # 在Label视图时不执行过滤
+            return
+        
+        # 获取搜索结果中的所有文件名（去重）
+        filtered_filenames = set()
+        for shape in self.displayed_shape_infos:
+            filename = shape.get("filename", "")
+            if filename:
+                filtered_filenames.add(filename)
+        
+        if not filtered_filenames:
+            # 没有搜索结果，显示提示
+            popup = Popup(
+                self.tr("没有搜索结果，无法过滤地址栏"),
+                self.parent,
+                msec=2000,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self.parent)
+            return
+        
+        # 隐藏不在搜索结果中的文件
+        for i in range(self.parent.file_list_widget.count()):
+            item = self.parent.file_list_widget.item(i)
+            if item:
+                item_filename = item.text()
+                # 检查文件名是否在搜索结果中
+                should_show = any(fn in item_filename for fn in filtered_filenames)
+                item.setHidden(not should_show)
+        
+        # 显示成功提示
+        popup = Popup(
+            self.tr(f"已过滤地址栏，显示 {len(filtered_filenames)} 个文件"),
+            self.parent,
+            msec=2000,
+            icon=new_icon_path("copy-green", "svg"),
+        )
+        popup.show_popup(self.parent)
+    
+    def reset_file_list(self):
+        """
+        重置文件列表，显示所有文件
+        """
+        # 显示所有文件
+        for i in range(self.parent.file_list_widget.count()):
+            item = self.parent.file_list_widget.item(i)
+            if item:
+                item.setHidden(False)
+        
+        # 显示成功提示
+        popup = Popup(
+            self.tr("已重置地址栏，显示所有文件"),
+            self.parent,
+            msec=2000,
+            icon=new_icon_path("copy-green", "svg"),
+        )
+        popup.show_popup(self.parent)
     
     def on_current_cell_changed(self, current_row, current_column, previous_row, previous_column):
         """
