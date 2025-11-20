@@ -829,7 +829,15 @@ class OverviewDialog(QtWidgets.QDialog):
             
             if os.path.exists(rules_file):
                 with open(rules_file, "r", encoding="utf-8") as f:
-                    self.saved_rules = json.load(f)
+                    loaded_rules = json.load(f)
+                    # 验证加载的数据是列表
+                    if isinstance(loaded_rules, list):
+                        self.saved_rules = loaded_rules
+                    else:
+                        logger.warning("Invalid rules file format, expected list")
+                        self.saved_rules = []
+            else:
+                self.saved_rules = []
         except Exception as e:
             logger.warning(f"Failed to load saved rules: {e}")
             self.saved_rules = []
@@ -922,10 +930,16 @@ class OverviewDialog(QtWidgets.QDialog):
         """
         更新已保存规则下拉框
         """
+        # 断开信号，避免更新时触发选择事件
+        self.saved_rules_combo.blockSignals(True)
+        
         self.saved_rules_combo.clear()
         self.saved_rules_combo.addItem(self.tr("已保存规则"))
         for rule in self.saved_rules:
             self.saved_rules_combo.addItem(rule.get("name", ""))
+        
+        # 重新连接信号
+        self.saved_rules_combo.blockSignals(False)
     
     def on_saved_rule_selected(self, index):
         """
@@ -938,7 +952,14 @@ class OverviewDialog(QtWidgets.QDialog):
         # 记住选择的规则索引
         self.last_selected_rule_index = index - 1
         
-        if self.last_selected_rule_index < len(self.saved_rules):
+        # 边界检查，防止索引越界
+        if self.last_selected_rule_index < 0 or self.last_selected_rule_index >= len(self.saved_rules):
+            logger.warning(f"Invalid rule index: {self.last_selected_rule_index}, total rules: {len(self.saved_rules)}")
+            self.last_selected_rule_index = -1
+            self.saved_rules_combo.setCurrentIndex(0)
+            return
+        
+        try:
             rule = self.saved_rules[self.last_selected_rule_index]
             
             # 应用规则
@@ -948,6 +969,10 @@ class OverviewDialog(QtWidgets.QDialog):
             
             # 自动执行搜索
             self.perform_search()
+        except Exception as e:
+            logger.error(f"Error applying saved rule: {e}")
+            self.last_selected_rule_index = -1
+            self.saved_rules_combo.setCurrentIndex(0)
         
         # 保持选中状态，下拉框会显示选中的规则名称
     
