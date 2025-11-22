@@ -89,6 +89,8 @@ from .widgets import (
     HighlightSettingsDialog,
 )
 from .widgets.rectangle_scale_dialog import RectangleScaleDialog
+from .widgets.horizontal_viewer_dialog import HorizontalViewerDialog
+from .widgets.vertical_viewer_dialog import VerticalViewerDialog
 from ..mainwindow_widgets.traffic_light_dialog import TrafficLightDialog
 from ...services import merger, tag_sorting
 
@@ -1453,6 +1455,18 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="rectangle",
             tip=self.tr("配置三次点击水平矩形的宽度"),
         )
+        horizontal_viewer_tool = action(
+            self.tr("横向滚动看图"),
+            self.open_horizontal_viewer,
+            icon="objects",
+            tip=self.tr("在新窗口中横向预览所有图片"),
+        )
+        vertical_viewer_tool = action(
+            self.tr("垂直滚动看图"),
+            self.open_vertical_viewer,
+            icon="vqa",
+            tip=self.tr("在新窗口中纵向预览所有图片"),
+        )
         merge_shapes = action(
             self.tr("区域合并工具"),
             self.open_merge_tool,
@@ -2376,6 +2390,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 undo,
                 undo_last_point,
                 remove_point,
+                horizontal_viewer_tool,
+                vertical_viewer_tool,
             ),
             on_load_active=(
                 close,
@@ -2491,7 +2507,10 @@ class LabelingWidget(QtWidgets.QWidget):
                 smart_guides_tool,
                 shortcut_manager_tool,
                 wheel_settings_tool,
+
                 rectangle3_width_tool,
+                horizontal_viewer_tool,
+                vertical_viewer_tool,
             ),
         )
         utils.add_actions(
@@ -10324,3 +10343,51 @@ class LabelingWidget(QtWidgets.QWidget):
 
 
 
+
+    def open_horizontal_viewer(self, target_filename=None):
+        if not self.image_list:
+             self.error_message(
+                self.tr("No images loaded"),
+                self.tr("Please load an image folder before using this tool."),
+            )
+             return
+             
+        if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog:
+            self.horizontal_viewer_dialog.close()
+            
+        # If target_filename is not provided (e.g. from menu action), use current image
+        if not isinstance(target_filename, str):
+            target_filename = self.image_path
+            
+        self.horizontal_viewer_dialog = HorizontalViewerDialog(
+            self.image_list, 
+            current_filename=target_filename,
+            parent=self
+        )
+        self.horizontal_viewer_dialog.image_switched.connect(self.load_file)
+        self.horizontal_viewer_dialog.open_vertical_viewer.connect(self.open_vertical_viewer)
+        self.horizontal_viewer_dialog.show()
+
+    def open_vertical_viewer(self, target_filename=None):
+        if not self.image_list:
+             self.error_message(
+                self.tr("No images loaded"),
+                self.tr("Please load an image folder before using this tool."),
+            )
+             return
+             
+        if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog:
+            self.vertical_viewer_dialog.close()
+            
+        # If target_filename is not provided (e.g. from menu action), use current image
+        if not isinstance(target_filename, str):
+            target_filename = self.image_path
+            
+        self.vertical_viewer_dialog = VerticalViewerDialog(
+            self.image_list, 
+            current_filename=target_filename,
+            parent=self
+        )
+        self.vertical_viewer_dialog.image_switched.connect(self.load_file)
+        self.vertical_viewer_dialog.open_horizontal_viewer.connect(self.open_horizontal_viewer)
+        self.vertical_viewer_dialog.show()
