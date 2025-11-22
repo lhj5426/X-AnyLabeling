@@ -470,7 +470,9 @@ https://github.com/user-attachments/assets/e2405603-f9f5-4887-af5f-59bda4828d48
 
 https://github.com/user-attachments/assets/22d6f35f-56fa-43fb-91e2-0536e3b802a6
 
+91. 增加 横向滚动 垂直滚动 图片查看器 可以看漫画 可以检测标注情况
 
+https://github.com/user-attachments/assets/69047e72-5cd7-4464-bd3c-1dc21cfdd2e8
 
 
 
