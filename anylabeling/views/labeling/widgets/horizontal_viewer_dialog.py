@@ -82,7 +82,7 @@ class ThumbnailLoader(QtCore.QRunnable):
         except Exception:
             pass
 
-class ThumbnailItem(QtWidgets.QGraphicsPixmapItem):
+class HorizontalThumbnailItem(QtWidgets.QGraphicsPixmapItem):
     def __init__(self, path, height, labeling_widget=None, parent=None):
         super().__init__(parent)
         self.path = path
@@ -227,17 +227,6 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.items_list = [] 
         self.view_scale = 1.0
         self.fit_height_mode = True
-        self.fit_width_mode = False
-        self.current_selected_item = None
-        self.thumbnails_visible = False
-        self.show_annotations = False # Default Closed
-        self.fill_annotations = False
-        
-        self.layout_timer = QtCore.QTimer()
-        self.layout_timer.setSingleShot(True)
-        self.layout_timer.setInterval(50)
-        self.layout_timer.timeout.connect(self.relayout_items)
-        
         self.thread_pool = QtCore.QThreadPool()
         self.thread_pool.setMaxThreadCount(4) 
         
@@ -345,6 +334,19 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.scroll_timer.setSingleShot(True)
         self.scroll_timer.setInterval(50)
         self.scroll_timer.timeout.connect(self.process_scroll_update)
+        
+        self.sync_scroll_enabled = False
+        self.show_annotations = False
+        self.fill_annotations = False
+        self.thumbnails_visible = False
+        
+        self.layout_timer = QtCore.QTimer()
+        self.layout_timer.setSingleShot(True)
+        self.layout_timer.setInterval(50)
+        self.layout_timer.timeout.connect(self.relayout_items)
+        
+        self.fit_width_mode = False
+        self.fit_height_mode = True
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -417,7 +419,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             self.thread_pool.start(loader)
         
         for path in self.image_list:
-            item = ThumbnailItem(path, SCENE_BASE_HEIGHT, labeling_widget=self.labeling_widget)
+            item = HorizontalThumbnailItem(path, SCENE_BASE_HEIGHT, labeling_widget=self.labeling_widget)
             item.show_annotations = self.show_annotations
             item.fill_annotations = self.fill_annotations
             item.setPos(x_offset, 0)
@@ -443,6 +445,13 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
              item.setIcon(QtGui.QIcon(QtGui.QPixmap.fromImage(image)))
         except RuntimeError:
              pass
+
+    def jump_to_image(self, filename):
+        if filename in self.items_map:
+            view_item = self.items_map[filename]
+            self.view.centerOn(view_item)
+            self.current_filename = filename
+            self.process_scroll_update()
 
     def on_thumbnail_clicked(self, item):
         path = item.data(QtCore.Qt.UserRole)
@@ -486,6 +495,13 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         fill_anno_action.triggered.connect(self.toggle_fill_annotations)
         
         menu.addSeparator()
+        
+        sync_action = menu.addAction("同步滚动")
+        sync_action.setCheckable(True)
+        sync_action.setChecked(self.sync_scroll_enabled)
+        sync_action.triggered.connect(self.toggle_sync_scroll)
+        
+        menu.addSeparator()
         thumb_action = menu.addAction("显示缩略图")
         thumb_action.setCheckable(True)
         thumb_action.setChecked(self.thumbnails_visible)
@@ -500,12 +516,15 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         open_vert_action.triggered.connect(self.trigger_open_vertical_viewer)
         
         item = self.view.itemAt(pos)
-        if isinstance(item, ThumbnailItem):
+        if isinstance(item, HorizontalThumbnailItem):
             menu.addSeparator()
             action = menu.addAction("切换到此图片")
             action.triggered.connect(lambda: self.switch_to_image(item.path))
             
         menu.exec_(self.view.mapToGlobal(pos))
+
+    def toggle_sync_scroll(self):
+        self.sync_scroll_enabled = not self.sync_scroll_enabled
 
     def toggle_show_annotations(self):
         self.show_annotations = not self.show_annotations
@@ -743,6 +762,57 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             x_offset += item.boundingRect().width() + spacing
             
         self.scene.setSceneRect(0, 0, x_offset, SCENE_BASE_HEIGHT)
+
+    def go_to_next_image(self):
+        """翻到下一张图片"""
+        if self.sync_scroll_enabled:
+            # 同步模式：通知主画布切换
+            center_item = self.get_center_item()
+            if center_item:
+                current_idx = self.items_list.index(center_item)
+                if current_idx + 1 < len(self.items_list):
+                    next_path = self.items_list[current_idx + 1].path
+                    self.image_switched.emit(next_path)
+        else:
+            # 非同步模式：自己翻页
+            center_item = self.get_center_item()
+            if center_item:
+                current_idx = self.items_list.index(center_item)
+                if current_idx + 1 < len(self.items_list):
+                    next_item = self.items_list[current_idx + 1]
+                    self.view.centerOn(next_item)
+                    self.process_scroll_update()
+
+    def go_to_prev_image(self):
+        """翻到上一张图片"""
+        if self.sync_scroll_enabled:
+            # 同步模式：通知主画布切换
+            center_item = self.get_center_item()
+            if center_item:
+                current_idx = self.items_list.index(center_item)
+                if current_idx - 1 >= 0:
+                    prev_path = self.items_list[current_idx - 1].path
+                    self.image_switched.emit(prev_path)
+        else:
+            # 非同步模式：自己翻页
+            center_item = self.get_center_item()
+            if center_item:
+                current_idx = self.items_list.index(center_item)
+                if current_idx - 1 >= 0:
+                    prev_item = self.items_list[current_idx - 1]
+                    self.view.centerOn(prev_item)
+                    self.process_scroll_update()
+
+    def keyPressEvent(self, event):
+        """处理键盘事件，支持 A/D 翻页"""
+        if event.key() == QtCore.Qt.Key_D:
+            self.go_to_next_image()
+            event.accept()
+        elif event.key() == QtCore.Qt.Key_A:
+            self.go_to_prev_image()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def closeEvent(self, event):
         self.closing = True

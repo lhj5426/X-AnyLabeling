@@ -324,19 +324,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.items_map = {} 
         self.items_list = [] 
         self.dividers_list = []
-        self.view_scale = 1.0
-        
-        self.fit_width_mode = False
-        self.fit_height_mode = True
-        self.thumbnails_visible = False
-        self.show_annotations = False # Default Closed
-        self.fill_annotations = False
-        
-        self.thread_pool = QtCore.QThreadPool()
-        self.thread_pool.setMaxThreadCount(4) 
-        
-        # UI Setup
-        layout = QtWidgets.QHBoxLayout(self)
+        layout = QtWidgets.QVBoxLayout(self) # Assuming 'layout' was missing its definition
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
@@ -374,8 +362,11 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.thumbnail_list.setItemDelegate(ThumbnailDelegate(self.thumbnail_list))
         self.thumbnail_list.itemClicked.connect(self.on_thumbnail_clicked)
         self.thumbnail_list.setVisible(False) # Default hidden
-        layout.addWidget(self.thumbnail_list)
         
+        # Main content layout
+        main_h_layout = QtWidgets.QHBoxLayout()
+        main_h_layout.addWidget(self.thumbnail_list)
+
         # Graphics View
         self.scene = QtWidgets.QGraphicsScene()
         self.scene.setBackgroundBrush(QtGui.QBrush(QtGui.QColor("#1e1e1e")))
@@ -397,13 +388,27 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self.show_context_menu)
         
-        layout.addWidget(self.view)
+        main_h_layout.addWidget(self.view)
+        layout.addLayout(main_h_layout) # Add the horizontal layout to the main vertical layout
         
         self.view.verticalScrollBar().valueChanged.connect(self.on_scroll)
         self.view.installEventFilter(self)
         
         self.populated = False
         self.closing = False
+
+        # Initialize state variables
+        self.fit_width_mode = False
+        self.fit_height_mode = True
+        self.view_scale = 1.0
+        self.thumbnails_visible = False
+        self.show_annotations = False
+        self.fill_annotations = False
+        self.sync_scroll_enabled = False
+
+        # Thread pool for loading images
+        self.thread_pool = QtCore.QThreadPool()
+        self.thread_pool.setMaxThreadCount(4)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -533,6 +538,22 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         except RuntimeError:
              pass
 
+    def jump_to_image(self, filename):
+        """Jump to a specific image, refreshing it if necessary."""
+        self.current_filename = filename
+        if filename in self.items_map:
+            view_item = self.items_map[filename]
+            self.view.centerOn(view_item)
+            
+            # Force reload of this item to update annotations/image
+            view_item.loaded = False
+            view_item.loading = False
+            self.check_visible_items()
+            self.on_scroll()
+        else:
+            # If item not found, reload entire scene
+            self.populate_scene()
+
     def on_thumbnail_clicked(self, item):
         path = item.data(QtCore.Qt.UserRole)
         if path in self.items_map:
@@ -560,6 +581,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         viewport_height = self.view.viewport().height()
         if viewport_width < 10: return
         
+        center_item = None
         if self.fit_width_mode:
             self.view_scale = viewport_width / SCENE_BASE_WIDTH
         elif self.fit_height_mode:
@@ -573,6 +595,9 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         transform = QtGui.QTransform()
         transform.scale(self.view_scale, self.view_scale)
         self.view.setTransform(transform)
+        
+        if self.fit_height_mode and center_item:
+            self.view.centerOn(center_item)
 
     def get_center_item(self):
         viewport_center_y = self.view.viewport().height() / 2
@@ -676,6 +701,13 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         fill_anno_action.triggered.connect(self.toggle_fill_annotations)
         
         menu.addSeparator()
+        
+        sync_action = menu.addAction("同步滚动")
+        sync_action.setCheckable(True)
+        sync_action.setChecked(self.sync_scroll_enabled)
+        sync_action.triggered.connect(self.toggle_sync_scroll)
+        
+        menu.addSeparator()
         refresh_action = menu.addAction("刷新")
         refresh_action.triggered.connect(self.reload_scene)
 
@@ -690,12 +722,15 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             action.triggered.connect(lambda: self.switch_to_image(item.path))
             
         menu.exec_(self.view.mapToGlobal(pos))
-        
+
     def reload_scene(self):
         center_item = self.get_center_item()
         if center_item:
             self.current_filename = center_item.path
         self.populate_scene()
+
+    def toggle_sync_scroll(self):
+        self.sync_scroll_enabled = not self.sync_scroll_enabled
 
     def toggle_thumbnails(self):
         self.thumbnails_visible = not self.thumbnails_visible
@@ -773,6 +808,57 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.view_scale /= 1.2
         self.update_view_transform()
         self.check_visible_items()
+
+    def go_to_next_image(self):
+        """翻到下一张图片"""
+        if self.sync_scroll_enabled:
+            # 同步模式：通知主画布切换
+            center_item = self.get_center_item()
+            if center_item:
+                current_idx = self.items_list.index(center_item)
+                if current_idx + 1 < len(self.items_list):
+                    next_path = self.items_list[current_idx + 1].path
+                    self.image_switched.emit(next_path)
+        else:
+            # 非同步模式：自己翻页
+            center_item = self.get_center_item()
+            if center_item:
+                current_idx = self.items_list.index(center_item)
+                if current_idx + 1 < len(self.items_list):
+                    next_item = self.items_list[current_idx + 1]
+                    self.view.centerOn(next_item)
+                    self.on_scroll()
+
+    def go_to_prev_image(self):
+        """翻到上一张图片"""
+        if self.sync_scroll_enabled:
+            # 同步模式：通知主画布切换
+            center_item = self.get_center_item()
+            if center_item:
+                current_idx = self.items_list.index(center_item)
+                if current_idx - 1 >= 0:
+                    prev_path = self.items_list[current_idx - 1].path
+                    self.image_switched.emit(prev_path)
+        else:
+            # 非同步模式：自己翻页
+            center_item = self.get_center_item()
+            if center_item:
+                current_idx = self.items_list.index(center_item)
+                if current_idx - 1 >= 0:
+                    prev_item = self.items_list[current_idx - 1]
+                    self.view.centerOn(prev_item)
+                    self.on_scroll()
+
+    def keyPressEvent(self, event):
+        """处理键盘事件，支持 A/D 翻页"""
+        if event.key() == QtCore.Qt.Key_D:
+            self.go_to_next_image()
+            event.accept()
+        elif event.key() == QtCore.Qt.Key_A:
+            self.go_to_prev_image()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def closeEvent(self, event):
         self.closing = True

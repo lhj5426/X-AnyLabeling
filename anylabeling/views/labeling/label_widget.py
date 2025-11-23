@@ -8345,6 +8345,15 @@ class LabelingWidget(QtWidgets.QWidget):
         # Update page text dialog if open
         self._update_page_text_dialog()
 
+        # Sync viewer dialogs if enabled
+        if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog and self.vertical_viewer_dialog.isVisible():
+            if self.vertical_viewer_dialog.sync_scroll_enabled:
+                self.vertical_viewer_dialog.jump_to_image(self.filename)
+        
+        if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog and self.horizontal_viewer_dialog.isVisible():
+            if self.horizontal_viewer_dialog.sync_scroll_enabled:
+                self.horizontal_viewer_dialog.jump_to_image(self.filename)
+
         return True
 
     # QT Overload
@@ -10352,12 +10361,18 @@ class LabelingWidget(QtWidgets.QWidget):
             )
              return
              
-        if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog:
-            self.horizontal_viewer_dialog.close()
-            
         # If target_filename is not provided (e.g. from menu action), use current image
         if not isinstance(target_filename, str):
             target_filename = self.image_path
+
+        if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog and self.horizontal_viewer_dialog.isVisible():
+            self.horizontal_viewer_dialog.jump_to_image(target_filename)
+            self.horizontal_viewer_dialog.raise_()
+            self.horizontal_viewer_dialog.activateWindow()
+            return
+            
+        if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog:
+            self.horizontal_viewer_dialog.close()
             
         self.horizontal_viewer_dialog = HorizontalViewerDialog(
             self.image_list, 
@@ -10376,12 +10391,18 @@ class LabelingWidget(QtWidgets.QWidget):
             )
              return
              
-        if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog:
-            self.vertical_viewer_dialog.close()
-            
         # If target_filename is not provided (e.g. from menu action), use current image
         if not isinstance(target_filename, str):
             target_filename = self.image_path
+
+        if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog and self.vertical_viewer_dialog.isVisible():
+            self.vertical_viewer_dialog.jump_to_image(target_filename)
+            self.vertical_viewer_dialog.raise_()
+            self.vertical_viewer_dialog.activateWindow()
+            return
+            
+        if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog:
+            self.vertical_viewer_dialog.close()
             
         self.vertical_viewer_dialog = VerticalViewerDialog(
             self.image_list, 
