@@ -27,7 +27,28 @@ https://www.basiccat.org/zh/imagetrans/
 
 真正的漫画工具只负责OCR 翻译 嵌字 
 
-(原版 https://github.com/CVHub520/X-AnyLabeling 已支持使用PPV5ocr 懒得移植过来 魔改版 原版双持也不是不可以)
+([原版](https://github.com/CVHub520/X-AnyLabeling/)已支持使用PPV5ocr 懒得移植过来 魔改版 原版双持也不是不可以)
+
+并且可以当作一款漫画阅读工具
+
+拥有 横向滚动看图功能 
+
+<img width="1916" height="1049" alt="image" src="https://github.com/user-attachments/assets/8d079e33-cdfa-4592-8726-193c2e571927" />
+
+
+
+和 垂直滚动看图功能
+
+<img width="1916" height="1050" alt="image" src="https://github.com/user-attachments/assets/850ba8c1-d56f-4481-bdc6-71a27a888d34" />
+
+
+
+无论是看 CG 还是看 韩国条漫 都可以 增强看图看漫画的阅读体验
+
+本工具打通了看漫画的第一步文字检测  和看漫画的最后一步看的阅读体验
+
+是一款围绕看漫画这个核心魔改并开发的工具
+
 
 因为使用AI编写代码 故 无法与主分支合并
 ![1759753741939](https://github.com/user-attachments/assets/611b27eb-1796-4b04-8e94-d17c081b3f69)
