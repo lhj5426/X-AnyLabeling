@@ -723,6 +723,13 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             
         menu.exec_(self.view.mapToGlobal(pos))
 
+    def update_image_list(self, new_image_list, current_filename=None):
+        """更新图片列表（当主界面打开新文件夹时调用）"""
+        self.image_list = new_image_list
+        if current_filename:
+            self.current_filename = current_filename
+        self.reload_scene()
+    
     def reload_scene(self):
         center_item = self.get_center_item()
         if center_item:

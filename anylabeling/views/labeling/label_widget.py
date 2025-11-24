@@ -9094,6 +9094,13 @@ class LabelingWidget(QtWidgets.QWidget):
             new_folder_path = self.last_open_dir 
             self.label_tool_dialog.refresh_state(total_files, 1, new_folder_path)
 
+        # 更新查看器窗口的图片列表
+        if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog and self.horizontal_viewer_dialog.isVisible():
+            self.horizontal_viewer_dialog.update_image_list(self.image_list, self.image_path)
+        
+        if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog and self.vertical_viewer_dialog.isVisible():
+            self.vertical_viewer_dialog.update_image_list(self.image_list, self.image_path)
+
         if load:
             self.filename = None
             self.open_next_image(load=load)
@@ -10367,6 +10374,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
         if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog and self.horizontal_viewer_dialog.isVisible():
             self.horizontal_viewer_dialog.jump_to_image(target_filename)
+            # 如果窗口被最小化，先还原它
+            if self.horizontal_viewer_dialog.isMinimized():
+                self.horizontal_viewer_dialog.showNormal()
             self.horizontal_viewer_dialog.raise_()
             self.horizontal_viewer_dialog.activateWindow()
             return
@@ -10397,6 +10407,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
         if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog and self.vertical_viewer_dialog.isVisible():
             self.vertical_viewer_dialog.jump_to_image(target_filename)
+            # 如果窗口被最小化，先还原它
+            if self.vertical_viewer_dialog.isMinimized():
+                self.vertical_viewer_dialog.showNormal()
             self.vertical_viewer_dialog.raise_()
             self.vertical_viewer_dialog.activateWindow()
             return
