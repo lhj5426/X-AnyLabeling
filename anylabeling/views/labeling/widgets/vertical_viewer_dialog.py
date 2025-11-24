@@ -405,6 +405,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.show_annotations = False
         self.fill_annotations = False
         self.sync_scroll_enabled = False
+        self.show_dividers = True  # 显示分隔符
 
         # Thread pool for loading images
         self.thread_pool = QtCore.QThreadPool()
@@ -467,13 +468,14 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         end_idx = min(start_idx + batch_size, self._populate_total_batches)
         
         y_offset = 0
-        spacing = 30
+        spacing = 30 if self.show_dividers else 0  # 根据状态设置间距
         total = len(self.image_list)
         
         if start_idx > 0:
             for i in range(start_idx):
                 item = self.items_list[i]
-                y_offset += 30 + item.get_height() + spacing
+                divider_height = 30 if self.show_dividers else 0
+                y_offset += divider_height + item.get_height() + spacing
         
         for i in range(start_idx, end_idx):
             path = self.image_list[i]
@@ -481,9 +483,11 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             if i > 0:
                 divider = DividerItem(SCENE_BASE_WIDTH, i + 1, total)
                 divider.setPos(0, y_offset)
+                divider.setVisible(self.show_dividers)  # 根据状态设置可见性
                 self.scene.addItem(divider)
                 self.dividers_list.append(divider)
-                y_offset += 30 
+                if self.show_dividers:
+                    y_offset += 30  # 只有显示分隔符时才添加间距
             
             # Pass labeling_widget to item for color retrieval
             item = VerticalThumbnailItem(path, SCENE_BASE_WIDTH, labeling_widget=self.labeling_widget)
@@ -498,9 +502,10 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         
         if end_idx == self._populate_total_batches:
             current_y = 0
+            divider_height = 30 if self.show_dividers else 0
             for i, item in enumerate(self.items_list):
                 if i > 0:
-                    current_y += 30
+                    current_y += divider_height
                 current_y += item.get_height() + spacing
             
             self.scene.setSceneRect(0, 0, SCENE_BASE_WIDTH, current_y)
@@ -564,13 +569,14 @@ class VerticalViewerDialog(QtWidgets.QDialog):
 
     def relayout_items(self):
         y_offset = 0
-        spacing = 30
+        spacing = 30 if self.show_dividers else 0  # 隐藏分隔符时无间距
         divider_idx = 0
         for i, item in enumerate(self.items_list):
             if i > 0 and divider_idx < len(self.dividers_list):
                 divider = self.dividers_list[divider_idx]
                 divider.setPos(0, y_offset)
-                y_offset += 30
+                if self.show_dividers:
+                    y_offset += 30  # 只有显示分隔符时才添加间距
                 divider_idx += 1
             item.setPos(0, y_offset)
             y_offset += item.get_height() + spacing
@@ -708,6 +714,13 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         sync_action.triggered.connect(self.toggle_sync_scroll)
         
         menu.addSeparator()
+        
+        divider_action = menu.addAction("显示分隔符")
+        divider_action.setCheckable(True)
+        divider_action.setChecked(self.show_dividers)
+        divider_action.triggered.connect(self.toggle_dividers)
+        
+        menu.addSeparator()
         refresh_action = menu.addAction("刷新")
         refresh_action.triggered.connect(self.reload_scene)
 
@@ -738,6 +751,15 @@ class VerticalViewerDialog(QtWidgets.QDialog):
 
     def toggle_sync_scroll(self):
         self.sync_scroll_enabled = not self.sync_scroll_enabled
+    
+    def toggle_dividers(self):
+        """切换分隔符显示/隐藏"""
+        self.show_dividers = not self.show_dividers
+        # 更新所有分隔符的可见性
+        for divider in self.dividers_list:
+            divider.setVisible(self.show_dividers)
+        # 重新布局以调整间距
+        self.relayout_items()
 
     def toggle_thumbnails(self):
         self.thumbnails_visible = not self.thumbnails_visible
