@@ -5452,6 +5452,9 @@ class LabelingWidget(QtWidgets.QWidget):
             elif key == 'spacing_guide_opacity':
                 # 间距线透明度
                 self.canvas.spacing_guide_opacity = value
+            elif key == ['canvas', 'zoom_at_mouse_percentage_increase']:
+                # 鼠标缩放倍率
+                self.canvas.zoom_at_mouse_percentage_increase = value
 
         self.canvas.update()
         # Auto-save on every change

@@ -3,6 +3,9 @@ from PyQt5.QtWidgets import QDialog, QVBoxLayout, QWidget, QDialogButtonBox, QFo
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt, pyqtSignal, QCoreApplication
 
+# 统一的输入框宽度（包含上下箭头，与颜色按钮对齐）
+SPINBOX_WIDTH = 60
+
 class ColorManagerDialog(QDialog):
     setting_changed = pyqtSignal(str, object)
 
@@ -50,6 +53,7 @@ class ColorManagerDialog(QDialog):
         left_form.addRow(self.tr("画布悬停线条颜色:"), self.canvas_hover_line_color_button)
 
         self.canvas_hover_line_width_spinbox = QDoubleSpinBox()
+        self.canvas_hover_line_width_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.canvas_hover_line_width_spinbox.setValue(self.config['shape']['canvas_hover_line_width'])
         self.canvas_hover_line_width_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'canvas_hover_line_width'], value))
         left_form.addRow(self.tr("画布悬停线条宽度:"), self.canvas_hover_line_width_spinbox)
@@ -58,6 +62,7 @@ class ColorManagerDialog(QDialog):
         left_form.addRow(self.tr("画布选中线条颜色:"), self.canvas_select_line_color_button)
 
         self.canvas_select_line_width_spinbox = QDoubleSpinBox()
+        self.canvas_select_line_width_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.canvas_select_line_width_spinbox.setValue(self.config['shape']['canvas_select_line_width'])
         self.canvas_select_line_width_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'canvas_select_line_width'], value))
         left_form.addRow(self.tr("画布选中线条宽度:"), self.canvas_select_line_width_spinbox)
@@ -72,6 +77,7 @@ class ColorManagerDialog(QDialog):
         left_form.addRow(self.tr("选择标签时填充颜色:"), self.line_color_button)
 
         self.line_width_spinbox = QDoubleSpinBox()
+        self.line_width_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.line_width_spinbox.setValue(self.config['shape']['line_width'])
         self.line_width_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'line_width'], value))
         left_form.addRow(self.tr("线条宽度:"), self.line_width_spinbox)
@@ -86,17 +92,20 @@ class ColorManagerDialog(QDialog):
         left_form.addRow(self.tr("重叠颜色:"), self.overlap_color_button)
 
         self.overlap_alpha_spinbox = QSpinBox()
+        self.overlap_alpha_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.overlap_alpha_spinbox.setRange(0, 255)
         self.overlap_alpha_spinbox.setValue(self.config['shape']['overlap_color'][3])
         self.overlap_alpha_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'overlap_color_alpha'], value))
         left_form.addRow(self.tr("重叠颜色透明度:"), self.overlap_alpha_spinbox)
 
         self.point_size_spinbox = QDoubleSpinBox()
+        self.point_size_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.point_size_spinbox.setValue(self.config['shape']['point_size'])
         self.point_size_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'point_size'], value))
         left_form.addRow(self.tr("点大小:"), self.point_size_spinbox)
 
         self.square_size_spinbox = QDoubleSpinBox()
+        self.square_size_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.square_size_spinbox.setValue(self.config['shape'].get('square_size', 10))
         self.square_size_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'square_size'], value))
         left_form.addRow(self.tr("块大小:"), self.square_size_spinbox)
@@ -124,17 +133,20 @@ class ColorManagerDialog(QDialog):
         right_form.addRow(self.tr("绘制时线条颜色:"), self.select_line_color_button)
 
         self.select_line_width_spinbox = QDoubleSpinBox()
+        self.select_line_width_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.select_line_width_spinbox.setValue(self.config['shape'].get('select_line_width', 0) or 0)
         self.select_line_width_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'select_line_width'], value))
         right_form.addRow(self.tr("选中线条宽度:"), self.select_line_width_spinbox)
 
         self.shape_fill_alpha_highlight_spinbox = QSpinBox()
+        self.shape_fill_alpha_highlight_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.shape_fill_alpha_highlight_spinbox.setRange(0, 255)
         self.shape_fill_alpha_highlight_spinbox.setValue(self.config['shape']['shape_fill_alpha_highlight'])
         self.shape_fill_alpha_highlight_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'shape_fill_alpha_highlight'], value))
         right_form.addRow(self.tr("形状填充高亮透明度:"), self.shape_fill_alpha_highlight_spinbox)
 
         self.shape_fill_alpha_idle_spinbox = QSpinBox()
+        self.shape_fill_alpha_idle_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.shape_fill_alpha_idle_spinbox.setRange(0, 255)
         self.shape_fill_alpha_idle_spinbox.setValue(self.config['shape']['shape_fill_alpha_idle'])
         self.shape_fill_alpha_idle_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'shape_fill_alpha_idle'], value))
@@ -151,17 +163,20 @@ class ColorManagerDialog(QDialog):
         right_form.addRow(self.tr("对齐工具被执行颜色:"), self.alignment_target_color_button)
 
         self.alignment_reference_line_width_spinbox = QDoubleSpinBox()
+        self.alignment_reference_line_width_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.alignment_reference_line_width_spinbox.setValue(self.config['shape'].get('alignment_reference_line_width', 4.0))
         self.alignment_reference_line_width_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'alignment_reference_line_width'], value))
         right_form.addRow(self.tr("对齐工具参照线宽度:"), self.alignment_reference_line_width_spinbox)
 
         self.alignment_target_line_width_spinbox = QDoubleSpinBox()
+        self.alignment_target_line_width_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.alignment_target_line_width_spinbox.setValue(self.config['shape'].get('alignment_target_line_width', 2.0))
         self.alignment_target_line_width_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'alignment_target_line_width'], value))
         right_form.addRow(self.tr("对齐工具被执行线宽度:"), self.alignment_target_line_width_spinbox)
 
         # Paste preview settings (虚影样式设置)
         self.paste_preview_line_width_spinbox = QDoubleSpinBox()
+        self.paste_preview_line_width_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.paste_preview_line_width_spinbox.setRange(0.5, 10.0)
         self.paste_preview_line_width_spinbox.setSingleStep(0.5)
         self.paste_preview_line_width_spinbox.setValue(self.config.get('paste_preview_line_width', 2.0))
@@ -169,6 +184,7 @@ class ColorManagerDialog(QDialog):
         right_form.addRow(self.tr("虚影线条粗细:"), self.paste_preview_line_width_spinbox)
 
         self.paste_preview_opacity_spinbox = QDoubleSpinBox()
+        self.paste_preview_opacity_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.paste_preview_opacity_spinbox.setRange(0.0, 1.0)
         self.paste_preview_opacity_spinbox.setSingleStep(0.1)
         self.paste_preview_opacity_spinbox.setValue(self.config.get('paste_preview_opacity', 0.4))
@@ -176,6 +192,7 @@ class ColorManagerDialog(QDialog):
         right_form.addRow(self.tr("虚影透明度:"), self.paste_preview_opacity_spinbox)
 
         self.paste_preview_fill_opacity_spinbox = QDoubleSpinBox()
+        self.paste_preview_fill_opacity_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.paste_preview_fill_opacity_spinbox.setRange(0.0, 1.0)
         self.paste_preview_fill_opacity_spinbox.setSingleStep(0.1)
         self.paste_preview_fill_opacity_spinbox.setValue(self.config.get('paste_preview_fill_opacity', 0.3))
@@ -184,6 +201,7 @@ class ColorManagerDialog(QDialog):
 
         # Smart guides settings (辅助线样式设置)
         self.smart_guides_line_width_spinbox = QDoubleSpinBox()
+        self.smart_guides_line_width_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.smart_guides_line_width_spinbox.setRange(0.5, 10.0)
         self.smart_guides_line_width_spinbox.setSingleStep(0.5)
         self.smart_guides_line_width_spinbox.setValue(self.config.get('smart_guides_line_width', 2.0))
@@ -191,6 +209,7 @@ class ColorManagerDialog(QDialog):
         right_form.addRow(self.tr("辅助线线条粗细:"), self.smart_guides_line_width_spinbox)
 
         self.smart_guides_opacity_spinbox = QDoubleSpinBox()
+        self.smart_guides_opacity_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.smart_guides_opacity_spinbox.setRange(0.0, 1.0)
         self.smart_guides_opacity_spinbox.setSingleStep(0.1)
         self.smart_guides_opacity_spinbox.setValue(self.config.get('smart_guides_opacity', 0.8))
@@ -199,6 +218,7 @@ class ColorManagerDialog(QDialog):
 
         # Rectangle spacing guide settings (矩形间距线样式设置)
         self.spacing_guide_line_width_spinbox = QDoubleSpinBox()
+        self.spacing_guide_line_width_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.spacing_guide_line_width_spinbox.setRange(0.5, 10.0)
         self.spacing_guide_line_width_spinbox.setSingleStep(0.5)
         self.spacing_guide_line_width_spinbox.setValue(self.config.get('spacing_guide_line_width', 2.0))
@@ -206,11 +226,21 @@ class ColorManagerDialog(QDialog):
         right_form.addRow(self.tr("间距线线条粗细:"), self.spacing_guide_line_width_spinbox)
 
         self.spacing_guide_opacity_spinbox = QDoubleSpinBox()
+        self.spacing_guide_opacity_spinbox.setFixedWidth(SPINBOX_WIDTH)
         self.spacing_guide_opacity_spinbox.setRange(0.0, 1.0)
         self.spacing_guide_opacity_spinbox.setSingleStep(0.1)
         self.spacing_guide_opacity_spinbox.setValue(self.config.get('spacing_guide_opacity', 0.8))
         self.spacing_guide_opacity_spinbox.valueChanged.connect(lambda value: self._on_setting_changed('spacing_guide_opacity', value))
         right_form.addRow(self.tr("间距线透明度:"), self.spacing_guide_opacity_spinbox)
+
+        # Canvas zoom settings (画布缩放设置)
+        self.zoom_at_mouse_percentage_spinbox = QSpinBox()
+        self.zoom_at_mouse_percentage_spinbox.setFixedWidth(SPINBOX_WIDTH)
+        self.zoom_at_mouse_percentage_spinbox.setRange(1, 9999)
+        self.zoom_at_mouse_percentage_spinbox.setSingleStep(5)
+        self.zoom_at_mouse_percentage_spinbox.setValue(self.config.get('canvas', {}).get('zoom_at_mouse_percentage_increase', 20))
+        self.zoom_at_mouse_percentage_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['canvas', 'zoom_at_mouse_percentage_increase'], value))
+        right_form.addRow(self.tr("鼠标缩放倍率(%):"), self.zoom_at_mouse_percentage_spinbox)
 
         # 将左列添加到水平布局
         columns_layout.addLayout(left_form)
