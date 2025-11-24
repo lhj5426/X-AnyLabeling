@@ -1,11 +1,15 @@
 from PyQt5 import QtCore, QtGui, QtWidgets
 import os
+import json
 
 from ..label_file import LabelFile
 from ..shape import Shape
 
 # Fixed base width for the scene in vertical mode.
 SCENE_BASE_WIDTH = 1000
+
+# 顶点大小
+VERTEX_SIZE = 8
 
 class ImageLoaderSignals(QtCore.QObject):
     loaded = QtCore.pyqtSignal(str, QtGui.QImage, float, list, float) # path, image, aspect_ratio, shapes, scale_factor
@@ -788,6 +792,8 @@ class VerticalViewerDialog(QtWidgets.QDialog):
 
     def switch_to_image(self, path):
         self.image_switched.emit(path)
+        # 切换后自动最小化窗口，方便在主界面操作
+        self.showMinimized()
 
     def trigger_open_horizontal_viewer(self):
         center_item = self.get_center_item()

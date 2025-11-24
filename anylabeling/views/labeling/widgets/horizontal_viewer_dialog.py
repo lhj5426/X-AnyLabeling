@@ -350,7 +350,10 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        # 首次显示时，在居中位置基础上向上偏移20像素
         if not self.populated:
+            current_pos = self.pos()
+            self.move(current_pos.x(), current_pos.y() - 20)
             QtCore.QTimer.singleShot(50, self.populate_scene)
             self.populated = True
         QtCore.QTimer.singleShot(100, self.view.setFocus)
@@ -572,6 +575,8 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
 
     def switch_to_image(self, path):
         self.image_switched.emit(path)
+        # 切换后自动最小化窗口，方便在主界面操作
+        self.showMinimized()
 
     def trigger_open_vertical_viewer(self):
         center_item = self.get_center_item()
