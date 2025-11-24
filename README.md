@@ -37,13 +37,17 @@ https://www.basiccat.org/zh/imagetrans/
 
 
 
-和 垂直滚动看图功能
-
-<img width="1916" height="1050" alt="image" src="https://github.com/user-attachments/assets/850ba8c1-d56f-4481-bdc6-71a27a888d34" />
+和 垂直滚动看图功能 
 
 
+<img width="1916" height="1047" alt="image" src="https://github.com/user-attachments/assets/fd4b1bb9-c924-4f4d-9926-5d3ea06e2f77" />
 
-无论是看 CG 还是看 韩国条漫 都可以 增强看图看漫画的阅读体验
+
+
+
+无论是看 CG 还是看 韩国条漫（隐藏分隔符） 都可以 
+
+增强看图看漫画的阅读体验
 
 本工具打通了看漫画的第一步文字检测  和看漫画的最后一步看的阅读体验
 
