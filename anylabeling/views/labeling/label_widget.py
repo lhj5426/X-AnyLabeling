@@ -9003,6 +9003,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.last_open_dir = dirpath
         self.file_list_widget.clear()
         self.fn_to_index = {}
+        self.zoom_values = {}  # 清空缩放记录，打开新文件夹时以适合窗口模式显示
         
         # Optimization: Block signals during batch insertion to improve performance
         self.file_list_widget.blockSignals(True)
