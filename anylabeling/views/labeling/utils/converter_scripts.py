@@ -5,10 +5,17 @@ import math
 from pathlib import Path
 from PIL import Image
 
-def convert_ballons_to_anylabel(ballons_json_path):
+def convert_ballons_to_anylabel(ballons_json_path, text_mode='both'):
     """
     将 BallonsTranslator 的项目文件转换为多个 X-AnyLabeling 的 .json 标注文件。
     *** 新版本: 支持对带有 "angle" 字段的框进行反向旋转变换，生成精确的旋转框。***
+    
+    Args:
+        ballons_json_path: BallonsTranslator 项目文件路径
+        text_mode: 文本导入模式
+            - 'source': 仅导入原文 (text 字段)
+            - 'target': 仅导入译文 (translation 字段)
+            - 'both': 导入原文/译文 (默认)
     """
     try:
         base_dir = Path(ballons_json_path).parent
@@ -43,7 +50,23 @@ def convert_ballons_to_anylabel(ballons_json_path):
 
         shapes = []
         for item in items:
-            description = ''.join(item.get('text', []))
+            # 根据 text_mode 处理文本内容
+            source_text = ''.join(item.get('text', []))
+            target_text = item.get('translation', '')
+            
+            if text_mode == 'source':
+                description = source_text
+            elif text_mode == 'target':
+                description = target_text
+            else:  # text_mode == 'both'
+                if source_text and target_text:
+                    description = f"{source_text}/{target_text}"
+                elif source_text:
+                    description = source_text
+                elif target_text:
+                    description = target_text
+                else:
+                    description = ""
             
             # --- 核心改动: 读取角度和几何信息 ---
             angle_deg = item.get('angle', 0)

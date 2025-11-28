@@ -2570,3 +2570,415 @@ def export_labelplus_annotation(self):
     self.export_thread.start()
 
     progress_dialog.canceled.connect(self.export_thread.terminate)
+
+
+def export_description_txt(self):
+    """
+    导出所有标注的 description 字段到 TXT 文件
+    支持每个图片一个 TXT 文件，或合并到单个 TXT 文件
+    """
+    if not _check_filename_exist(self):
+        return
+
+    # 创建导出选项对话框
+    dialog = QtWidgets.QDialog(self)
+    dialog.setWindowTitle(self.tr("导出文本到TXT"))
+    dialog.setMinimumWidth(500)
+    dialog.setStyleSheet(get_export_option_style())
+
+    layout = QVBoxLayout()
+    layout.setContentsMargins(24, 24, 24, 24)
+    layout.setSpacing(16)
+
+    # 导出模式选择（独立文件 vs 单个文件）
+    export_mode_label = QtWidgets.QLabel(self.tr("导出模式"))
+    layout.addWidget(export_mode_label)
+
+    export_mode_group = QtWidgets.QButtonGroup(dialog)
+    
+    separate_files_radio = QtWidgets.QRadioButton(
+        self.tr("每个图片一个TXT文件")
+    )
+    separate_files_radio.setChecked(True)
+    
+    single_file_radio = QtWidgets.QRadioButton(
+        self.tr("合并到单个TXT文件")
+    )
+    
+    export_mode_group.addButton(separate_files_radio, 0)
+    export_mode_group.addButton(single_file_radio, 1)
+    
+    layout.addWidget(separate_files_radio)
+    layout.addWidget(single_file_radio)
+
+    # 导出路径选择
+    path_layout = QVBoxLayout()
+    path_label = QtWidgets.QLabel(self.tr("导出路径"))
+    path_layout.addWidget(path_label)
+
+    path_input_layout = QHBoxLayout()
+    path_input_layout.setSpacing(8)
+
+    path_edit = QtWidgets.QLineEdit()
+    default_dir = osp.realpath(osp.join(osp.dirname(self.filename), "..", "descriptions"))
+    path_edit.setText(default_dir)
+    path_edit.setPlaceholderText(self.tr("选择导出目录"))
+
+    def browse_export_path():
+        if single_file_radio.isChecked():
+            # 单个文件模式：选择保存文件
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self,
+                self.tr("选择导出文件"),
+                path_edit.text(),
+                self.tr("文本文件 (*.txt);;所有文件 (*)"),
+            )
+        else:
+            # 独立文件模式：选择目录
+            path = QtWidgets.QFileDialog.getExistingDirectory(
+                self,
+                self.tr("选择导出目录"),
+                path_edit.text(),
+                QtWidgets.QFileDialog.DontUseNativeDialog,
+            )
+        if path:
+            path_edit.setText(path)
+
+    def get_filename_by_text_mode():
+        """根据文本模式获取默认文件名"""
+        if all_radio.isChecked():
+            return "全部文本.txt"
+        elif source_only_radio.isChecked():
+            return "原文文本.txt"
+        elif target_only_radio.isChecked():
+            return "译文文本.txt"
+        return "全部文本.txt"
+
+    def on_export_mode_changed():
+        if single_file_radio.isChecked():
+            # 切换到单个文件模式
+            filename = get_filename_by_text_mode()
+            default_file = osp.realpath(osp.join(osp.dirname(self.filename), "..", filename))
+            path_edit.setText(default_file)
+            path_edit.setPlaceholderText(self.tr("选择导出文件"))
+            path_label.setText(self.tr("导出文件"))
+        else:
+            # 切换到独立文件模式
+            default_dir = osp.realpath(osp.join(osp.dirname(self.filename), "..", "descriptions"))
+            path_edit.setText(default_dir)
+            path_edit.setPlaceholderText(self.tr("选择导出目录"))
+            path_label.setText(self.tr("导出路径"))
+
+    def on_text_mode_changed():
+        """文本选项变化时更新文件名（仅在单文件模式下）"""
+        if single_file_radio.isChecked():
+            # 获取当前路径的目录部分
+            current_path = path_edit.text()
+            parent_dir = osp.dirname(current_path)
+            # 使用新的文件名
+            filename = get_filename_by_text_mode()
+            new_path = osp.join(parent_dir, filename)
+            path_edit.setText(new_path)
+
+    separate_files_radio.toggled.connect(on_export_mode_changed)
+
+    path_button = QtWidgets.QPushButton(self.tr("浏览"))
+    path_button.clicked.connect(browse_export_path)
+    path_button.setStyleSheet(get_cancel_btn_style())
+
+    path_input_layout.addWidget(path_edit)
+    path_input_layout.addWidget(path_button)
+    path_layout.addLayout(path_input_layout)
+    layout.addLayout(path_layout)
+
+    # 导出选项
+    options_label = QtWidgets.QLabel(self.tr("文本选项"))
+    layout.addWidget(options_label)
+
+    # 文本模式选择
+    text_mode_group = QtWidgets.QButtonGroup(dialog)
+    
+    all_radio = QtWidgets.QRadioButton(
+        self.tr("导出全部文本（原文/译文）")
+    )
+    all_radio.setToolTip(self.tr("格式：原文[TAB]译文"))
+    all_radio.setChecked(True)
+    
+    source_only_radio = QtWidgets.QRadioButton(
+        self.tr("仅导出原文（/ 前面的部分）")
+    )
+    source_only_radio.setToolTip(self.tr("如果文本包含 /，只导出前半部分"))
+    
+    target_only_radio = QtWidgets.QRadioButton(
+        self.tr("仅导出译文（/ 后面的部分）")
+    )
+    target_only_radio.setToolTip(self.tr("如果文本包含 /，只导出后半部分"))
+    
+    text_mode_group.addButton(all_radio, 0)
+    text_mode_group.addButton(source_only_radio, 1)
+    text_mode_group.addButton(target_only_radio, 2)
+    
+    layout.addWidget(all_radio)
+    layout.addWidget(source_only_radio)
+    layout.addWidget(target_only_radio)
+
+    # 连接文本选项信号
+    all_radio.toggled.connect(on_text_mode_changed)
+    source_only_radio.toggled.connect(on_text_mode_changed)
+    target_only_radio.toggled.connect(on_text_mode_changed)
+
+    # 其他选项
+    skip_empty_checkbox = QtWidgets.QCheckBox(
+        self.tr("跳过空文本")
+    )
+    skip_empty_checkbox.setChecked(True)
+    layout.addWidget(skip_empty_checkbox)
+
+    # 按钮
+    button_layout = QHBoxLayout()
+    button_layout.setContentsMargins(0, 16, 0, 0)
+    button_layout.setSpacing(8)
+
+    cancel_button = QtWidgets.QPushButton(self.tr("取消"))
+    cancel_button.clicked.connect(dialog.reject)
+    cancel_button.setStyleSheet(get_cancel_btn_style())
+
+    ok_button = QtWidgets.QPushButton(self.tr("确定"))
+    ok_button.clicked.connect(dialog.accept)
+    ok_button.setStyleSheet(get_ok_btn_style())
+
+    button_layout.addStretch()
+    button_layout.addWidget(cancel_button)
+    button_layout.addWidget(ok_button)
+    layout.addLayout(button_layout)
+
+    dialog.setLayout(layout)
+    
+    # 显示对话框
+    if dialog.exec_() != QtWidgets.QDialog.Accepted:
+        return
+    
+    # 获取导出模式
+    export_to_single_file = single_file_radio.isChecked()
+
+    # 获取选项
+    save_path = path_edit.text()
+    skip_empty = skip_empty_checkbox.isChecked()
+    
+    selected_id = text_mode_group.checkedId()
+    text_mode_map = {0: 'all', 1: 'source', 2: 'target'}
+    text_mode = text_mode_map.get(selected_id, 'all')
+
+    # 检查路径是否存在
+    if export_to_single_file:
+        # 单文件模式：检查文件是否存在
+        if osp.exists(save_path):
+            msg_box = QtWidgets.QMessageBox(self)
+            msg_box.setIcon(QtWidgets.QMessageBox.Warning)
+            msg_box.setWindowTitle(self.tr("文件已存在！"))
+            msg_box.setText(self.tr("文件已存在，是否覆盖？"))
+            msg_box.addButton(self.tr("是"), QtWidgets.QMessageBox.YesRole)
+            cancel_button = msg_box.addButton(
+                self.tr("取消"), QtWidgets.QMessageBox.RejectRole
+            )
+            msg_box.setStyleSheet(get_msg_box_style())
+            msg_box.exec_()
+            if msg_box.clickedButton() == cancel_button:
+                return
+        # 确保父目录存在
+        parent_dir = osp.dirname(save_path)
+        if parent_dir and not osp.exists(parent_dir):
+            os.makedirs(parent_dir)
+    else:
+        # 独立文件模式：检查目录是否存在
+        if osp.exists(save_path):
+            msg_box = QtWidgets.QMessageBox(self)
+            msg_box.setIcon(QtWidgets.QMessageBox.Warning)
+            msg_box.setWindowTitle(self.tr("输出目录已存在！"))
+            msg_box.setText(self.tr("目录已存在，请选择一个操作："))
+            msg_box.setInformativeText(
+                self.tr(
+                    "• 是 (Yes) - 合并到现有文件\n"
+                    "• 否 (No) - 删除现有目录\n"
+                    "• 取消 (Cancel) - 中止导出"
+                )
+            )
+
+            msg_box.addButton(self.tr("是"), QtWidgets.QMessageBox.YesRole)
+            no_button = msg_box.addButton(
+                self.tr("否"), QtWidgets.QMessageBox.NoRole
+            )
+            cancel_button = msg_box.addButton(
+                self.tr("取消"), QtWidgets.QMessageBox.RejectRole
+            )
+            msg_box.setStyleSheet(get_msg_box_style())
+            msg_box.exec_()
+
+            clicked_button = msg_box.clickedButton()
+            if clicked_button == no_button:
+                shutil.rmtree(save_path)
+                os.makedirs(save_path)
+            elif clicked_button == cancel_button:
+                return
+        else:
+            os.makedirs(save_path)
+
+    # 获取图片列表
+    image_list = self.image_list if self.image_list else [self.filename]
+    label_dir_path = osp.dirname(self.filename)
+    if self.output_dir:
+        label_dir_path = self.output_dir
+
+    # 进度对话框
+    progress_dialog = QProgressDialog(
+        self.tr("正在导出..."), self.tr("取消"), 0, len(image_list), self
+    )
+    progress_dialog.setWindowModality(Qt.WindowModal)
+    progress_dialog.setWindowTitle(self.tr("导出进度"))
+    progress_dialog.setMinimumWidth(500)
+    progress_dialog.setMinimumHeight(150)
+    progress_dialog.setStyleSheet(
+        get_progress_dialog_style(color="#1d1d1f", height=20)
+    )
+
+    exported_count = 0
+    skipped_count = 0
+    all_descriptions = []  # 用于单文件模式
+
+    def process_description(description, text_mode):
+        """根据文本模式处理description"""
+        if text_mode == 'source':
+            # 只取 / 前的内容
+            if '/' in description:
+                return description.split('/', 1)[0].strip()
+            return description
+        elif text_mode == 'target':
+            # 只取 / 后的内容
+            if '/' in description:
+                parts = description.split('/', 1)
+                return parts[1].strip() if len(parts) > 1 else ''
+            return ''
+        # text_mode == 'all' 时，原文和译文用TAB分隔
+        if '/' in description:
+            parts = description.split('/', 1)
+            source_text = parts[0].strip()
+            target_text = parts[1].strip() if len(parts) > 1 else ''
+            return f"{source_text}\t{target_text}"
+        return description
+
+    try:
+        for i, image_file in enumerate(image_list):
+            image_file_name = osp.basename(image_file)
+            label_file_name = osp.splitext(image_file_name)[0] + ".json"
+            label_file_path = osp.join(label_dir_path, label_file_name)
+
+            # 读取标注文件
+            if not osp.exists(label_file_path):
+                skipped_count += 1
+                progress_dialog.setValue(i + 1)
+                if progress_dialog.wasCanceled():
+                    break
+                continue
+
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception as e:
+                logger.warning(f"无法读取标注文件 {label_file_path}: {e}")
+                skipped_count += 1
+                progress_dialog.setValue(i + 1)
+                if progress_dialog.wasCanceled():
+                    break
+                continue
+
+            # 提取 description
+            descriptions = []
+            for shape in data.get('shapes', []):
+                description = shape.get('description', '')
+                
+                if skip_empty and not description.strip():
+                    continue
+                
+                # 根据文本模式处理
+                description = process_description(description, text_mode)
+                
+                if description or not skip_empty:
+                    descriptions.append(description)
+
+            if export_to_single_file:
+                # 单文件模式：收集所有描述
+                all_descriptions.extend(descriptions)
+                if descriptions:
+                    exported_count += 1
+                else:
+                    skipped_count += 1
+            else:
+                # 独立文件模式：每个图片一个TXT
+                txt_file_name = osp.splitext(image_file_name)[0] + ".txt"
+                txt_file_path = osp.join(save_path, txt_file_name)
+                
+                if descriptions or not skip_empty:
+                    with open(txt_file_path, 'w', encoding='utf-8') as f:
+                        for desc in descriptions:
+                            f.write(f"{desc}\n")
+                    exported_count += 1
+                else:
+                    skipped_count += 1
+
+            progress_dialog.setValue(i + 1)
+            if progress_dialog.wasCanceled():
+                break
+
+        # 单文件模式：写入合并的文件
+        if export_to_single_file and all_descriptions:
+            with open(save_path, 'w', encoding='utf-8') as f:
+                for desc in all_descriptions:
+                    f.write(f"{desc}\n")
+
+        progress_dialog.close()
+        
+        # 显示成功消息
+        mode_names = {
+            'all': self.tr("全部文本（原文/译文）"),
+            'source': self.tr("仅原文"),
+            'target': self.tr("仅译文"),
+            'source_target_tab': self.tr("原文+译文（TAB分隔）")
+        }
+        
+        if export_to_single_file:
+            template = self.tr(
+                "导出文本成功！\n"
+                "文本模式：%s\n"
+                "处理图片：%d 个\n"
+                "跳过图片：%d 个\n"
+                "总行数：%d\n"
+                "保存位置：\n%s"
+            )
+            message_text = template % (mode_names[text_mode], exported_count, skipped_count, len(all_descriptions), save_path)
+        else:
+            template = self.tr(
+                "导出文本成功！\n"
+                "文本模式：%s\n"
+                "成功：%d 个文件\n"
+                "跳过：%d 个文件\n"
+                "保存位置：\n%s"
+            )
+            message_text = template % (mode_names[text_mode], exported_count, skipped_count, save_path)
+        
+        popup = Popup(
+            message_text,
+            self,
+            icon=new_icon_path("copy-green", "svg"),
+        )
+        popup.show_popup(self, popup_height=100, position="center")
+
+    except Exception as e:
+        progress_dialog.close()
+        message = f"导出时发生错误: {str(e)}"
+        logger.error(message)
+        popup = Popup(
+            message,
+            self,
+            icon=new_icon_path("error", "svg"),
+        )
+        popup.show_popup(self, position="center")

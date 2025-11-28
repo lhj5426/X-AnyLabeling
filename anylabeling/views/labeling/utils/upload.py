@@ -129,15 +129,16 @@ class UploadCocoThread(QThread):
 class UploadBallonTranslatorThread(QThread):
     finished = pyqtSignal(bool, str)
 
-    def __init__(self, input_file):
+    def __init__(self, input_file, text_mode='both'):
         super().__init__()
         self.input_file = input_file
+        self.text_mode = text_mode
 
     def run(self):
         try:
             from .converter_scripts import convert_ballons_to_anylabel
             time.sleep(1)
-            convert_ballons_to_anylabel(self.input_file)
+            convert_ballons_to_anylabel(self.input_file, text_mode=self.text_mode)
             self.finished.emit(True, "")
         except Exception as e:
             self.finished.emit(False, str(e))
@@ -1791,6 +1792,79 @@ def upload_ballontranslator_annotation(self):
     if not input_file:
         return
 
+    # 创建文本导入模式选择对话框
+    dialog = QtWidgets.QDialog(self)
+    dialog.setWindowTitle(self.tr("BallonsTranslator 文本导入选项"))
+    dialog.setMinimumWidth(400)
+    dialog.setStyleSheet(get_export_option_style())
+
+    layout = QVBoxLayout()
+    layout.setContentsMargins(24, 24, 24, 24)
+    layout.setSpacing(16)
+
+    # 说明文字
+    info_label = QtWidgets.QLabel(
+        self.tr("请选择要导入的文本内容：")
+    )
+    info_label.setWordWrap(True)
+    layout.addWidget(info_label)
+
+    # 单选按钮组
+    text_mode_group = QtWidgets.QButtonGroup(dialog)
+    
+    source_radio = QtWidgets.QRadioButton(
+        self.tr("仅原文 (text 字段)")
+    )
+    source_radio.setToolTip(self.tr("只导入 BallonsTranslator 的原文内容"))
+    
+    target_radio = QtWidgets.QRadioButton(
+        self.tr("仅译文 (translation 字段)")
+    )
+    target_radio.setToolTip(self.tr("只导入 BallonsTranslator 的译文内容"))
+    
+    both_radio = QtWidgets.QRadioButton(
+        self.tr("原文/译文 (推荐)")
+    )
+    both_radio.setToolTip(self.tr("导入格式：原文/译文"))
+    both_radio.setChecked(True)  # 默认选中
+    
+    text_mode_group.addButton(source_radio, 0)
+    text_mode_group.addButton(target_radio, 1)
+    text_mode_group.addButton(both_radio, 2)
+    
+    layout.addWidget(source_radio)
+    layout.addWidget(target_radio)
+    layout.addWidget(both_radio)
+
+    # 按钮
+    button_layout = QHBoxLayout()
+    button_layout.setContentsMargins(0, 16, 0, 0)
+    button_layout.setSpacing(8)
+
+    cancel_button = QtWidgets.QPushButton(self.tr("取消"))
+    cancel_button.clicked.connect(dialog.reject)
+    cancel_button.setStyleSheet(get_cancel_btn_style())
+
+    ok_button = QtWidgets.QPushButton(self.tr("确定"))
+    ok_button.clicked.connect(dialog.accept)
+    ok_button.setStyleSheet(get_ok_btn_style())
+
+    button_layout.addStretch()
+    button_layout.addWidget(cancel_button)
+    button_layout.addWidget(ok_button)
+    layout.addLayout(button_layout)
+
+    dialog.setLayout(layout)
+    
+    # 显示对话框
+    if dialog.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    # 获取选择的模式
+    selected_id = text_mode_group.checkedId()
+    text_mode_map = {0: 'source', 1: 'target', 2: 'both'}
+    text_mode = text_mode_map.get(selected_id, 'both')
+
     progress_dialog = QProgressDialog(
         self.tr("正在导入 BallonsTranslator 项目..."), self.tr("取消"), 0, 0, self
     )
@@ -1803,7 +1877,7 @@ def upload_ballontranslator_annotation(self):
         get_progress_dialog_style(color="#1d1d1f", height=20)
     )
 
-    self.upload_thread = UploadBallonTranslatorThread(input_file)
+    self.upload_thread = UploadBallonTranslatorThread(input_file, text_mode=text_mode)
 
     def on_upload_finished(success, error_msg):
         progress_dialog.close()
@@ -1850,19 +1924,110 @@ def upload_imagetrans_annotation(self):
     if not input_file:
         return
 
+    # 创建文本导入模式选择对话框
+    dialog = QtWidgets.QDialog(self)
+    dialog.setWindowTitle(self.tr("ImageTrans 文本导入选项"))
+    dialog.setMinimumWidth(400)
+    dialog.setStyleSheet(get_export_option_style())
+
+    layout = QVBoxLayout()
+    layout.setContentsMargins(24, 24, 24, 24)
+    layout.setSpacing(16)
+
+    # 说明文字
+    info_label = QtWidgets.QLabel(
+        self.tr("请选择要导入的文本内容：")
+    )
+    info_label.setWordWrap(True)
+    layout.addWidget(info_label)
+
+    # 单选按钮组
+    text_mode_group = QtWidgets.QButtonGroup(dialog)
+    
+    source_radio = QtWidgets.QRadioButton(
+        self.tr("仅原文 (text 字段)")
+    )
+    source_radio.setToolTip(self.tr("只导入 ImageTrans 的原文内容"))
+    
+    target_radio = QtWidgets.QRadioButton(
+        self.tr("仅译文 (target 字段)")
+    )
+    target_radio.setToolTip(self.tr("只导入 ImageTrans 的译文内容"))
+    
+    both_radio = QtWidgets.QRadioButton(
+        self.tr("原文/译文 (推荐)")
+    )
+    both_radio.setToolTip(self.tr("导入格式：原文/译文"))
+    both_radio.setChecked(True)  # 默认选中
+    
+    text_mode_group.addButton(source_radio, 0)
+    text_mode_group.addButton(target_radio, 1)
+    text_mode_group.addButton(both_radio, 2)
+    
+    layout.addWidget(source_radio)
+    layout.addWidget(target_radio)
+    layout.addWidget(both_radio)
+    
+    # 示例说明
+    example_label = QtWidgets.QLabel(
+        self.tr(
+            "\n示例：\n"
+            "• 仅原文：お父さんと迟のの夕食を...\n"
+            "• 仅译文：我一边和爸爸吃着晚饭...\n"
+            "• 原文/译文：お父さんと迟のの夕食を.../我一边和爸爸吃着晚饭..."
+        )
+    )
+    example_label.setStyleSheet("color: #666; font-size: 11px;")
+    example_label.setWordWrap(True)
+    layout.addWidget(example_label)
+
+    # 按钮
+    button_layout = QHBoxLayout()
+    button_layout.setContentsMargins(0, 16, 0, 0)
+    button_layout.setSpacing(8)
+
+    cancel_button = QtWidgets.QPushButton(self.tr("取消"))
+    cancel_button.clicked.connect(dialog.reject)
+    cancel_button.setStyleSheet(get_cancel_btn_style())
+
+    ok_button = QtWidgets.QPushButton(self.tr("确定"))
+    ok_button.clicked.connect(dialog.accept)
+    ok_button.setStyleSheet(get_ok_btn_style())
+
+    button_layout.addStretch()
+    button_layout.addWidget(cancel_button)
+    button_layout.addWidget(ok_button)
+    layout.addLayout(button_layout)
+
+    dialog.setLayout(layout)
+    
+    # 显示对话框
+    if dialog.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    # 获取选择的模式
+    selected_id = text_mode_group.checkedId()
+    text_mode_map = {0: 'source', 1: 'target', 2: 'both'}
+    text_mode = text_mode_map.get(selected_id, 'both')
+
     try:
-        convert_itp_to_anylabel(input_file)
+        convert_itp_to_anylabel(input_file, text_mode=text_mode)
         
         # 刷新文件列表和UI
         current_dir = osp.dirname(self.filename)
         self.import_image_folder(current_dir, load=True)
 
+        mode_names = {
+            'source': self.tr("原文"),
+            'target': self.tr("译文"),
+            'both': self.tr("原文/译文")
+        }
         popup = Popup(
-            self.tr("成功导入 ImageTrans 标注！\n文件已保存至原始图片目录。"),
+            self.tr(f"成功导入 ImageTrans 标注！\n导入模式：{mode_names[text_mode]}\n文件已保存至原始图片目录。"),
             self,
             icon=new_icon_path("copy-green", "svg"),
         )
-        popup.show_popup(self, popup_height=65, position="center")
+        popup.show_popup(self, popup_height=80, position="center")
 
     except Exception as e:
         message = f"导入标注时发生错误: {str(e)}"

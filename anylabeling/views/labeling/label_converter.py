@@ -1242,9 +1242,22 @@ class LabelConverter:
         if 'points' not in shape or not shape['points']:
             return None
 
-        description_text = shape.get('description') or ''
+        description = shape.get('description') or ''
         label_text = shape.get('label') or ''
         points = shape['points']
+        
+        # 解析 description 字段，支持 "原文/译文" 格式
+        source_text = ""
+        target_text = ""
+        
+        if description:
+            if '/' in description:
+                parts = description.split('/', 1)  # 只分割第一个 /
+                source_text = parts[0].strip()
+                target_text = parts[1].strip() if len(parts) > 1 else ""
+            else:
+                # 如果没有分隔符，将整个内容作为原文
+                source_text = description.strip()
 
         angle_deg = 0.0
         
@@ -1314,8 +1327,8 @@ class LabelConverter:
             "vec": None,
             "norm": -1,
             "merged": False,
-            "text": [description_text],
-            "translation": "", "rich_text": "",
+            "text": [source_text] if source_text else [],
+            "translation": target_text, "rich_text": "",
             "_bounding_rect": _bounding_rect,
             "src_is_vertical": is_vertical,
             "det_model": "XAL_Import",
@@ -1381,12 +1394,29 @@ class LabelConverter:
         """
         Converts a single X-AnyLabeling shape object to ImageTrans's box format.
         Uses OBB for rotation shapes and AABB for others.
+        Supports parsing description field in format: "原文/译文"
         """
         if 'points' not in shape or not shape['points']:
             return None
 
         label = shape.get('label', 'unknown')
         points = shape['points']
+        description = shape.get('description', '')
+        
+        # 解析 description 字段，支持 "原文/译文" 格式
+        text_content = ""
+        target_content = ""
+        
+        if description:
+            # 检查是否包含 / 分隔符
+            if '/' in description:
+                parts = description.split('/', 1)  # 只分割第一个 /
+                text_content = parts[0].strip()
+                target_content = parts[1].strip() if len(parts) > 1 else ""
+            else:
+                # 如果没有分隔符，将整个内容作为原文
+                text_content = description.strip()
+        
         itrans_box = None
 
         if shape.get('shape_type') == 'rotation' and len(points) == 4:
@@ -1416,8 +1446,11 @@ class LabelConverter:
                     "width": math.floor(true_width),
                     "height": math.floor(true_height)
                 },
-                "text": ""
+                "text": text_content
             }
+            # 只有当存在译文时才添加 target 字段
+            if target_content:
+                itrans_box["target"] = target_content
         else:
             x_coords = [p[0] for p in points]
             y_coords = [p[1] for p in points]
@@ -1436,8 +1469,11 @@ class LabelConverter:
                     "width": math.floor(width),
                     "height": math.floor(height)
                 },
-                "text": ""
+                "text": text_content
             }
+            # 只有当存在译文时才添加 target 字段
+            if target_content:
+                itrans_box["target"] = target_content
         
         return itrans_box
 

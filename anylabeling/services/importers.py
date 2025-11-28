@@ -3,10 +3,17 @@ import math
 from pathlib import Path
 from PIL import Image
 
-def convert_itp_to_anylabel(itp_json_path):
+def convert_itp_to_anylabel(itp_json_path, text_mode='both'):
     """
     将 ImageTrans 的 .itp 项目文件转换为多个 X-AnyLabeling 的 .json 标注文件。
     *** 新版本: 支持对带有 "degree" 字段的 box 进行旋转变换，生成精确的旋转框。***
+    
+    Args:
+        itp_json_path: ImageTrans 项目文件路径
+        text_mode: 文本导入模式
+            - 'source': 仅导入原文 (text 字段)
+            - 'target': 仅导入译文 (target 字段)
+            - 'both': 导入原文/译文 (默认)
     """
     try:
         base_dir = Path(itp_json_path).parent
@@ -44,7 +51,25 @@ def convert_itp_to_anylabel(itp_json_path):
             geo = box.get("geometry", {})
             x, y = geo.get("X", 0), geo.get("Y", 0)
             w, h = geo.get("width", 0), geo.get("height", 0)
-            description = box.get("text", "")
+            
+            # 根据 text_mode 处理文本内容
+            source_text = box.get("text", "")
+            target_text = box.get("target", "")
+            
+            if text_mode == 'source':
+                description = source_text
+            elif text_mode == 'target':
+                description = target_text
+            else:  # text_mode == 'both'
+                if source_text and target_text:
+                    description = f"{source_text}/{target_text}"
+                elif source_text:
+                    description = source_text
+                elif target_text:
+                    description = target_text
+                else:
+                    description = ""
+            
             label = box.get("fontstyle", "unknown")
             degree = box.get("degree", 0)
 

@@ -2144,6 +2144,13 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="format_coco",
             tip=self.tr("导出 LabelPlus 格式（使用矩形右上角或点位置）"),
         )
+        export_description_txt = action(
+            self.tr("导出文本到TXT"),
+            lambda: utils.export_description_txt(self),
+            None,
+            icon="format_coco",
+            tip=self.tr("导出标注框中的文本内容到TXT文件（每个图片一个TXT）"),
+        )
         # Create action for zoom at mouse
         zoom_at_mouse = action(
             self.tr("Zoom at Mouse"),
@@ -2313,6 +2320,8 @@ class LabelingWidget(QtWidgets.QWidget):
             export_vlm_r1_ovd_annotation=export_vlm_r1_ovd_annotation,
             export_ballontranslator_annotation=export_ballontranslator_annotation,
             export_imagetrans_annotation=export_imagetrans_annotation,
+            export_labelplus_annotation=export_labelplus_annotation,
+            export_description_txt=export_description_txt,
             zoom=zoom,
             zoom_in=zoom_in,
             zoom_out=zoom_out,
@@ -2594,6 +2603,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 export_ballontranslator_annotation,
                 export_imagetrans_annotation,
                 export_labelplus_annotation,
+                None,
+                export_description_txt,
             ),
         )
         utils.add_actions(
@@ -6154,9 +6165,13 @@ class LabelingWidget(QtWidgets.QWidget):
         if not self.may_continue():
             return
         
+        # 保存当前页码到持久化文件
+        current_index = self.file_list_widget.currentRow()
+        if current_index >= 0 and self.last_open_dir:
+            self._save_folder_last_page(self.last_open_dir, current_index)
+        
         # Update expand margins dialog if it is visible
         if self.expand_margins_dialog and self.expand_margins_dialog.isVisible():
-            current_index = self.file_list_widget.currentRow()
             if current_index >= 0:
                 self.expand_margins_dialog.set_current_page(current_index + 1)
 
@@ -9106,7 +9121,52 @@ class LabelingWidget(QtWidgets.QWidget):
 
         if load:
             self.filename = None
-            self.open_next_image(load=load)
+            # 尝试恢复上次浏览的页码
+            last_page = self._load_folder_last_page(dirpath)
+            if last_page is not None and 0 <= last_page < self.file_list_widget.count():
+                self.file_list_widget.setCurrentRow(last_page)
+            else:
+                self.open_next_image(load=load)
+    
+    def _load_folder_last_page(self, folder_path):
+        """从文件夹读取上次浏览的页码和文件名"""
+        try:
+            state_file = osp.join(folder_path, "chijiuhua.chijiuhua")
+            if osp.exists(state_file):
+                with open(state_file, 'r', encoding='utf-8') as f:
+                    lines = f.read().strip().split('\n')
+                    page_index = int(lines[0]) if lines[0].isdigit() else None
+                    filename = lines[1] if len(lines) > 1 else None
+                    
+                    # 优先用文件名匹配
+                    if filename:
+                        for i in range(self.file_list_widget.count()):
+                            item = self.file_list_widget.item(i)
+                            item_filename = item.data(Qt.UserRole) or item.text()
+                            if osp.basename(item_filename) == filename:
+                                return i
+                    
+                    # 文件名找不到，用页码
+                    return page_index
+        except Exception:
+            pass
+        return None
+    
+    def _save_folder_last_page(self, folder_path, page_index):
+        """保存当前页码和文件名到文件夹"""
+        try:
+            state_file = osp.join(folder_path, "chijiuhua.chijiuhua")
+            # 获取当前文件名
+            filename = ""
+            if 0 <= page_index < self.file_list_widget.count():
+                item = self.file_list_widget.item(page_index)
+                full_path = item.data(Qt.UserRole) or item.text()
+                filename = osp.basename(full_path)
+            
+            with open(state_file, 'w', encoding='utf-8') as f:
+                f.write(f"{page_index}\n{filename}")
+        except Exception:
+            pass
     
     def _should_apply_filter(self, filter_config):
         """检查是否需要应用过滤"""
