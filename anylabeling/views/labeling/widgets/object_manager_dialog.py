@@ -227,13 +227,20 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_bottom = QtWidgets.QPushButton(self.tr("置底"))
 
         # Layouts - 三列布局
-        # 最左侧：属性编辑面板
-        v_layout_leftmost = QtWidgets.QVBoxLayout()
+        # 最左侧：属性编辑面板 - 使用容器widget以便完全隐藏
+        self.properties_container = QtWidgets.QWidget()
+        v_layout_leftmost = QtWidgets.QVBoxLayout(self.properties_container)
+        v_layout_leftmost.setContentsMargins(0, 0, 0, 0)
         v_layout_leftmost.addWidget(self.properties_group)
         v_layout_leftmost.addStretch()
+        # 默认隐藏属性面板
+        self.properties_container.hide()
 
-        # 中间：分类控制区域
-        v_layout_middle = QtWidgets.QVBoxLayout()
+        # 中间：分类控制区域 - 使用容器widget并设置固定宽度
+        self.middle_container = QtWidgets.QWidget()
+        self.middle_container.setFixedWidth(160)  # 固定宽度，防止展开后变宽
+        v_layout_middle = QtWidgets.QVBoxLayout(self.middle_container)
+        v_layout_middle.setContentsMargins(0, 0, 0, 0)
         v_layout_middle.addWidget(QtWidgets.QLabel(self.tr("分类整体排序")))
         v_layout_middle.addWidget(self.category_list)
 
@@ -268,8 +275,15 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         h_button_layout_5.addWidget(self.btn_move_bottom)
         v_layout_middle.addLayout(h_button_layout_5)
 
-        # 第6排：应用到全部（复选框，右对齐）
-        v_layout_middle.addWidget(self.apply_all_checkbox, 0, QtCore.Qt.AlignRight)
+        # 第6排：应用到全部 和 展开/收起属性面板按钮
+        h_button_layout_6 = QtWidgets.QHBoxLayout()
+        self.btn_toggle_properties = QtWidgets.QPushButton(self.tr("▶"))  # 默认隐藏，箭头向右
+        self.btn_toggle_properties.setFixedWidth(24)
+        self.btn_toggle_properties.clicked.connect(self._toggle_properties_panel)
+        h_button_layout_6.addWidget(self.btn_toggle_properties)
+        h_button_layout_6.addWidget(self.apply_all_checkbox)
+        h_button_layout_6.addStretch()
+        v_layout_middle.addLayout(h_button_layout_6)
         v_layout_middle.addStretch()
 
         # 最右侧：对象列表
@@ -278,9 +292,9 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         v_layout_right.addWidget(self.list_widget)
 
         main_layout = QtWidgets.QHBoxLayout(self)
-        main_layout.addLayout(v_layout_leftmost, 2)  # 最左侧：属性面板
-        main_layout.addLayout(v_layout_middle, 2)     # 中间：分类和按钮
-        main_layout.addLayout(v_layout_right, 3)      # 最右侧：对象列表
+        main_layout.addWidget(self.properties_container)  # 最左侧：属性面板容器
+        main_layout.addWidget(self.middle_container)      # 中间：分类和按钮（固定宽度）
+        main_layout.addLayout(v_layout_right, 1)          # 最右侧：对象列表（占用剩余空间）
 
         # Connections
         self.list_widget.order_changed.connect(self._emit_order_changed)
@@ -604,6 +618,27 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         """Save current window position and size to settings."""
         settings = QtCore.QSettings()
         settings.setValue("object_manager_dialog/geometry", self.saveGeometry())
+
+    def _toggle_properties_panel(self):
+        """切换属性面板的显示/隐藏状态"""
+        # 固定宽度：隐藏时355，展开时585
+        WIDTH_COLLAPSED = 355
+        WIDTH_EXPANDED = 585
+        
+        if self.properties_container.isVisible():
+            # 隐藏整个容器widget
+            self.properties_container.hide()
+            self.btn_toggle_properties.setText("▶")
+            # 先设置最大宽度限制，再resize
+            self.setMaximumWidth(WIDTH_COLLAPSED)
+            self.resize(WIDTH_COLLAPSED, self.height())
+            # 恢复最大宽度为无限制（允许用户手动拉大）
+            self.setMaximumWidth(16777215)
+        else:
+            # 显示容器
+            self.properties_container.show()
+            self.btn_toggle_properties.setText("◀")
+            self.resize(WIDTH_EXPANDED, self.height())
 
     def show(self):
         """Override show to restore from minimized state."""
