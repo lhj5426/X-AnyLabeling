@@ -1499,9 +1499,14 @@ def upload_yolo_annotation(self, mode, LABEL_OPACITY):
         get_progress_dialog_style(color="#1d1d1f", height=20)
     )
 
+    # 定义支持的图片扩展名
+    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.tif', '.webp'}
+    
     try:
         for i, image_filename in enumerate(image_file_list):
-            if image_filename.endswith(".json"):
+            # 跳过非图片文件（包括.json, .txt等）
+            file_ext = osp.splitext(image_filename)[1].lower()
+            if file_ext not in image_extensions:
                 continue
             label_filename = osp.splitext(image_filename)[0] + ".txt"
             data_filename = osp.splitext(image_filename)[0] + ".json"
