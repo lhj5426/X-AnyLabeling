@@ -474,11 +474,23 @@ https://github.com/user-attachments/assets/22d6f35f-56fa-43fb-91e2-0536e3b802a6
 
 https://github.com/user-attachments/assets/69047e72-5cd7-4464-bd3c-1dc21cfdd2e8
 
+92.导入增加 ImageTrans 和 BallonsTranslator 的原文和译文导入选项了 导出支持 导出原文和译文了
+ 
+<img width="415" height="350" alt="image" src="https://github.com/user-attachments/assets/d060f9d4-ab31-4fb5-a297-816308cd5fed" />
 
+<img width="425" height="282" alt="image" src="https://github.com/user-attachments/assets/23600500-2aa2-4041-ae99-d1ad6d36dcf2" />
 
+93.页文本工具支持 显示原文和译文了
 
+<img width="827" height="467" alt="image" src="https://github.com/user-attachments/assets/31b43320-26c7-4692-8f47-28e744da9da0" />
 
+94.导出菜单项增加 导出TXT文本的选项 支持导出原文和译文
 
+<img width="1007" height="728" alt="image" src="https://github.com/user-attachments/assets/2571c63d-3e6c-423e-9247-e3726dc12b9c" />
+
+95.文件夹支持持久化了 会记录最后关闭的文件 打开之后自动恢复 不需要自己记住弄到哪里了
+
+https://github.com/user-attachments/assets/699c8f0d-a9b4-4a9f-a967-dcd32844a8dc
 
 
 
