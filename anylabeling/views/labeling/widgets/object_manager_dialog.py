@@ -303,6 +303,7 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.list_widget.customContextMenuRequested.connect(self._pop_list_menu)
         
         self.category_list.category_selection_changed.connect(self._on_category_selection_changed)
+        self.category_list.category_double_clicked.connect(self._on_category_double_clicked)
         self.btn_move_category_top.clicked.connect(lambda: self.reorder_by_category(move_to_top=True))
         self.btn_move_category_bottom.clicked.connect(lambda: self.reorder_by_category(move_to_top=False))
         self.btn_delete_by_category.clicked.connect(self.delete_by_category)
@@ -671,6 +672,23 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         # Also select all shapes on canvas if main_window is available
         if self.main_window and hasattr(self.main_window, 'canvas'):
             self.main_window.canvas.select_all_visible_shapes()
+
+    def _on_category_double_clicked(self, category_name):
+        """双击分类时，自动勾选该分类并弹出修改标签对话框"""
+        # 1. 先取消所有分类的勾选
+        for i in range(self.category_list.count()):
+            item = self.category_list.item(i)
+            if item.checkState() == QtCore.Qt.Checked:
+                item.setCheckState(QtCore.Qt.Unchecked)
+        
+        # 2. 勾选双击的分类
+        self.category_list.set_category_checked(category_name, True)
+        
+        # 3. 选中该分类的所有标签
+        self._on_category_selection_changed(category_name, True)
+        
+        # 4. 触发修改标签对话框
+        self.edit_requested.emit()
 
     def _on_category_selection_changed(self, category_name, is_checked):
         """Select/deselect all shapes of a given category in the list widget and on the canvas."""

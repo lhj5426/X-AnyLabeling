@@ -6,11 +6,13 @@ class LabelCategoryWidget(QtWidgets.QListWidget):
     """A widget to display a list of label categories with checkboxes."""
 
     category_selection_changed = QtCore.pyqtSignal(str, bool)
+    category_double_clicked = QtCore.pyqtSignal(str)  # 双击分类时发出信号
 
     def __init__(self, parent=None):
         super(LabelCategoryWidget, self).__init__(parent)
         self.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         self.itemChanged.connect(self._on_item_changed)
+        self.itemDoubleClicked.connect(self._on_item_double_clicked)
 
     def add_category(self, category_name):
         """Adds a new category to the list if it doesn't exist."""
@@ -53,3 +55,8 @@ class LabelCategoryWidget(QtWidgets.QListWidget):
         category_name = item.text()
         is_checked = item.checkState() == Qt.Checked
         self.category_selection_changed.emit(category_name, is_checked)
+
+    def _on_item_double_clicked(self, item):
+        """双击分类时发出信号"""
+        category_name = item.text()
+        self.category_double_clicked.emit(category_name)
