@@ -8414,6 +8414,8 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def scale_fit_window(self):
         """Figure out the size of the pixmap to fit the main widget."""
+        if not self.canvas.pixmap:
+            return 1.0
         e = 2.0  # So that no scrollbars are generated.
         w1 = self.central_widget().width() - e
         h1 = self.central_widget().height() - e
@@ -8426,6 +8428,8 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def scale_fit_width(self):
         # The epsilon does not seem to work too well here.
+        if not self.canvas.pixmap:
+            return 1.0
         w = self.central_widget().width() - 2.0
         return w / self.canvas.pixmap.width()
 

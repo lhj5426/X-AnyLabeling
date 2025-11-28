@@ -1967,19 +1967,6 @@ def upload_imagetrans_annotation(self):
     layout.addWidget(source_radio)
     layout.addWidget(target_radio)
     layout.addWidget(both_radio)
-    
-    # 示例说明
-    example_label = QtWidgets.QLabel(
-        self.tr(
-            "\n示例：\n"
-            "• 仅原文：お父さんと迟のの夕食を...\n"
-            "• 仅译文：我一边和爸爸吃着晚饭...\n"
-            "• 原文/译文：お父さんと迟のの夕食を.../我一边和爸爸吃着晚饭..."
-        )
-    )
-    example_label.setStyleSheet("color: #666; font-size: 11px;")
-    example_label.setWordWrap(True)
-    layout.addWidget(example_label)
 
     # 按钮
     button_layout = QHBoxLayout()
