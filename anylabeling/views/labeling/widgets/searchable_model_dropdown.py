@@ -22,6 +22,9 @@ _MODELS_CONFIG_PATH = os.path.join(
     os.path.expanduser("~"), "xanylabeling_data/models.json"
 )
 
+# Maximum number of custom models to remember (excluding "load_custom_model")
+MAX_CUSTOM_MODELS = 30
+
 
 class SearchBar(QLineEdit):
     def __init__(self, parent=None):
@@ -59,8 +62,11 @@ class SearchBar(QLineEdit):
 
 
 class ProviderSection(QFrame):
+    clearCustomModelsRequested = pyqtSignal()
+
     def __init__(self, provider_name, parent=None):
         super().__init__(parent)
+        self.provider_name = provider_name
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
 
@@ -92,12 +98,41 @@ class ProviderSection(QFrame):
         )
         header.addWidget(label)
         header.addStretch()
+
+        # Add clear button for Custom section
+        if provider_name == "Custom":
+            self.clear_button = QPushButton("清空")
+            self.clear_button.setFixedSize(40, 20)
+            self.clear_button.setStyleSheet(
+                """
+                QPushButton {
+                    background-color: #ff6b6b;
+                    color: white;
+                    border: none;
+                    border-radius: 3px;
+                    font-size: 11px;
+                    padding: 2px 5px;
+                }
+                QPushButton:hover {
+                    background-color: #ee5a5a;
+                }
+                QPushButton:pressed {
+                    background-color: #dd4949;
+                }
+            """
+            )
+            self.clear_button.clicked.connect(self._on_clear_clicked)
+            header.addWidget(self.clear_button)
+
         layout.addLayout(header)
 
         # Container for model items
         self.models_container = QVBoxLayout()
         self.models_container.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(self.models_container)
+
+    def _on_clear_clicked(self):
+        self.clearCustomModelsRequested.emit()
 
     def add_model_item(self, model_item):
         self.models_container.addWidget(model_item)
@@ -347,6 +382,12 @@ class SearchableModelDropdownPopup(QWidget):
             provider_section = ProviderSection(provider)
             self.container_layout.addWidget(provider_section)
 
+            # Connect clear button signal for Custom section
+            if provider == "Custom":
+                provider_section.clearCustomModelsRequested.connect(
+                    self.clear_custom_models
+                )
+
             for model_name, model_data in models.items():
                 model_item = ModelItem(model_name, model_data)
                 model_item.clicked.connect(self.select_model)
@@ -411,9 +452,67 @@ class SearchableModelDropdownPopup(QWidget):
         if not os.path.exists(_MODELS_CONFIG_PATH):
             model_config = {"models_data": {}}
         else:
-            model_config = load_json(_MODELS_CONFIG_PATH)
-        model_config["models_data"] = self.models_data
+            try:
+                model_config = load_json(_MODELS_CONFIG_PATH)
+            except Exception:
+                model_config = {"models_data": {}}
+
+        # Make a deep copy to avoid modifying original data
+        import copy
+        models_data_to_save = copy.deepcopy(self.models_data)
+
+        # Limit the number of custom models
+        if "Custom" in models_data_to_save:
+            custom_models = models_data_to_save["Custom"].copy()
+            # Separate load_custom_model from other custom models
+            load_custom_model = custom_models.pop("load_custom_model", None)
+            
+            # If we have more than MAX_CUSTOM_MODELS, keep only the most recent ones
+            if len(custom_models) > MAX_CUSTOM_MODELS:
+                # Keep the selected model and favorites, then fill with others
+                selected_models = {k: v for k, v in custom_models.items() if v.get("selected", False)}
+                favorite_models = {k: v for k, v in custom_models.items() if v.get("favorite", False) and k not in selected_models}
+                other_models = {k: v for k, v in custom_models.items() if k not in selected_models and k not in favorite_models}
+                
+                # Calculate how many "other" models we can keep
+                remaining_slots = MAX_CUSTOM_MODELS - len(selected_models) - len(favorite_models)
+                if remaining_slots > 0:
+                    # Keep the last N other models (most recently added)
+                    other_keys = list(other_models.keys())[-remaining_slots:]
+                    other_models = {k: other_models[k] for k in other_keys}
+                else:
+                    other_models = {}
+                
+                # Rebuild custom_models
+                custom_models = {**selected_models, **favorite_models, **other_models}
+            
+            # Restore load_custom_model at the beginning
+            if load_custom_model:
+                models_data_to_save["Custom"] = {"load_custom_model": load_custom_model, **custom_models}
+            else:
+                models_data_to_save["Custom"] = custom_models
+
+        model_config["models_data"] = models_data_to_save
         save_json(model_config, _MODELS_CONFIG_PATH)
+
+    def clear_custom_models(self):
+        """Clear all custom models from the list (keep only load_custom_model)"""
+        if "Custom" in self.models_data:
+            # Keep only the "load_custom_model" entry
+            load_custom_model_data = self.models_data["Custom"].get(
+                "load_custom_model",
+                {
+                    "selected": False,
+                    "favorite": False,
+                    "display_name": "...Load Custom Model",
+                }
+            )
+            self.models_data["Custom"] = {
+                "load_custom_model": load_custom_model_data
+            }
+            # Save to models.json - this is the only source for custom models now
+            self.save_models_data()
+            self.setup_model_list()
 
     def filter_models(self, search_text, match_threshold=0.7):
         empty_text = "No models found."

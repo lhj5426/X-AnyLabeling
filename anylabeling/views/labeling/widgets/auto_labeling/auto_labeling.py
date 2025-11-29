@@ -31,6 +31,7 @@ from anylabeling.views.labeling.widgets.searchable_model_dropdown import (
     load_json,
     save_json,
     _MODELS_CONFIG_PATH,
+    MAX_CUSTOM_MODELS,
     SearchableModelDropdownPopup,
 )
 
@@ -261,6 +262,8 @@ class AutoLabelingWidget(QWidget):
 
     def init_model_data(self):
         """Get models data"""
+        import hashlib
+        
         model_data = {
             "Custom": {
                 "load_custom_model": {
@@ -277,43 +280,61 @@ class AutoLabelingWidget(QWidget):
             }
         }
 
+        # Track loaded config paths to avoid duplicates
+        loaded_config_paths = set()
+
+        # First, load from models.json (UI saved data)
         try:
             local_model_data = load_json(_MODELS_CONFIG_PATH)["models_data"]
-            for model_name, model_dict in local_model_data["Custom"].items():
+            for model_name, model_dict in local_model_data.get("Custom", {}).items():
                 if model_name == "load_custom_model":
                     continue
-                elif not os.path.exists(model_dict["config_path"]):
+                
+                config_path = model_dict.get("config_path", "")
+                if not config_path or not os.path.exists(config_path):
                     continue
 
-                if not model_name.startswith("_custom_"):
-                    model_name = f"_custom_{model_name}"
+                config_path_normalized = os.path.normpath(os.path.abspath(config_path))
+                loaded_config_paths.add(config_path_normalized)
 
-                model_data["Custom"][model_name] = {
+                # Generate unique key based on config path
+                unique_id = hashlib.md5(config_path_normalized.encode()).hexdigest()[:8]
+                model_key = f"_custom_{unique_id}_{model_dict.get('display_name', 'model')}"
+
+                model_data["Custom"][model_key] = {
                     "selected": False,
-                    "favorite": model_dict["favorite"],
-                    "display_name": model_dict["display_name"],
-                    "config_path": model_dict["config_path"],
+                    "favorite": model_dict.get("favorite", False),
+                    "display_name": model_dict.get("display_name", model_name),
+                    "config_path": config_path,
                 }
 
-                self.model_info[model_name] = {
-                    "display_name": model_dict["display_name"],
-                    "config_path": model_dict["config_path"],
+                self.model_info[model_key] = {
+                    "display_name": model_dict.get("display_name", model_name),
+                    "config_path": config_path,
                 }
 
         except Exception as _:
             local_model_data = {}
 
+        # Then, load from model_manager (config file data) - only non-custom models
+        # Custom models are only loaded from models.json to allow proper clearing
         model_list = self.model_manager.get_model_configs()
         for model_dict in model_list:
-            model_name = model_dict["name"]
+            model_name = model_dict.get("name")
+            
+            # Skip custom models - they are only loaded from models.json
             if model_dict.get("is_custom_model", False):
-                provider_name = "Custom"
-            else:
-                provider_name = model_dict.get("provider", "Others")
+                continue
+            
+            provider_name = model_dict.get("provider", "Others")
+
+            if not model_name:
+                continue
 
             if provider_name not in model_data:
                 model_data[provider_name] = {}
 
+            # For non-custom models, check local_model_data for favorites etc.
             if (
                 provider_name in local_model_data
                 and model_name in local_model_data[provider_name]
@@ -326,15 +347,16 @@ class AutoLabelingWidget(QWidget):
                 model_data[provider_name][model_name] = {
                     "selected": False,
                     "favorite": False,
-                    "display_name": model_dict["display_name"],
+                    "display_name": model_dict.get("display_name", model_name),
+                    "config_path": model_dict.get("config_file"),
                 }
 
             self.model_info[model_name] = {
-                "display_name": model_dict["display_name"],
+                "display_name": model_dict.get("display_name", model_name),
                 "config_path": (
                     None
                     if model_name == "load_custom_model"
-                    else model_dict["config_file"]
+                    else model_dict.get("config_file")
                 ),
             }
 
@@ -399,10 +421,13 @@ class AutoLabelingWidget(QWidget):
                 with open(config_file, "r", encoding="utf-8") as f:
                     config_info = yaml.safe_load(f)
 
-                if not config_info["name"].startswith("_custom_"):
-                    config_info["name"] = f"_custom_{config_info['name']}"
+                # Use config_file path hash as unique identifier to avoid name conflicts
+                import hashlib
+                config_file_normalized = os.path.normpath(os.path.abspath(config_file))
+                unique_id = hashlib.md5(config_file_normalized.encode()).hexdigest()[:8]
+                model_key = f"_custom_{unique_id}_{config_info.get('display_name', 'model')}"
 
-                self.model_info[config_info["name"]] = {
+                self.model_info[model_key] = {
                     "display_name": config_info["display_name"],
                     "config_path": config_file,
                 }
@@ -410,14 +435,23 @@ class AutoLabelingWidget(QWidget):
                 # update model_data
                 models_data = self.init_model_data()
                 models_data["Custom"]["load_custom_model"]["selected"] = False
-                models_data["Custom"][config_info["name"]] = {
+                
+                # Remove any existing entry with the same config_path to avoid duplicates
+                for key in list(models_data["Custom"].keys()):
+                    if key != "load_custom_model":
+                        existing_path = models_data["Custom"][key].get("config_path", "")
+                        if os.path.normpath(existing_path) == config_file_normalized:
+                            del models_data["Custom"][key]
+                
+                models_data["Custom"][model_key] = {
                     "selected": True,
                     "favorite": False,
                     "display_name": config_info["display_name"],
                     "config_path": config_file,
                 }
-                save_json({"models_data": models_data}, _MODELS_CONFIG_PATH)
+                # Update dropdown and save through its method to ensure consistency
                 self.model_dropdown.update_models_data(models_data)
+                self.model_dropdown.save_models_data()
 
                 self.clear_auto_labeling_action_requested.emit()
                 self.model_selection_button.setText(

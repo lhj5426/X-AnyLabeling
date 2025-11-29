@@ -47,7 +47,7 @@ class GenericWorker(QObject):
 class ModelManager(QObject):
     """Model manager"""
 
-    MAX_NUM_CUSTOM_MODELS = 5
+    MAX_NUM_CUSTOM_MODELS = 30
     model_configs_changed = pyqtSignal(list)
     new_model_status = pyqtSignal(str)
     model_loaded = pyqtSignal(dict)
@@ -119,7 +119,7 @@ class ModelManager(QObject):
                     )
             is_custom = model.get("is_custom_model", False)
             model_config["is_custom_model"] = is_custom
-            if is_custom and not model_config["name"].startswith("_custom_"):
+            if is_custom and model_config.get("name") and not model_config["name"].startswith("_custom_"):
                 model_config["name"] = f"_custom_{model_config['name']}"
 
             model_configs.append(model_config)
