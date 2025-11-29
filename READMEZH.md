@@ -492,5 +492,10 @@ https://github.com/user-attachments/assets/69047e72-5cd7-4464-bd3c-1dc21cfdd2e8
 
 https://github.com/user-attachments/assets/699c8f0d-a9b4-4a9f-a967-dcd32844a8dc
 
+96.优化加载自定义模型历史列表 解除加载自定义模型历史行数为9的限制现在支持显示30行 并且增加清空自定义模型列表按钮
+
+<img width="496" height="765" alt="image" src="https://github.com/user-attachments/assets/ada7d33b-cdda-48fa-9c03-268eecf56811" />
+
+<img width="454" height="744" alt="image" src="https://github.com/user-attachments/assets/40b0b1b2-9218-49f7-a9cf-147539eac973" />
 
 
