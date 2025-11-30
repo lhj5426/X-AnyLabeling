@@ -328,10 +328,6 @@ class ObjectManagerDialog(QtWidgets.QDialog):
 
         self.update_button_states()
 
-        # Add shortcut for closing the dialog
-        self.close_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+T"), self)
-        self.close_shortcut.activated.connect(self.close)
-
         # Add shortcut for selecting all items
         self.select_all_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+A"), self)
         self.select_all_shortcut.activated.connect(self.select_all_items)

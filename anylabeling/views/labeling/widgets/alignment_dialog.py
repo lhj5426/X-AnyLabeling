@@ -44,10 +44,19 @@ class AlignmentDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super(AlignmentDialog, self).__init__(parent)
         self.setWindowTitle(self.tr("矩形对齐工具"))
-        self.setWindowFlags(self.windowFlags() & ~QtCore.Qt.WindowContextHelpButtonHint | QtCore.Qt.WindowMinimizeButtonHint)
+        # 设置窗口标志：保持最小化按钮
+        self.setWindowFlags(
+            QtCore.Qt.Window |
+            QtCore.Qt.WindowTitleHint |
+            QtCore.Qt.WindowSystemMenuHint |
+            QtCore.Qt.WindowMinimizeButtonHint |
+            QtCore.Qt.WindowCloseButtonHint
+        )
         self.resize(400, 450)
         
         self.init_ui()
+        
+
 
     def init_ui(self):
         """Initialize the user interface."""

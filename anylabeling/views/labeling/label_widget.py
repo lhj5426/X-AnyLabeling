@@ -3689,14 +3689,18 @@ class LabelingWidget(QtWidgets.QWidget):
         # Always update the items before showing, to reflect the latest state.
         self.object_manager_dialog.update_items([item for item in self.label_list])
 
-        if self.object_manager_dialog.isVisible():
-            # If visible, hide it (toggle off)
-            self.object_manager_dialog.hide()
-        else:
-            # If not visible, show it (toggle on)
-            self.object_manager_dialog.show()
+        # 使用通用的toggle逻辑
+        if self.object_manager_dialog.isMinimized():
+            self.object_manager_dialog.setWindowState(
+                self.object_manager_dialog.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive
+            )
             self.object_manager_dialog.raise_()
             self.object_manager_dialog.activateWindow()
+        elif self.object_manager_dialog.isVisible():
+            self.object_manager_dialog.hide()
+        else:
+            self.object_manager_dialog.show()
+            self.object_manager_dialog.raise_()
 
     def on_object_order_changed(self, ordered_shapes):
         """Callback for when the object order is changed in the dialog."""
@@ -4064,21 +4068,18 @@ class LabelingWidget(QtWidgets.QWidget):
         if current_index >= 0:
             self.expand_margins_dialog.set_current_page(current_index + 1)
 
-        if self.expand_margins_dialog.isVisible():
-            # If visible, check if it's minimized
-            if self.expand_margins_dialog.isMinimized():
-                # If minimized, restore to normal state
-                self.expand_margins_dialog.showNormal()
-                self.expand_margins_dialog.raise_()
-                self.expand_margins_dialog.activateWindow()
-            else:
-                # If visible and not minimized, hide it (toggle off)
-                self.expand_margins_dialog.hide()
-        else:
-            # If not visible, show it (toggle on)
-            self.expand_margins_dialog.show()
+        # 使用通用的toggle逻辑
+        if self.expand_margins_dialog.isMinimized():
+            self.expand_margins_dialog.setWindowState(
+                self.expand_margins_dialog.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive
+            )
             self.expand_margins_dialog.raise_()
             self.expand_margins_dialog.activateWindow()
+        elif self.expand_margins_dialog.isVisible():
+            self.expand_margins_dialog.hide()
+        else:
+            self.expand_margins_dialog.show()
+            self.expand_margins_dialog.raise_()
 
     def open_tag_sort_dialog(self):
         """Open the tag sorting dialog window."""
@@ -4143,11 +4144,18 @@ class LabelingWidget(QtWidgets.QWidget):
             # Connect canvas signal
             self.canvas.reference_selected.connect(self.on_reference_shape_selected)
 
-        if self.alignment_dialog.isVisible():
+        # 使用通用的toggle逻辑
+        if self.alignment_dialog.isMinimized():
+            self.alignment_dialog.setWindowState(
+                self.alignment_dialog.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive
+            )
             self.alignment_dialog.raise_()
             self.alignment_dialog.activateWindow()
+        elif self.alignment_dialog.isVisible():
+            self.alignment_dialog.hide()
         else:
             self.alignment_dialog.show()
+            self.alignment_dialog.raise_()
 
     def on_alignment_dialog_finished(self):
         """Cleanup when the alignment dialog is closed or reset."""

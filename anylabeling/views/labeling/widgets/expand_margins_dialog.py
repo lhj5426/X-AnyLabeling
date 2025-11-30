@@ -54,6 +54,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
 
         self.restore_window_position()
 
+        # 设置窗口标志：保持最小化按钮
         self.setWindowFlags(
             QtCore.Qt.Window |
             QtCore.Qt.WindowTitleHint |
@@ -154,9 +155,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.btn_jump.clicked.connect(self.on_jump_to_image)
         self.btn_clear_all.clicked.connect(self.on_clear_all)
 
-        # Add shortcut for closing the dialog
-        self.close_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+Shift+M"), self)
-        self.close_shortcut.activated.connect(self.close)
+
 
 
 
