@@ -29,17 +29,16 @@ class SegmentationDialog(QtWidgets.QDialog):
             & ~QtCore.Qt.WindowContextHelpButtonHint
             | QtCore.Qt.WindowMinimizeButtonHint
         )
+        # 设置为非模态窗口，这样主窗口可以接收快捷键
+        self.setModal(False)
         self.resize(400, 500)
 
         self.current_mode = None  # 'vertical', 'horizontal', or None
 
         self.init_ui()
 
-        # Add shortcut for closing the dialog when it has focus
-        if shortcut_key:
-            self.close_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(shortcut_key), self)
-            self.close_shortcut.activated.connect(self.close)
-            self.close_shortcut.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        # 注意：不再在对话框内部创建快捷键，由主窗口的 ApplicationShortcut 统一处理
+        # 这样无论焦点在哪里，快捷键都能正常触发 toggle 逻辑
 
         # Restore window position from last session
         self.restore_window_position()
@@ -291,14 +290,15 @@ class SegmentationDialog(QtWidgets.QDialog):
 
         Args:
             shortcut_key: New shortcut key string (e.g., "Ctrl+Shift+X")
+        
+        注意：不再在对话框内部创建快捷键，由主窗口的 ApplicationShortcut 统一处理。
+        这个方法保留是为了兼容性，但不再执行任何操作。
         """
+        # 移除旧的内部快捷键（如果存在）
         if hasattr(self, 'close_shortcut'):
-            self.close_shortcut.setKey(QtGui.QKeySequence(shortcut_key))
-        else:
-            # Create shortcut if it doesn't exist
-            self.close_shortcut = QtWidgets.QShortcut(QtGui.QKeySequence(shortcut_key), self)
-            self.close_shortcut.activated.connect(self.close)
-            self.close_shortcut.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
+            self.close_shortcut.setKey(QtGui.QKeySequence())  # 清空快捷键
+            self.close_shortcut.deleteLater()
+            delattr(self, 'close_shortcut')
 
     def restore_window_position(self):
         """Restore window position and size from settings."""

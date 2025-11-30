@@ -4081,18 +4081,24 @@ class Canvas(
         if not self.selection_box_mode:
             return
 
-        # Calculate rectangle bounds
-        x1, y1 = self.selection_box_start.x(), self.selection_box_start.y()
-        x2, y2 = self.selection_box_end.x(), self.selection_box_end.y()
-
-        min_x, max_x = min(x1, x2), max(x1, x2)
-        min_y, max_y = min(y1, y2), max(y1, y2)
-
-        # Create selection rectangle
-        rect = QtCore.QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
-
-        # Draw selection box with dashed blue border and semi-transparent fill
+        # Reset painter transform to draw in screen coordinates (fixed pixel size)
         p.save()
+        p.resetTransform()
+
+        # Convert image coordinates to screen coordinates
+        # offset_to_center() returns painter coordinates (already divided by scale)
+        # So: screen = (image + offset) * scale
+        offset = self.offset_to_center()
+        x1_screen = (self.selection_box_start.x() + offset.x()) * self.scale
+        y1_screen = (self.selection_box_start.y() + offset.y()) * self.scale
+        x2_screen = (self.selection_box_end.x() + offset.x()) * self.scale
+        y2_screen = (self.selection_box_end.y() + offset.y()) * self.scale
+
+        min_x, max_x = min(x1_screen, x2_screen), max(x1_screen, x2_screen)
+        min_y, max_y = min(y1_screen, y2_screen), max(y1_screen, y2_screen)
+
+        # Create selection rectangle in screen coordinates
+        rect = QtCore.QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
 
         # Draw semi-transparent fill
         fill_color = QtGui.QColor(0, 120, 215, 30)  # Light blue with transparency
@@ -4100,7 +4106,7 @@ class Canvas(
         p.setPen(Qt.NoPen)
         p.drawRect(rect)
 
-        # Draw dashed border
+        # Draw border - fixed 2px line width in screen pixels
         pen = QtGui.QPen(QtGui.QColor(0, 120, 215), 2, Qt.SolidLine)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
@@ -4113,36 +4119,53 @@ class Canvas(
         if not self.path_selection_mode or len(self.path_selection_points) < 2:
             return
 
+        # Reset painter transform to draw in screen coordinates (fixed pixel size)
         p.save()
+        p.resetTransform()
+
+        # Convert image coordinates to screen coordinates
+        # offset_to_center() returns painter coordinates (already divided by scale)
+        # So: screen = (image + offset) * scale
+        offset = self.offset_to_center()
+
+        def to_screen(pt):
+            return QtCore.QPointF(
+                (pt.x() + offset.x()) * self.scale,
+                (pt.y() + offset.y()) * self.scale
+            )
+
+        # Fixed pixel sizes for screen display
+        line_width = 3  # Fixed 3px line width
+        circle_radius = 6  # Fixed 6px circle radius
+        border_width = 2  # Fixed 2px border width
 
         # Draw the path with a different color
-        pen = QtGui.QPen(QtGui.QColor(0, 191, 255), 3, Qt.SolidLine)  # Deep sky blue path
+        pen = QtGui.QPen(QtGui.QColor(0, 191, 255), line_width, Qt.SolidLine)  # Deep sky blue path
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
 
-        # Draw path segments
+        # Draw path segments in screen coordinates
         for i in range(len(self.path_selection_points) - 1):
-            start = self.path_selection_points[i]
-            end = self.path_selection_points[i + 1]
+            start = to_screen(self.path_selection_points[i])
+            end = to_screen(self.path_selection_points[i + 1])
             p.drawLine(start, end)
 
         # Draw start point with a circle (head indicator)
         if len(self.path_selection_points) > 0:
-            start_point = self.path_selection_points[0]
+            start_point = to_screen(self.path_selection_points[0])
             p.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))  # Same blue color
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # White border
-            circle_radius = 6
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
             p.drawEllipse(start_point, circle_radius, circle_radius)
 
             # Draw current end point with a circle, same as the start
             if len(self.path_selection_points) > 1:
-                end_point = self.path_selection_points[-1]
+                end_point = to_screen(self.path_selection_points[-1])
                 p.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))  # Same blue color
-                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # White border
-                circle_radius = 6
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
                 p.drawEllipse(end_point, circle_radius, circle_radius)
 
         # Highlight shapes that intersect with the path - use hover effect settings
+        # Still in screen coordinates (resetTransform), so convert shape points
         for shape in self.path_highlighted_shapes:
             if shape.visible:
                 # Use the same hover line color and width from Shape class configuration
@@ -4153,33 +4176,31 @@ class Canvas(
                     else 3  # fallback width
                 )
 
-                # Apply scale adjustment like Shape class does
-                scaled_width = max(1, int(round(hover_width / self.scale)))
-
-                pen = QtGui.QPen(hover_color, scaled_width, Qt.SolidLine)
+                # Fixed pixel width in screen coordinates
+                pen = QtGui.QPen(hover_color, hover_width, Qt.SolidLine)
                 p.setPen(pen)
                 p.setBrush(Qt.NoBrush)  # No fill, just border
 
                 if shape.shape_type in ["rectangle", "rotation"]:
-                    # Draw rectangle outline
+                    # Draw rectangle outline in screen coordinates
                     path = QtGui.QPainterPath()
-                    path.moveTo(shape.points[0])
+                    path.moveTo(to_screen(shape.points[0]))
                     for point in shape.points[1:]:
-                        path.lineTo(point)
+                        path.lineTo(to_screen(point))
                     path.closeSubpath()
                     p.drawPath(path)
                 elif shape.shape_type == "polygon":
-                    # Draw polygon outline
+                    # Draw polygon outline in screen coordinates
                     path = QtGui.QPainterPath()
-                    path.moveTo(shape.points[0])
+                    path.moveTo(to_screen(shape.points[0]))
                     for point in shape.points[1:]:
-                        path.lineTo(point)
+                        path.lineTo(to_screen(point))
                     path.closeSubpath()
                     p.drawPath(path)
                 elif shape.shape_type == "circle":
-                    # Draw circle outline
-                    center = shape.points[0]
-                    edge = shape.points[1]
+                    # Draw circle outline in screen coordinates
+                    center = to_screen(shape.points[0])
+                    edge = to_screen(shape.points[1])
                     radius = ((edge.x() - center.x()) ** 2 + (edge.y() - center.y()) ** 2) ** 0.5
                     p.drawEllipse(center, radius, radius)
 

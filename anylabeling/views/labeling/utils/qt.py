@@ -86,6 +86,8 @@ def new_action(
             action.setShortcuts(shortcut)
         else:
             action.setShortcut(shortcut)
+    # 设置快捷键上下文为应用程序级别，这样即使焦点在子窗口上也能触发
+    action.setShortcutContext(QtCore.Qt.ApplicationShortcut)
     if tip is not None:
         action.setToolTip(tip)
         action.setStatusTip(tip)

@@ -1343,16 +1343,18 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         label_toggle_shortcut_manager = action(
             self.tr("标签切换快捷键管理器"),
-            self.open_label_toggle_shortcut_manager,
+            self.toggle_label_toggle_shortcut_manager,
+            shortcuts.get("label_toggle_shortcut_manager"),
             icon="edit",
             tip=self.tr("管理用于切换标签可见性的快捷键"),
         )
 
         label_manager = action(
-            self.tr("&Label Manager"),
-            self.label_manager,
+            self.tr("标签管理器"),
+            self.toggle_label_manager,
+            shortcuts.get("label_manager"),
             icon="edit",
-            tip=self.tr("Manage Labels: Rename, Delete, Adjust Color"),
+            tip=self.tr("管理标签：重命名、删除、调整颜色"),
         )
         object_manager = action(
             self.tr("标签页管理器"),
@@ -1417,13 +1419,15 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         tag_sort_tool = action(
             self.tr("标签排序工具"),
-            self.open_tag_sort_dialog,
+            self.toggle_tag_sort_dialog,
+            shortcuts.get("tag_sort_tool"),
             icon="edit",
             tip=self.tr("根据排序规则批量调整标注标签顺序"),
         )
         angle_correction_tool = action(
             self.tr("旋转框角度修正工具"),
-            self.open_angle_correction_dialog,
+            self.toggle_angle_correction_dialog,
+            shortcuts.get("angle_correction_tool"),
             icon="rotation",
             tip=self.tr("批量修正旋转框的角度"),
         )
@@ -1444,7 +1448,8 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         wheel_settings_tool = action(
             self.tr("鼠标滚轮设置"),
-            self.open_wheel_settings_dialog,
+            self.toggle_wheel_settings_dialog,
+            shortcuts.get("wheel_settings_tool"),
             icon="convert",
             tip=self.tr("配置鼠标滚轮矩形编辑功能"),
         )
@@ -1469,78 +1474,88 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         merge_shapes = action(
             self.tr("区域合并工具"),
-            self.open_merge_tool,
+            self.toggle_merge_tool,
+            shortcuts.get("merge_tool"),
             icon="union",
             tip=self.tr("根据规则合并标注对象"),
         )
         dual_color_label_tool = action(
             self.tr("双色标签工具"),
-            self.open_label_tool,
+            self.toggle_label_tool,
+            shortcuts.get("dual_color_tool"),
             icon="edit",
             tip=self.tr("转换或还原双色标签"),
         )
         mask_generator_tool = action(
             self.tr("掩膜生成"),
-            self.open_mask_generator,
+            self.toggle_mask_generator,
+            shortcuts.get("mask_generator_tool"),
             icon="edit",
             tip=self.tr("使用CTD模型生成文字区域掩膜"),
         )
 
         traffic_light_tool = action(
             self.tr("红绿灯窗口"),
-            self.open_traffic_light_dialog,
-            icon="color", # Using a generic color icon for now, ideally a traffic light icon
+            self.toggle_traffic_light_dialog,
+            shortcuts.get("traffic_light_tool"),
+            icon="color",
             tip=self.tr("设置红绿灯颜色并清除编辑状态"),
         )
 
         keymap_tool = action(
             self.tr("旋转标签快捷键管理器"),
-            self.open_keymap_dialog,
+            self.toggle_keymap_dialog,
             shortcuts.get("keymap_dialog"),
-            icon="edit", # Using a generic edit icon for now
+            icon="edit",
             tip=self.tr("管理旋转标签的快捷键映射"),
         )
         self.addAction(keymap_tool) # Explicitly add action to widget for shortcut recognition
 
         color_manager_tool = action(
             self.tr("颜色管理工具"),
-            self.open_color_manager_dialog,
+            self.toggle_color_manager_dialog,
+            shortcuts.get("color_manager_tool"),
             icon="color",
             tip=self.tr("管理标签颜色和线条宽度"),
         )
 
         smart_guides_tool = action(
             self.tr("辅助线工具"),
-            self.open_smart_guides_dialog,
+            self.toggle_smart_guides_dialog,
+            shortcuts.get("smart_guides_tool"),
             icon="edit",
             tip=self.tr("配置智能参考线和对齐辅助功能"),
         )
 
         shortcut_manager_tool = action(
             self.tr("快捷键管理器"),
-            self.open_shortcut_manager_dialog,
+            self.toggle_shortcut_manager_dialog,
+            shortcuts.get("shortcut_manager_tool"),
             icon="edit",
             tip=self.tr("管理所有快捷键配置"),
         )
 
         rectangle_scale_tool = action(
             self.tr("矩形缩放工具"),
-            self.open_rectangle_scale_dialog,
+            self.toggle_rectangle_scale_dialog,
+            shortcuts.get("rectangle_scale_tool"),
             icon="edit",
             tip=self.tr("按比例缩放所有矩形标注的坐标位置"),
         )
 
         page_text_tool = action(
             self.tr("页文本工具"),
-            self.open_page_text_dialog,
+            self.toggle_page_text_dialog,
+            shortcuts.get("page_text_tool"),
             icon="edit",
             tip=self.tr("查看和编辑当前页面所有标签的文本内容"),
         )
 
         highlight_settings_tool = action(
             self.tr("高亮设置"),
-            self.open_highlight_settings_dialog,
-            icon="color", # Using a generic color icon for now
+            self.toggle_highlight_settings_dialog,
+            shortcuts.get("highlight_settings_tool"),
+            icon="color",
             tip=self.tr("配置高亮显示行为和标签"),
         )
 
@@ -4209,8 +4224,13 @@ class LabelingWidget(QtWidgets.QWidget):
             self.alignment_dialog.log(self.tr("错误: 没有选中任何需要对齐的矩形。"))
             return
 
-        filter_text = self.alignment_dialog.label_filter_input.text().strip()
-        target_labels = {label.strip() for label in filter_text.split(',') if label.strip()}
+        # 统一角度使用专门的标签过滤，其他操作使用通用标签过滤
+        if mode == 'unify_angle':
+            target_labels = self.alignment_dialog.get_angle_target_labels()
+        else:
+            filter_text = self.alignment_dialog.label_filter_input.text().strip()
+            target_labels = {label.strip() for label in filter_text.split(',') if label.strip()}
+        
         mode_display_map = {
             'left': self.tr('左对齐'),
             'right': self.tr('右对齐'),
@@ -4343,8 +4363,28 @@ class LabelingWidget(QtWidgets.QWidget):
                     target_center_y = (shape.points[0].y() + shape.points[1].y() + shape.points[2].y() + shape.points[3].y()) / 4.0
                     target_center = QtCore.QPointF(target_center_x, target_center_y)
 
-                    target_intrinsic_width = utils.distance(shape.points[1] - shape.points[0])
-                    target_intrinsic_height = utils.distance(shape.points[2] - shape.points[1])
+                    # 计算原始矩形的两条边长度
+                    edge1_length = utils.distance(shape.points[1] - shape.points[0])
+                    edge2_length = utils.distance(shape.points[2] - shape.points[1])
+
+                    # 计算参照矩形的宽高比例，判断哪条边是"宽"
+                    ref_edge1 = utils.distance(self.reference_shape.points[1] - self.reference_shape.points[0])
+                    ref_edge2 = utils.distance(self.reference_shape.points[2] - self.reference_shape.points[1])
+                    ref_is_horizontal = ref_edge1 >= ref_edge2  # 参照矩形是否横向（第一条边更长）
+
+                    # 判断目标矩形是否横向
+                    target_is_horizontal = edge1_length >= edge2_length
+
+                    # 如果目标矩形和参照矩形的方向一致，保持原来的宽高
+                    # 如果方向不一致，需要交换宽高以保持视觉上的一致性
+                    if target_is_horizontal == ref_is_horizontal:
+                        # 方向一致，保持原来的宽高顺序
+                        target_intrinsic_width = edge1_length
+                        target_intrinsic_height = edge2_length
+                    else:
+                        # 方向不一致，交换宽高
+                        target_intrinsic_width = edge2_length
+                        target_intrinsic_height = edge1_length
 
                     # Update the shape's direction
                     shape.direction = ref_angle
@@ -4398,10 +4438,25 @@ class LabelingWidget(QtWidgets.QWidget):
         if not hasattr(self, 'keymap_dialog') or self.keymap_dialog is None or not self.keymap_dialog.isVisible():
             self.keymap_dialog = KeymapDialog(self, config=self._config)
             self.keymap_dialog.config_saved.connect(self._save_keymap_config)
+            self.keymap_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
             self.keymap_dialog.show()
         else:
             self.keymap_dialog.raise_()
             self.keymap_dialog.activateWindow()
+
+    def toggle_keymap_dialog(self):
+        """切换旋转标签快捷键管理器窗口"""
+        dialog = getattr(self, 'keymap_dialog', None)
+        if dialog is None or not dialog.isVisible():
+            self.open_keymap_dialog()
+        elif dialog.isMinimized():
+            dialog.setWindowState(
+                dialog.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive
+            )
+            dialog.raise_()
+            dialog.activateWindow()
+        else:
+            dialog.hide()
 
     def open_color_manager_dialog(self):
         if not hasattr(self, 'color_manager_dialog') or not self.color_manager_dialog.isVisible():
@@ -4522,7 +4577,7 @@ class LabelingWidget(QtWidgets.QWidget):
         Behavior:
         - If dialog doesn't exist or is hidden: show it
         - If dialog is minimized: restore and activate it
-        - If dialog is visible and normal: close it
+        - If dialog is visible and normal: hide it
         """
         if self.segmentation_dialog is None:
             # First time: create and show
@@ -4542,8 +4597,8 @@ class LabelingWidget(QtWidgets.QWidget):
             self.segmentation_dialog.raise_()
             self.segmentation_dialog.activateWindow()
         else:
-            # Visible and normal: close it
-            self.segmentation_dialog.close()
+            # Visible and normal: hide it (使用hide而不是close，这样主窗口可以接收快捷键)
+            self.segmentation_dialog.hide()
 
     def on_enter_vertical_cut_mode(self):
         """Enter vertical cut mode."""
@@ -4588,6 +4643,122 @@ class LabelingWidget(QtWidgets.QWidget):
         if self.segmentation_dialog:
             # Trigger the exit button in the dialog to keep UI in sync
             self.segmentation_dialog.on_exit_mode()
+
+    def _toggle_dialog(self, dialog_attr, open_method):
+        """通用的对话框切换方法
+        
+        行为：
+        - 如果对话框不存在或隐藏：打开它
+        - 如果对话框最小化：恢复并激活它
+        - 如果对话框正常显示：隐藏它
+        """
+        dialog = getattr(self, dialog_attr, None)
+        
+        if dialog is None or not dialog.isVisible():
+            # 不存在或隐藏：调用打开方法
+            open_method()
+        elif dialog.isMinimized():
+            # 最小化：恢复它
+            dialog.setWindowState(
+                dialog.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive
+            )
+            dialog.raise_()
+            dialog.activateWindow()
+        else:
+            # 正常显示：隐藏它（使用hide而不是close，这样主窗口可以接收快捷键）
+            dialog.hide()
+
+    def toggle_tag_sort_dialog(self):
+        """切换标签排序工具窗口"""
+        self._toggle_dialog('tag_sort_dialog', self.open_tag_sort_dialog)
+
+    def toggle_angle_correction_dialog(self):
+        """切换旋转框角度修正工具窗口"""
+        self._toggle_dialog('angle_correction_dialog', self.open_angle_correction_dialog)
+
+    def toggle_wheel_settings_dialog(self):
+        """切换鼠标滚轮设置窗口"""
+        self._toggle_dialog('wheel_settings_dialog', self.open_wheel_settings_dialog)
+
+    def toggle_merge_tool(self):
+        """切换区域合并工具窗口"""
+        self._toggle_dialog('merge_tool_dialog', self.open_merge_tool)
+
+    def toggle_label_tool(self):
+        """切换双色标签工具窗口"""
+        self._toggle_dialog('label_tool_dialog', self.open_label_tool)
+
+    def toggle_mask_generator(self):
+        """切换掩膜生成窗口"""
+        self._toggle_dialog('mask_generator_dialog', self.open_mask_generator)
+
+    def toggle_traffic_light_dialog(self):
+        """切换红绿灯窗口"""
+        self._toggle_dialog('traffic_light_dialog', self.open_traffic_light_dialog)
+
+    def toggle_color_manager_dialog(self):
+        """切换颜色管理工具窗口"""
+        dialog = getattr(self, 'color_manager_dialog', None)
+        if dialog is None or not dialog.isVisible():
+            self.open_color_manager_dialog()
+        elif dialog.isMinimized():
+            dialog.setWindowState(
+                dialog.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive
+            )
+            dialog.raise_()
+            dialog.activateWindow()
+        else:
+            dialog.hide()
+
+    def toggle_smart_guides_dialog(self):
+        """切换辅助线工具窗口"""
+        dialog = getattr(self, 'smart_guides_dialog', None)
+        if dialog is None or not dialog.isVisible():
+            self.open_smart_guides_dialog()
+        elif dialog.isMinimized():
+            dialog.setWindowState(
+                dialog.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive
+            )
+            dialog.raise_()
+            dialog.activateWindow()
+        else:
+            dialog.hide()
+
+    def toggle_shortcut_manager_dialog(self):
+        """切换快捷键管理器窗口"""
+        dialog = getattr(self, 'shortcut_manager_dialog', None)
+        if dialog is None or not dialog.isVisible():
+            self.open_shortcut_manager_dialog()
+        elif dialog.isMinimized():
+            dialog.setWindowState(
+                dialog.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive
+            )
+            dialog.raise_()
+            dialog.activateWindow()
+        else:
+            dialog.hide()
+
+    def toggle_rectangle_scale_dialog(self):
+        """切换矩形缩放工具窗口"""
+        self._toggle_dialog('rectangle_scale_dialog', self.open_rectangle_scale_dialog)
+
+    def toggle_page_text_dialog(self):
+        """切换页文本工具窗口"""
+        self._toggle_dialog('page_text_dialog', self.open_page_text_dialog)
+
+    def toggle_highlight_settings_dialog(self):
+        """切换高亮设置窗口"""
+        self._toggle_dialog('highlight_settings_dialog', self.open_highlight_settings_dialog)
+
+    def toggle_label_toggle_shortcut_manager(self):
+        """切换标签切换快捷键管理器窗口"""
+        # 这个对话框是模态的，每次都创建新的
+        self.open_label_toggle_shortcut_manager()
+
+    def toggle_label_manager(self):
+        """切换标签管理器窗口"""
+        # 这个对话框是模态的，每次都创建新的
+        self.label_manager()
 
     def open_wheel_settings_dialog(self):
         """Open the mouse wheel settings dialog."""
@@ -5089,7 +5260,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.shapes.append(new_shape1)
         self.canvas.shapes.append(new_shape2)
 
-        # Update UI
+        # Update UI (add_label会根据shape.visible属性正确设置checkState)
         self.set_dirty()
         self.canvas.deselect_shape()
         self.canvas.update()
@@ -6417,6 +6588,9 @@ class LabelingWidget(QtWidgets.QWidget):
         text = shape.label
 
         label_list_item = LabelListWidgetItem(text, shape)
+        
+        # 根据形状的visible属性设置checkState，保持可见性状态一致
+        label_list_item.setCheckState(Qt.Checked if shape.visible else Qt.Unchecked)
         
         # 只在创建新图形时检测置顶
         if is_new_shape:

@@ -190,20 +190,33 @@ class AlignmentDialog(QtWidgets.QDialog):
 
         # --- Unify Size buttons ---
         unify_group = QtWidgets.QGroupBox(self.tr("统一尺寸"))
-        unify_layout = QtWidgets.QHBoxLayout(unify_group)
+        unify_layout = QtWidgets.QVBoxLayout(unify_group)
 
+        # 统一高度和宽度按钮
+        unify_buttons_layout = QtWidgets.QHBoxLayout()
         self.btn_unify_height = AlignmentButton(self.tr("统一高度"))
         self.btn_unify_height.setToolTip(tooltip_text)
 
         self.btn_unify_width = AlignmentButton(self.tr("统一宽度"))
         self.btn_unify_width.setToolTip(tooltip_text)
 
+        unify_buttons_layout.addWidget(self.btn_unify_height)
+        unify_buttons_layout.addWidget(self.btn_unify_width)
+        unify_layout.addLayout(unify_buttons_layout)
+
+        # 统一角度专用区域
+        angle_layout = QtWidgets.QHBoxLayout()
+        angle_layout.addWidget(QtWidgets.QLabel(self.tr("旋转标签:")))
+        self.angle_label_input = QtWidgets.QLineEdit("shuqing, hengxie")
+        self.angle_label_input.setPlaceholderText(self.tr("统一角度时只处理这些标签"))
+        self.angle_label_input.setToolTip(self.tr("统一角度时只处理这些标签的旋转矩形"))
+        angle_layout.addWidget(self.angle_label_input)
+
         self.btn_unify_angle = AlignmentButton(self.tr("统一角度"))
         self.btn_unify_angle.setToolTip(tooltip_text)
+        angle_layout.addWidget(self.btn_unify_angle)
 
-        unify_layout.addWidget(self.btn_unify_height)
-        unify_layout.addWidget(self.btn_unify_width)
-        unify_layout.addWidget(self.btn_unify_angle)
+        unify_layout.addLayout(angle_layout)
         main_layout.addWidget(unify_group)
 
         # --- Log GroupBox ---
@@ -278,6 +291,13 @@ class AlignmentDialog(QtWidgets.QDialog):
         """Append a message to the log widget with a timestamp."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_widget.append(f"[{timestamp}] {message}")
+
+    def get_angle_target_labels(self):
+        """获取统一角度专用的目标标签列表"""
+        text = self.angle_label_input.text().strip()
+        if not text:
+            return set()
+        return {label.strip() for label in text.split(',') if label.strip()}
 
     def closeEvent(self, event):
         """Emit a closing signal when the dialog is closed."""
