@@ -3934,10 +3934,11 @@ class Canvas(
                     continue
 
                 label_text = ""
-                if self.show_order:
-                    global_order, label_order = shape_orders.get(id(shape), (0, 0))
-                    if global_order > 0:
-                        label_text += f"{global_order} ({label_order}) "
+                # 序号不再和标签文字放在一起，改为在矩形中心显示圆球
+                # if self.show_order:
+                #     global_order, label_order = shape_orders.get(id(shape), (0, 0))
+                #     if global_order > 0:
+                #         label_text += f"{global_order} ({label_order}) "
 
                 label_text += (
                     (f"id:{shape.group_id} " if shape.group_id is not None else "")
@@ -4006,6 +4007,10 @@ class Canvas(
                 if not shape.visible:
                     continue
                 p.drawText(text_pos, label_text)
+
+        # Draw order numbers as blue circles at shape centers (新的序号显示方式)
+        if self.show_order:
+            self.draw_order_circles(p)
 
         # Draw mouse coordinates
         if self.cross_line_show:
@@ -4696,6 +4701,76 @@ class Canvas(
                 text_x = center_screen.x() - text_width / 2
                 text_y = center_screen.y() + text_height / 4
                 p.drawText(QtCore.QPointF(text_x, text_y), text)
+
+        p.restore()
+
+    def draw_order_circles(self, p):
+        """Draw order numbers as blue circles at shape centers"""
+        if not self.shapes:
+            return
+
+        # Reset painter transform to draw in screen coordinates (fixed pixel size)
+        p.save()
+        p.resetTransform()
+
+        # Convert image coordinates to screen coordinates
+        offset = self.offset_to_center()
+
+        def to_screen(pt):
+            return QtCore.QPointF(
+                (pt.x() + offset.x()) * self.scale,
+                (pt.y() + offset.y()) * self.scale
+            )
+
+        # Calculate order for each shape
+        label_counters = {}
+        shape_orders = {}
+        for i, shape in enumerate(self.shapes):
+            label = shape.label
+            label_counters[label] = label_counters.get(label, 0) + 1
+            shape_orders[id(shape)] = (i + 1, label_counters[label])
+
+        # Draw order circles for visible shapes
+        for shape in self.shapes:
+            if not self.is_visible(shape):
+                continue
+            if shape.label in ["AUTOLABEL_OBJECT", "AUTOLABEL_ADD", "AUTOLABEL_REMOVE"]:
+                continue
+
+            global_order, label_order = shape_orders.get(id(shape), (0, 0))
+            if global_order <= 0:
+                continue
+
+            # Calculate shape center
+            if not shape.points:
+                continue
+            sum_x = sum(pt.x() for pt in shape.points)
+            sum_y = sum(pt.y() for pt in shape.points)
+            center_img = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
+            center_screen = to_screen(center_img)
+
+            # Draw blue background circle
+            circle_radius = 12
+            p.setBrush(QtGui.QBrush(QtGui.QColor(30, 144, 255)))  # Dodger Blue
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # White border
+            p.drawEllipse(center_screen, circle_radius, circle_radius)
+
+            # Draw order number text
+            font = QtGui.QFont()
+            font.setPointSize(9)
+            font.setBold(True)
+            p.setFont(font)
+            p.setPen(QtGui.QColor(255, 255, 255))  # White text
+
+            # Center the text
+            text = str(global_order)
+            fm = QtGui.QFontMetrics(font)
+            text_width = fm.horizontalAdvance(text)
+            ascent = fm.ascent()
+            descent = fm.descent()
+            text_x = center_screen.x() - text_width / 2
+            text_y = center_screen.y() + (ascent - descent) / 2
+            p.drawText(QtCore.QPointF(text_x, text_y), text)
 
         p.restore()
 

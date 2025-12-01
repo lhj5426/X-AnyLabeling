@@ -498,12 +498,18 @@ class LabelingWidget(QtWidgets.QWidget):
             current_config = get_config()
             
             locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
+            locked_can_highlight = current_config.get("locked_can_highlight", False)
             
             # Filter out shapes that are locked and have not been session-unlocked
-            unlocked_shapes = [
-                s for s in all_shapes 
-                if not (s.label in locked_labels and not s.is_session_unlocked)
-            ]
+            # Unless locked_can_highlight is enabled
+            if locked_can_highlight:
+                # 锁定后仍可高亮：不过滤锁定的标签
+                unlocked_shapes = all_shapes
+            else:
+                unlocked_shapes = [
+                    s for s in all_shapes 
+                    if not (s.label in locked_labels and not s.is_session_unlocked)
+                ]
 
             positive_labels_str = current_config.get("highlight_positive", "")
             positive_labels = {label.strip() for label in positive_labels_str.split(',') if label.strip()}
