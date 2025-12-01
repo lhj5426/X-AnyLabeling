@@ -473,8 +473,14 @@ class LabelingWidget(QtWidgets.QWidget):
 
         btn_deselect_all_shapes = QtWidgets.QPushButton(self.tr("取消"))
         def deselect_all_objects():
+            # 遍历label_list中的所有item并取消勾选
             for item in self.label_list:
                 item.setCheckState(Qt.Unchecked)
+            # 确保canvas.shapes中的所有图形都被隐藏
+            for shape in self.canvas.shapes:
+                shape.visible = False
+            self.canvas.update()
+            self.update_navigator_shapes()
         btn_deselect_all_shapes.clicked.connect(deselect_all_objects)
         
         # 高亮按钮
@@ -6689,9 +6695,18 @@ class LabelingWidget(QtWidgets.QWidget):
         self.btn_deselect_all = QtWidgets.QPushButton(self.tr("取消"))
         self.btn_deselect_all.setToolTip(self.tr("取消所有标签"))
         def deselect_all_labels():
+            # 取消标签列表的勾选
             for i in range(self.unique_label_list.count()):
                 item = self.unique_label_list.item(i)
                 item.setCheckState(Qt.Unchecked)
+            # 同时取消对象列表的勾选
+            for item in self.label_list:
+                item.setCheckState(Qt.Unchecked)
+            # 确保canvas.shapes中的所有图形都被隐藏
+            for shape in self.canvas.shapes:
+                shape.visible = False
+            self.canvas.update()
+            self.update_navigator_shapes()
         self.btn_deselect_all.clicked.connect(deselect_all_labels)
 
         # 重叠显示按钮
