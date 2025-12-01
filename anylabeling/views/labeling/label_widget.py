@@ -859,6 +859,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.drawing_polygon.connect(self.toggle_drawing_sensitive)
         self.canvas.drawing_cancelled.connect(self.on_drawing_cancelled)
         self.canvas.hide_shapes_requested.connect(self.hide_shapes_by_path)
+        self.canvas.delete_shapes_requested.connect(self.delete_shapes_by_path)
         # [Feature] support for automatically switching to editing mode
         # when the cursor moves over an object
         self.canvas.h_shape_is_hovered = self._config.get(
@@ -8247,6 +8248,28 @@ class LabelingWidget(QtWidgets.QWidget):
                 item.setCheckState(Qt.Unchecked)
                 shape.visible = False
                 self.selected_polygon_stack.append(shape)
+
+        self.canvas.update()
+        self.update_navigator_shapes()
+        self.set_dirty()
+
+    def delete_shapes_by_path(self, shapes_to_delete):
+        """Delete shapes selected by Alt+RightButton path"""
+        if not shapes_to_delete:
+            return
+
+        # Remove shapes from canvas and label list
+        for shape in shapes_to_delete:
+            # Remove from label list
+            item = self.label_list.find_item_by_shape(shape)
+            if item:
+                self.label_list.remove_item(item)
+            # Remove from canvas shapes
+            if shape in self.canvas.shapes:
+                self.canvas.shapes.remove(shape)
+            # Remove from selected shapes if selected
+            if shape in self.canvas.selected_shapes:
+                self.canvas.selected_shapes.remove(shape)
 
         self.canvas.update()
         self.update_navigator_shapes()

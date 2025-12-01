@@ -98,7 +98,8 @@ class Canvas(
     reference_selected = QtCore.pyqtSignal(object)
     split_requested = QtCore.pyqtSignal(object, tuple, str)  # (shape, cut_pos, cut_mode)
     segmentation_mode_exit_requested = QtCore.pyqtSignal()  # Request to exit segmentation mode
-    hide_shapes_requested = QtCore.pyqtSignal(list)  # Request to hide shapes (Ctrl+drag path selection)
+    hide_shapes_requested = QtCore.pyqtSignal(list)  # Request to hide shapes (Shift+RightButton path selection)
+    delete_shapes_requested = QtCore.pyqtSignal(list)  # Request to delete shapes (Alt+RightButton path selection)
 
     CREATE, EDIT = 0, 1
 
@@ -249,6 +250,11 @@ class Canvas(
         self.ctrl_path_selection_mode = False
         self.ctrl_path_selection_points = []
         self.ctrl_path_intersected_shapes = []  # Ordered list of shapes intersected by path
+
+        # Alt+RightButton delete path state (delete all intersected shapes)
+        self.delete_path_selection_mode = False
+        self.delete_path_selection_points = []
+        self.delete_path_intersected_shapes = []  # Shapes to be deleted
 
         # Smart guides (智能参考线) state
         self.smart_guides_enabled = self._config.get('smart_guides_enabled', True)  # 是否显示智能参考线
@@ -992,6 +998,14 @@ class Canvas(
             self.repaint()
             return
 
+        # Handle Alt+RightButton delete path selection mode
+        if self.delete_path_selection_mode:
+            self.delete_path_selection_points.append(pos)
+            # Check if path intersects any shapes
+            self.update_delete_path_intersections()
+            self.repaint()
+            return
+
         # 记录hover状态变化前的状态
         prev_hover_shape = self.h_hape
 
@@ -1540,6 +1554,15 @@ class Canvas(
             self.ctrl_path_intersected_shapes = []
             return
 
+        # Alt+RightButton drag path selection mode (delete all intersected shapes)
+        if (ev.button() == QtCore.Qt.RightButton and
+            ev.modifiers() & QtCore.Qt.AltModifier and
+            not self.drawing()):
+            self.delete_path_selection_mode = True
+            self.delete_path_selection_points = [pos]
+            self.delete_path_intersected_shapes = []
+            return
+
         if ev.button() == QtCore.Qt.LeftButton:
             if self.drawing():
                 if self.current:
@@ -1797,6 +1820,11 @@ class Canvas(
         # Handle Shift+RightButton drag path selection completion (hide even-numbered shapes)
         if self.ctrl_path_selection_mode and ev.button() == QtCore.Qt.RightButton:
             self.complete_ctrl_path_selection()
+            return
+
+        # Handle Alt+RightButton delete path selection completion
+        if self.delete_path_selection_mode and ev.button() == QtCore.Qt.RightButton:
+            self.complete_delete_path_selection()
             return
 
         # Handle right button release
@@ -2195,6 +2223,52 @@ class Canvas(
         self.ctrl_path_selection_mode = False
         self.ctrl_path_selection_points = []
         self.ctrl_path_intersected_shapes = []
+        self.repaint()
+
+    def update_delete_path_intersections(self):
+        """Update intersected shapes list for Alt+RightButton delete path"""
+        if not self.delete_path_selection_mode or len(self.delete_path_selection_points) < 2:
+            return
+
+        # Get locked labels
+        locked_labels = {
+            label.strip()
+            for label in self._config.get("locked_labels", "").split(",")
+            if label.strip()
+        }
+
+        # Clear and recalculate all intersections
+        self.delete_path_intersected_shapes = []
+
+        for shape in self.shapes:
+            if not shape.visible:
+                continue
+            # Skip locked shapes
+            is_locked = shape.label in locked_labels and not getattr(
+                shape, "is_session_unlocked", False
+            )
+            if is_locked:
+                continue
+            # Skip if already recorded
+            if shape in self.delete_path_intersected_shapes:
+                continue
+            # Check if shape intersects with the path
+            if self.shape_intersects_path(shape, self.delete_path_selection_points):
+                self.delete_path_intersected_shapes.append(shape)
+
+    def complete_delete_path_selection(self):
+        """Complete Alt+RightButton delete path selection and delete all intersected shapes"""
+        if not self.delete_path_selection_mode:
+            return
+
+        # Emit signal to delete shapes (will be handled by label_widget)
+        if self.delete_path_intersected_shapes:
+            self.delete_shapes_requested.emit(list(self.delete_path_intersected_shapes))
+
+        # Reset delete path selection mode
+        self.delete_path_selection_mode = False
+        self.delete_path_selection_points = []
+        self.delete_path_intersected_shapes = []
         self.repaint()
 
     def update_path_highlights(self):
@@ -4203,6 +4277,10 @@ class Canvas(
         if self.ctrl_path_selection_mode:
             self.draw_ctrl_path_selection(p)
 
+        # Draw Alt+RightButton delete path selection (green path for deleting shapes)
+        if self.delete_path_selection_mode:
+            self.draw_delete_path_selection(p)
+
         # Draw smart guides (智能参考线)
         if self.smart_guides_lines:
             self.draw_smart_guides(p)
@@ -4500,6 +4578,118 @@ class Canvas(
 
                 # Center the text
                 text = str(position)
+                fm = QtGui.QFontMetrics(font)
+                text_width = fm.horizontalAdvance(text)
+                text_height = fm.height()
+                text_x = center_screen.x() - text_width / 2
+                text_y = center_screen.y() + text_height / 4
+                p.drawText(QtCore.QPointF(text_x, text_y), text)
+
+        p.restore()
+
+    def draw_delete_path_selection(self, p):
+        """Draw the Alt+RightButton delete path selection (green) and highlight shapes to delete"""
+        if not self.delete_path_selection_mode or len(self.delete_path_selection_points) < 2:
+            return
+
+        # Reset painter transform to draw in screen coordinates (fixed pixel size)
+        p.save()
+        p.resetTransform()
+
+        # Convert image coordinates to screen coordinates
+        offset = self.offset_to_center()
+
+        def to_screen(pt):
+            return QtCore.QPointF(
+                (pt.x() + offset.x()) * self.scale,
+                (pt.y() + offset.y()) * self.scale
+            )
+
+        # Fixed pixel sizes for screen display
+        line_width = 3  # Fixed 3px line width
+        circle_radius = 6  # Fixed 6px circle radius
+        border_width = 2  # Fixed 2px border width
+
+        # Draw the path with GREEN color
+        pen = QtGui.QPen(QtGui.QColor(50, 200, 50), line_width, Qt.SolidLine)  # Green path
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+
+        # Draw path segments in screen coordinates
+        for i in range(len(self.delete_path_selection_points) - 1):
+            start = to_screen(self.delete_path_selection_points[i])
+            end = to_screen(self.delete_path_selection_points[i + 1])
+            p.drawLine(start, end)
+
+        # Draw start point with a green circle
+        if len(self.delete_path_selection_points) > 0:
+            start_point = to_screen(self.delete_path_selection_points[0])
+            p.setBrush(QtGui.QBrush(QtGui.QColor(50, 200, 50)))  # Green color
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
+            p.drawEllipse(start_point, circle_radius, circle_radius)
+
+            # Draw current end point with a green circle
+            if len(self.delete_path_selection_points) > 1:
+                end_point = to_screen(self.delete_path_selection_points[-1])
+                p.setBrush(QtGui.QBrush(QtGui.QColor(50, 200, 50)))  # Green color
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
+                p.drawEllipse(end_point, circle_radius, circle_radius)
+
+        # Highlight shapes to be deleted with red outline
+        for shape in self.delete_path_intersected_shapes:
+            if not shape.visible:
+                continue
+
+            # Red highlight for shapes to delete
+            highlight_color = QtGui.QColor(255, 50, 50)
+
+            # Draw shape outline
+            pen = QtGui.QPen(highlight_color, 3, Qt.SolidLine)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+
+            if shape.shape_type in ["rectangle", "rotation"]:
+                path = QtGui.QPainterPath()
+                path.moveTo(to_screen(shape.points[0]))
+                for point in shape.points[1:]:
+                    path.lineTo(to_screen(point))
+                path.closeSubpath()
+                p.drawPath(path)
+            elif shape.shape_type == "polygon":
+                path = QtGui.QPainterPath()
+                path.moveTo(to_screen(shape.points[0]))
+                for point in shape.points[1:]:
+                    path.lineTo(to_screen(point))
+                path.closeSubpath()
+                p.drawPath(path)
+            elif shape.shape_type == "circle":
+                center = to_screen(shape.points[0])
+                edge = to_screen(shape.points[1])
+                radius = ((edge.x() - center.x()) ** 2 + (edge.y() - center.y()) ** 2) ** 0.5
+                p.drawEllipse(center, radius, radius)
+
+            # Draw "删" text at shape center to indicate deletion
+            if shape.points:
+                sum_x = sum(pt.x() for pt in shape.points)
+                sum_y = sum(pt.y() for pt in shape.points)
+                center_img = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
+                center_screen = to_screen(center_img)
+
+                # Draw background circle
+                number_radius = 12
+                p.setBrush(QtGui.QBrush(highlight_color))
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
+                p.drawEllipse(center_screen, number_radius, number_radius)
+
+                # Draw "删" text
+                font = QtGui.QFont()
+                font.setPointSize(10)
+                font.setBold(True)
+                p.setFont(font)
+                p.setPen(QtGui.QColor(255, 255, 255))  # White text
+
+                # Center the text
+                text = "删"
                 fm = QtGui.QFontMetrics(font)
                 text_width = fm.horizontalAdvance(text)
                 text_height = fm.height()
@@ -5276,6 +5466,14 @@ class Canvas(
                 self.ctrl_path_intersected_shapes = []
                 self.repaint()
                 return
+
+        # Cancel delete path selection mode if Alt key is released
+        if ev.key() == QtCore.Qt.Key_Alt and self.delete_path_selection_mode:
+            self.delete_path_selection_mode = False
+            self.delete_path_selection_points = []
+            self.delete_path_intersected_shapes = []
+            self.repaint()
+            return
 
         modifiers = ev.modifiers()
         if self.drawing():
