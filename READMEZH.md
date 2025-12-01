@@ -502,4 +502,8 @@ https://github.com/user-attachments/assets/699c8f0d-a9b4-4a9f-a967-dcd32844a8dc
 
 https://github.com/user-attachments/assets/3c641963-7bec-44b4-8065-15130b8fb970
 
+98.增加 ALT+右键 路径线删除模式  被路径线穿过的矩形会直接被删除 比起用SHIFT+左键路径选中之后再点删除 能节省一步骤
+
+https://github.com/user-attachments/assets/4ab78a74-5a1a-4855-8ed3-acd84dff332c
+
 
