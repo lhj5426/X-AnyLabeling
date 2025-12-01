@@ -27,9 +27,9 @@ CURSOR_RECTANGLE3 = None  # 将在Canvas初始化时创建 - rectangle3模式专
 # 自定义鼠标指针路径
 CUSTOM_CURSOR_GRAB_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Arrow.cur"
 CUSTOM_CURSOR_MOVE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Link.cur"
-CUSTOM_CURSOR_RECTANGLE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Move.cur"
+CUSTOM_CURSOR_RECTANGLE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\32precision.cur"
 CUSTOM_CURSOR_ROTATION_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Hand.cur"
-CUSTOM_CURSOR_ROTATION3_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Unavailiable.cur"
+CUSTOM_CURSOR_ROTATION3_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\2345Cross.cur"
 CUSTOM_CURSOR_RECTANGLE3_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Unavailiable.cur"
 
 AUTO_DECODE_DELAY_MS = 100
@@ -98,6 +98,7 @@ class Canvas(
     reference_selected = QtCore.pyqtSignal(object)
     split_requested = QtCore.pyqtSignal(object, tuple, str)  # (shape, cut_pos, cut_mode)
     segmentation_mode_exit_requested = QtCore.pyqtSignal()  # Request to exit segmentation mode
+    hide_shapes_requested = QtCore.pyqtSignal(list)  # Request to hide shapes (Ctrl+drag path selection)
 
     CREATE, EDIT = 0, 1
 
@@ -243,6 +244,11 @@ class Canvas(
         self.path_selection_mode = False
         self.path_selection_points = []
         self.path_highlighted_shapes = set()  # Shapes highlighted during path selection
+
+        # Ctrl+drag path selection state (hide even-numbered shapes)
+        self.ctrl_path_selection_mode = False
+        self.ctrl_path_selection_points = []
+        self.ctrl_path_intersected_shapes = []  # Ordered list of shapes intersected by path
 
         # Smart guides (智能参考线) state
         self.smart_guides_enabled = self._config.get('smart_guides_enabled', True)  # 是否显示智能参考线
@@ -978,6 +984,14 @@ class Canvas(
             self.repaint()
             return
 
+        # Handle Ctrl+drag path selection mode (hide even-numbered shapes)
+        if self.ctrl_path_selection_mode:
+            self.ctrl_path_selection_points.append(pos)
+            # Check if path intersects any shapes and track intersection order
+            self.update_ctrl_path_intersections()
+            self.repaint()
+            return
+
         # 记录hover状态变化前的状态
         prev_hover_shape = self.h_hape
 
@@ -1517,6 +1531,15 @@ class Canvas(
             self.path_highlighted_shapes = set()
             return
 
+        # Shift+RightButton drag path selection mode (hide even-numbered shapes)
+        if (ev.button() == QtCore.Qt.RightButton and
+            ev.modifiers() & QtCore.Qt.ShiftModifier and
+            not self.drawing()):
+            self.ctrl_path_selection_mode = True
+            self.ctrl_path_selection_points = [pos]
+            self.ctrl_path_intersected_shapes = []
+            return
+
         if ev.button() == QtCore.Qt.LeftButton:
             if self.drawing():
                 if self.current:
@@ -1771,6 +1794,11 @@ class Canvas(
             self.complete_path_selection()
             return
 
+        # Handle Shift+RightButton drag path selection completion (hide even-numbered shapes)
+        if self.ctrl_path_selection_mode and ev.button() == QtCore.Qt.RightButton:
+            self.complete_ctrl_path_selection()
+            return
+
         # Handle right button release
         if ev.button() == QtCore.Qt.RightButton:
             # Block context menu in special modes
@@ -2015,6 +2043,158 @@ class Canvas(
         self.path_selection_mode = False
         self.path_selection_points = []
         self.path_highlighted_shapes.clear()
+        self.repaint()
+
+    def update_ctrl_path_intersections(self):
+        """Update intersected shapes list based on current Ctrl+drag path, ordered by intersection position along path"""
+        if not self.ctrl_path_selection_mode or len(self.ctrl_path_selection_points) < 2:
+            return
+
+        # Get locked labels
+        locked_labels = {
+            label.strip()
+            for label in self._config.get("locked_labels", "").split(",")
+            if label.strip()
+        }
+
+        # Recalculate all intersections and their positions along the path
+        # Store (cumulative_distance_to_intersection, shape) pairs
+        shape_intersections = []
+
+        cumulative_distance = 0.0
+        for seg_idx in range(len(self.ctrl_path_selection_points) - 1):
+            seg_start = self.ctrl_path_selection_points[seg_idx]
+            seg_end = self.ctrl_path_selection_points[seg_idx + 1]
+            seg_length = ((seg_end.x() - seg_start.x()) ** 2 + (seg_end.y() - seg_start.y()) ** 2) ** 0.5
+
+            for shape in self.shapes:
+                if not shape.visible:
+                    continue
+                # Skip locked shapes
+                is_locked = shape.label in locked_labels and not getattr(
+                    shape, "is_session_unlocked", False
+                )
+                if is_locked:
+                    continue
+                # Skip if already recorded
+                if any(s == shape for _, s in shape_intersections):
+                    continue
+
+                # Get intersection point with this segment
+                intersection_t = self.get_shape_intersection_t(shape, seg_start, seg_end)
+                if intersection_t is not None:
+                    # Calculate distance along path to this intersection
+                    dist_to_intersection = cumulative_distance + intersection_t * seg_length
+                    shape_intersections.append((dist_to_intersection, shape))
+
+            cumulative_distance += seg_length
+
+        # Sort by distance along path
+        shape_intersections.sort(key=lambda x: x[0])
+
+        # Update the ordered list
+        self.ctrl_path_intersected_shapes = [shape for _, shape in shape_intersections]
+
+    def get_shape_intersection_t(self, shape, line_start, line_end):
+        """Get the parameter t (0-1) of the first intersection point along the line segment.
+        Returns None if no intersection."""
+        min_t = None
+
+        if shape.shape_type in ["rectangle", "rotation", "polygon"]:
+            shape_points = shape.points
+            for i in range(len(shape_points)):
+                p1 = shape_points[i]
+                p2 = shape_points[(i + 1) % len(shape_points)]
+                t = self.get_line_intersection_t(line_start, line_end, p1, p2)
+                if t is not None:
+                    if min_t is None or t < min_t:
+                        min_t = t
+        elif shape.shape_type == "circle":
+            center = shape.points[0]
+            edge_point = shape.points[1]
+            radius = ((edge_point.x() - center.x()) ** 2 + (edge_point.y() - center.y()) ** 2) ** 0.5
+            t = self.get_circle_intersection_t(line_start, line_end, center, radius)
+            if t is not None:
+                min_t = t
+        elif shape.shape_type in ["line", "linestrip"]:
+            for i in range(len(shape.points) - 1):
+                p1 = shape.points[i]
+                p2 = shape.points[i + 1]
+                t = self.get_line_intersection_t(line_start, line_end, p1, p2)
+                if t is not None:
+                    if min_t is None or t < min_t:
+                        min_t = t
+
+        return min_t
+
+    def get_line_intersection_t(self, p1, q1, p2, q2):
+        """Get the parameter t (0-1) where two line segments intersect.
+        Returns None if they don't intersect."""
+        # Line 1: p1 + t * (q1 - p1)
+        # Line 2: p2 + s * (q2 - p2)
+        d1x = q1.x() - p1.x()
+        d1y = q1.y() - p1.y()
+        d2x = q2.x() - p2.x()
+        d2y = q2.y() - p2.y()
+
+        cross = d1x * d2y - d1y * d2x
+        if abs(cross) < 1e-10:
+            return None  # Parallel lines
+
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+
+        t = (dx * d2y - dy * d2x) / cross
+        s = (dx * d1y - dy * d1x) / cross
+
+        if 0 <= t <= 1 and 0 <= s <= 1:
+            return t
+        return None
+
+    def get_circle_intersection_t(self, line_start, line_end, center, radius):
+        """Get the parameter t (0-1) of the first intersection with a circle.
+        Returns None if no intersection."""
+        dx = line_end.x() - line_start.x()
+        dy = line_end.y() - line_start.y()
+        fx = line_start.x() - center.x()
+        fy = line_start.y() - center.y()
+
+        a = dx * dx + dy * dy
+        b = 2 * (fx * dx + fy * dy)
+        c = fx * fx + fy * fy - radius * radius
+
+        discriminant = b * b - 4 * a * c
+        if discriminant < 0 or a == 0:
+            return None
+
+        sqrt_disc = discriminant ** 0.5
+        t1 = (-b - sqrt_disc) / (2 * a)
+        t2 = (-b + sqrt_disc) / (2 * a)
+
+        # Return the smallest valid t in [0, 1]
+        valid_ts = [t for t in [t1, t2] if 0 <= t <= 1]
+        return min(valid_ts) if valid_ts else None
+
+    def complete_ctrl_path_selection(self):
+        """Complete Ctrl+drag path selection and hide even-numbered shapes"""
+        if not self.ctrl_path_selection_mode:
+            return
+
+        # Hide even-numbered shapes (2nd, 4th, 6th, etc. - index 1, 3, 5, etc.)
+        shapes_to_hide = []
+        for i, shape in enumerate(self.ctrl_path_intersected_shapes):
+            position = i + 1  # 1-based position
+            if position % 2 == 0:  # Even position: hide
+                shapes_to_hide.append(shape)
+
+        # Emit signal to hide shapes (will be handled by label_widget)
+        if shapes_to_hide:
+            self.hide_shapes_requested.emit(shapes_to_hide)
+
+        # Reset Ctrl path selection mode
+        self.ctrl_path_selection_mode = False
+        self.ctrl_path_selection_points = []
+        self.ctrl_path_intersected_shapes = []
         self.repaint()
 
     def update_path_highlights(self):
@@ -4019,6 +4199,10 @@ class Canvas(
         if self.path_selection_mode:
             self.draw_path_selection(p)
 
+        # Draw Ctrl+drag path selection (red path for hiding even-numbered shapes)
+        if self.ctrl_path_selection_mode:
+            self.draw_ctrl_path_selection(p)
+
         # Draw smart guides (智能参考线)
         if self.smart_guides_lines:
             self.draw_smart_guides(p)
@@ -4203,6 +4387,125 @@ class Canvas(
                     edge = to_screen(shape.points[1])
                     radius = ((edge.x() - center.x()) ** 2 + (edge.y() - center.y()) ** 2) ** 0.5
                     p.drawEllipse(center, radius, radius)
+
+        p.restore()
+
+    def draw_ctrl_path_selection(self, p):
+        """Draw the Ctrl+drag path selection (red) and highlight shapes with order numbers"""
+        if not self.ctrl_path_selection_mode or len(self.ctrl_path_selection_points) < 2:
+            return
+
+        # Reset painter transform to draw in screen coordinates (fixed pixel size)
+        p.save()
+        p.resetTransform()
+
+        # Convert image coordinates to screen coordinates
+        offset = self.offset_to_center()
+
+        def to_screen(pt):
+            return QtCore.QPointF(
+                (pt.x() + offset.x()) * self.scale,
+                (pt.y() + offset.y()) * self.scale
+            )
+
+        # Fixed pixel sizes for screen display
+        line_width = 3  # Fixed 3px line width
+        circle_radius = 6  # Fixed 6px circle radius
+        border_width = 2  # Fixed 2px border width
+
+        # Draw the path with RED color
+        pen = QtGui.QPen(QtGui.QColor(255, 50, 50), line_width, Qt.SolidLine)  # Red path
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+
+        # Draw path segments in screen coordinates
+        for i in range(len(self.ctrl_path_selection_points) - 1):
+            start = to_screen(self.ctrl_path_selection_points[i])
+            end = to_screen(self.ctrl_path_selection_points[i + 1])
+            p.drawLine(start, end)
+
+        # Draw start point with a red circle
+        if len(self.ctrl_path_selection_points) > 0:
+            start_point = to_screen(self.ctrl_path_selection_points[0])
+            p.setBrush(QtGui.QBrush(QtGui.QColor(255, 50, 50)))  # Red color
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
+            p.drawEllipse(start_point, circle_radius, circle_radius)
+
+            # Draw current end point with a red circle
+            if len(self.ctrl_path_selection_points) > 1:
+                end_point = to_screen(self.ctrl_path_selection_points[-1])
+                p.setBrush(QtGui.QBrush(QtGui.QColor(255, 50, 50)))  # Red color
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
+                p.drawEllipse(end_point, circle_radius, circle_radius)
+
+        # Highlight intersected shapes with order numbers
+        for i, shape in enumerate(self.ctrl_path_intersected_shapes):
+            if not shape.visible:
+                continue
+
+            position = i + 1  # 1-based position
+            is_even = (position % 2 == 0)  # Even positions will be hidden
+
+            # Use different colors: green for odd (keep), red for even (hide)
+            if is_even:
+                highlight_color = QtGui.QColor(255, 50, 50)  # Red for shapes to hide
+            else:
+                highlight_color = QtGui.QColor(50, 200, 50)  # Green for shapes to keep
+
+            # Draw shape outline
+            pen = QtGui.QPen(highlight_color, 3, Qt.SolidLine)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+
+            if shape.shape_type in ["rectangle", "rotation"]:
+                path = QtGui.QPainterPath()
+                path.moveTo(to_screen(shape.points[0]))
+                for point in shape.points[1:]:
+                    path.lineTo(to_screen(point))
+                path.closeSubpath()
+                p.drawPath(path)
+            elif shape.shape_type == "polygon":
+                path = QtGui.QPainterPath()
+                path.moveTo(to_screen(shape.points[0]))
+                for point in shape.points[1:]:
+                    path.lineTo(to_screen(point))
+                path.closeSubpath()
+                p.drawPath(path)
+            elif shape.shape_type == "circle":
+                center = to_screen(shape.points[0])
+                edge = to_screen(shape.points[1])
+                radius = ((edge.x() - center.x()) ** 2 + (edge.y() - center.y()) ** 2) ** 0.5
+                p.drawEllipse(center, radius, radius)
+
+            # Draw order number at shape center
+            if shape.points:
+                # Calculate shape center
+                sum_x = sum(pt.x() for pt in shape.points)
+                sum_y = sum(pt.y() for pt in shape.points)
+                center_img = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
+                center_screen = to_screen(center_img)
+
+                # Draw number background circle
+                number_radius = 12
+                p.setBrush(QtGui.QBrush(highlight_color))
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
+                p.drawEllipse(center_screen, number_radius, number_radius)
+
+                # Draw number text
+                font = QtGui.QFont()
+                font.setPointSize(10)
+                font.setBold(True)
+                p.setFont(font)
+                p.setPen(QtGui.QColor(255, 255, 255))  # White text
+
+                # Center the text
+                text = str(position)
+                fm = QtGui.QFontMetrics(font)
+                text_width = fm.horizontalAdvance(text)
+                text_height = fm.height()
+                text_x = center_screen.x() - text_width / 2
+                text_y = center_screen.y() + text_height / 4
+                p.drawText(QtCore.QPointF(text_x, text_y), text)
 
         p.restore()
 
@@ -4959,12 +5262,20 @@ class Canvas(
             self.repaint()
             return
 
-        # Cancel path selection mode if Shift key is released
-        if ev.key() == QtCore.Qt.Key_Shift and self.path_selection_mode:
-            self.path_selection_mode = False
-            self.path_highlighted_shapes.clear()
-            self.repaint()
-            return
+        # Cancel path selection modes if Shift key is released
+        # (Both Shift+LeftButton blue path and Shift+RightButton red path use Shift)
+        if ev.key() == QtCore.Qt.Key_Shift:
+            if self.path_selection_mode:
+                self.path_selection_mode = False
+                self.path_highlighted_shapes.clear()
+                self.repaint()
+                return
+            if self.ctrl_path_selection_mode:
+                self.ctrl_path_selection_mode = False
+                self.ctrl_path_selection_points = []
+                self.ctrl_path_intersected_shapes = []
+                self.repaint()
+                return
 
         modifiers = ev.modifiers()
         if self.drawing():

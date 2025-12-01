@@ -858,6 +858,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.shape_rotated.connect(self._update_navigator_title_with_selection)
         self.canvas.drawing_polygon.connect(self.toggle_drawing_sensitive)
         self.canvas.drawing_cancelled.connect(self.on_drawing_cancelled)
+        self.canvas.hide_shapes_requested.connect(self.hide_shapes_by_path)
         # [Feature] support for automatically switching to editing mode
         # when the cursor moves over an object
         self.canvas.h_shape_is_hovered = self._config.get(
@@ -8234,6 +8235,22 @@ class LabelingWidget(QtWidgets.QWidget):
                 logger.warning(
                     f"Shape associated with the hidden item was not found in label list, could not show."
                 )
+
+    def hide_shapes_by_path(self, shapes_to_hide):
+        """Hide shapes selected by Ctrl+drag path (even-numbered shapes)"""
+        if not shapes_to_hide:
+            return
+
+        for shape in shapes_to_hide:
+            item = self.label_list.find_item_by_shape(shape)
+            if item:
+                item.setCheckState(Qt.Unchecked)
+                shape.visible = False
+                self.selected_polygon_stack.append(shape)
+
+        self.canvas.update()
+        self.update_navigator_shapes()
+        self.set_dirty()
 
     def get_next_files(self, filename, num_files):
         """Get the next files in the list."""
