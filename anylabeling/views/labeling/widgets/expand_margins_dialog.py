@@ -172,7 +172,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         for i, label in enumerate(labels):
             label_item = QtWidgets.QTableWidgetItem(label)
             label_item.setFlags(label_item.flags() & ~QtCore.Qt.ItemIsEditable)
-            label_item.setToolTip(self.tr("左键清零, 右键扩缩本页单个标签, 中键扩缩选中单个标签"))
+            label_item.setToolTip(self.tr("左键扩缩本页单个标签, 右键扩缩选中单个标签, 中键清零"))
             self._update_label_color(label_item, label)
             self.table_widget.setItem(i, 0, label_item)
 
@@ -334,13 +334,13 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             index = self.table_widget.indexAt(event.pos())
             if index.isValid() and index.column() == 0:
                 if event.button() == QtCore.Qt.LeftButton:
-                    self.clear_row(index.row())
-                    return True
-                elif event.button() == QtCore.Qt.RightButton:
                     self.on_apply_single_label(index.row())
                     return True
-                elif event.button() == QtCore.Qt.MidButton:
+                elif event.button() == QtCore.Qt.RightButton:
                     self.on_apply_single_label_selected(index.row())
+                    return True
+                elif event.button() == QtCore.Qt.MidButton:
+                    self.clear_row(index.row())
                     return True
         return super(ExpandMarginsDialog, self).eventFilter(source, event)
 
