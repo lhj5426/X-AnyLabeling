@@ -498,4 +498,8 @@ https://github.com/user-attachments/assets/699c8f0d-a9b4-4a9f-a967-dcd32844a8dc
 
 <img width="454" height="744" alt="image" src="https://github.com/user-attachments/assets/40b0b1b2-9218-49f7-a9cf-147539eac973" />
 
+97.增加 SHIFT+右键 路径线隐藏模式 被路径线穿过的矩形会被隐藏 比手动一个一个隐藏效率多了 
+
+https://github.com/user-attachments/assets/3c641963-7bec-44b4-8065-15130b8fb970
+
 
