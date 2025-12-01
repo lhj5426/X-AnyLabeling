@@ -506,4 +506,9 @@ https://github.com/user-attachments/assets/3c641963-7bec-44b4-8065-15130b8fb970
 
 https://github.com/user-attachments/assets/4ab78a74-5a1a-4855-8ed3-acd84dff332c
 
+99.增加序号显示 优化 这才是真正的序号显示
+
+<img width="723" height="788" alt="image" src="https://github.com/user-attachments/assets/e9b074ff-9cd4-4875-a2e1-ebdbdc776eb8" />
+
+
 
