@@ -50,7 +50,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
     def __init__(self, labels, parent=None):
         super(ExpandMarginsDialog, self).__init__(parent)
         self.setWindowTitle(self.tr("标注框边距扩展工具"))
-        self.resize(526, 323)
+        self.resize(525, 470)
 
         self.restore_window_position()
 
@@ -162,7 +162,8 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
 
 
     def populate_table(self, labels):
-        self.table_widget.setRowCount(len(labels))
+        # 每个标签占两行（第一行扩大用，第二行缩小用）
+        self.table_widget.setRowCount(len(labels) * 2)
         edges = ["Top", "Bottom", "Left", "Right"]
         edge_translations = {
             "Top": self.tr("上"), "Bottom": self.tr("下"),
@@ -170,38 +171,74 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         }
 
         for i, label in enumerate(labels):
-            label_item = QtWidgets.QTableWidgetItem(label)
-            label_item.setFlags(label_item.flags() & ~QtCore.Qt.ItemIsEditable)
-            label_item.setToolTip(self.tr("左键扩缩本页单个标签, 右键扩缩选中单个标签, 中键清零"))
-            self._update_label_color(label_item, label)
-            self.table_widget.setItem(i, 0, label_item)
+            row1 = i * 2      # 第一行（扩大）
+            row2 = i * 2 + 1  # 第二行（缩小）
+            
+            # 第一行标签
+            label_item1 = QtWidgets.QTableWidgetItem(label)
+            label_item1.setFlags(label_item1.flags() & ~QtCore.Qt.ItemIsEditable)
+            label_item1.setToolTip(self.tr("左键扩缩本页单个标签, 右键扩缩选中单个标签, 中键清零"))
+            self._update_label_color(label_item1, label)
+            self.table_widget.setItem(row1, 0, label_item1)
+            
+            # 第二行标签
+            label_item2 = QtWidgets.QTableWidgetItem(label)
+            label_item2.setFlags(label_item2.flags() & ~QtCore.Qt.ItemIsEditable)
+            label_item2.setToolTip(self.tr("左键扩缩本页单个标签, 右键扩缩选中单个标签, 中键清零"))
+            self._update_label_color(label_item2, label)
+            self.table_widget.setItem(row2, 0, label_item2)
 
             for j, edge in enumerate(edges):
                 col_index = j * 2 + 1
-                spinbox = QtWidgets.QDoubleSpinBox()
-                spinbox.setRange(-1000, 1000)
-                spinbox.setDecimals(1)
-                spinbox.setSingleStep(1.0)
-                spinbox.setValue(0.0)
-                self.table_widget.setCellWidget(i, col_index, spinbox)
-
                 translated_edge = edge_translations.get(edge, edge)
-                apply_button = ClickableLabel(translated_edge)
-                apply_button.setToolTip(
+                
+                # 第一行的spinbox和按钮
+                spinbox1 = QtWidgets.QDoubleSpinBox()
+                spinbox1.setRange(-1000, 1000)
+                spinbox1.setDecimals(1)
+                spinbox1.setSingleStep(1.0)
+                spinbox1.setValue(0.0)
+                self.table_widget.setCellWidget(row1, col_index, spinbox1)
+
+                apply_button1 = ClickableLabel(translated_edge)
+                apply_button1.setToolTip(
                     self.tr("左键: 应用到本页全部 '{label}' 标签的'{edge}'边\n右键: 应用到本页选中 '{label}' 标签的'{edge}'边").format(
                         label=label, edge=translated_edge
                     )
                 )
+                apply_button1.leftClicked.connect(functools.partial(self.on_single_edge_apply, row1, edge, "all"))
+                apply_button1.rightClicked.connect(functools.partial(self.on_single_edge_apply, row1, edge, "selected"))
                 
-                apply_button.leftClicked.connect(functools.partial(self.on_single_edge_apply, i, edge, "all"))
-                apply_button.rightClicked.connect(functools.partial(self.on_single_edge_apply, i, edge, "selected"))
+                container1 = QtWidgets.QWidget()
+                container_layout1 = QtWidgets.QHBoxLayout(container1)
+                container_layout1.setContentsMargins(0, 0, 0, 0)
+                container_layout1.addWidget(apply_button1)
+                container_layout1.setAlignment(QtCore.Qt.AlignCenter)
+                self.table_widget.setCellWidget(row1, col_index + 1, container1)
                 
-                container = QtWidgets.QWidget()
-                container_layout = QtWidgets.QHBoxLayout(container)
-                container_layout.setContentsMargins(0, 0, 0, 0)
-                container_layout.addWidget(apply_button)
-                container_layout.setAlignment(QtCore.Qt.AlignCenter)
-                self.table_widget.setCellWidget(i, col_index + 1, container)
+                # 第二行的spinbox和按钮
+                spinbox2 = QtWidgets.QDoubleSpinBox()
+                spinbox2.setRange(-1000, 1000)
+                spinbox2.setDecimals(1)
+                spinbox2.setSingleStep(1.0)
+                spinbox2.setValue(0.0)
+                self.table_widget.setCellWidget(row2, col_index, spinbox2)
+
+                apply_button2 = ClickableLabel(translated_edge)
+                apply_button2.setToolTip(
+                    self.tr("左键: 应用到本页全部 '{label}' 标签的'{edge}'边\n右键: 应用到本页选中 '{label}' 标签的'{edge}'边").format(
+                        label=label, edge=translated_edge
+                    )
+                )
+                apply_button2.leftClicked.connect(functools.partial(self.on_single_edge_apply, row2, edge, "all"))
+                apply_button2.rightClicked.connect(functools.partial(self.on_single_edge_apply, row2, edge, "selected"))
+                
+                container2 = QtWidgets.QWidget()
+                container_layout2 = QtWidgets.QHBoxLayout(container2)
+                container_layout2.setContentsMargins(0, 0, 0, 0)
+                container_layout2.addWidget(apply_button2)
+                container_layout2.setAlignment(QtCore.Qt.AlignCenter)
+                self.table_widget.setCellWidget(row2, col_index + 1, container2)
 
     def update_labels(self, labels):
         current_values = {}
@@ -212,27 +249,59 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.restore_margin_values(current_values)
 
     def get_margin_values(self):
+        """获取边距值，合并每个标签的两行（第一行+第二行）"""
         margins = {}
-        for i in range(self.table_widget.rowCount()):
+        # 每个标签占两行，所以步进为2
+        for i in range(0, self.table_widget.rowCount(), 2):
             label = self.table_widget.item(i, 0).text()
-            top = self.table_widget.cellWidget(i, 1).value()
-            bottom = self.table_widget.cellWidget(i, 3).value()
-            left = self.table_widget.cellWidget(i, 5).value()
-            right = self.table_widget.cellWidget(i, 7).value()
-            margins[label] = (top, bottom, left, right)
+            row1 = i      # 第一行
+            row2 = i + 1  # 第二行
+            
+            # 获取第一行的值
+            top1 = self.table_widget.cellWidget(row1, 1).value()
+            bottom1 = self.table_widget.cellWidget(row1, 3).value()
+            left1 = self.table_widget.cellWidget(row1, 5).value()
+            right1 = self.table_widget.cellWidget(row1, 7).value()
+            
+            # 获取第二行的值
+            top2 = self.table_widget.cellWidget(row2, 1).value() if row2 < self.table_widget.rowCount() else 0.0
+            bottom2 = self.table_widget.cellWidget(row2, 3).value() if row2 < self.table_widget.rowCount() else 0.0
+            left2 = self.table_widget.cellWidget(row2, 5).value() if row2 < self.table_widget.rowCount() else 0.0
+            right2 = self.table_widget.cellWidget(row2, 7).value() if row2 < self.table_widget.rowCount() else 0.0
+            
+            # 合并两行的值（相加）
+            margins[label] = (top1 + top2, bottom1 + bottom2, left1 + left2, right1 + right2)
         return margins
 
     def restore_margin_values(self, saved_values):
+        """恢复边距值，saved_values现在包含两行的值"""
         if not saved_values:
             return
-        for i in range(self.table_widget.rowCount()):
+        for i in range(0, self.table_widget.rowCount(), 2):
             label = self.table_widget.item(i, 0).text()
             if label in saved_values:
-                top, bottom, left, right = saved_values[label]
-                self.table_widget.cellWidget(i, 1).setValue(top)
-                self.table_widget.cellWidget(i, 3).setValue(bottom)
-                self.table_widget.cellWidget(i, 5).setValue(left)
-                self.table_widget.cellWidget(i, 7).setValue(right)
+                values = saved_values[label]
+                # 支持新格式（两行各4个值）和旧格式（单行4个值）
+                if len(values) == 8:
+                    # 新格式：(top1, bottom1, left1, right1, top2, bottom2, left2, right2)
+                    row1 = i
+                    row2 = i + 1
+                    self.table_widget.cellWidget(row1, 1).setValue(values[0])
+                    self.table_widget.cellWidget(row1, 3).setValue(values[1])
+                    self.table_widget.cellWidget(row1, 5).setValue(values[2])
+                    self.table_widget.cellWidget(row1, 7).setValue(values[3])
+                    if row2 < self.table_widget.rowCount():
+                        self.table_widget.cellWidget(row2, 1).setValue(values[4])
+                        self.table_widget.cellWidget(row2, 3).setValue(values[5])
+                        self.table_widget.cellWidget(row2, 5).setValue(values[6])
+                        self.table_widget.cellWidget(row2, 7).setValue(values[7])
+                elif len(values) == 4:
+                    # 旧格式：只恢复到第一行
+                    top, bottom, left, right = values
+                    self.table_widget.cellWidget(i, 1).setValue(top)
+                    self.table_widget.cellWidget(i, 3).setValue(bottom)
+                    self.table_widget.cellWidget(i, 5).setValue(left)
+                    self.table_widget.cellWidget(i, 7).setValue(right)
 
     def on_apply_current(self):
         margins = self.get_margin_values()
@@ -258,6 +327,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.apply_all_in_range.emit(margins, start_index, end_index)
 
     def on_clear_all(self):
+        """清零所有行（包括两行）"""
         for i in range(self.table_widget.rowCount()):
             for j in range(1, 9, 2):
                 spinbox = self.table_widget.cellWidget(i, j)
@@ -272,14 +342,16 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             item = self.parent().unique_label_list.item(i)
             label_text = item.data(QtCore.Qt.UserRole)
             current_labels.append(label_text)
+        # 每个标签占两行，所以只取偶数行的标签
         existing_labels = []
-        for i in range(self.table_widget.rowCount()):
+        for i in range(0, self.table_widget.rowCount(), 2):
             label_item = self.table_widget.item(i, 0)
             if label_item:
                 existing_labels.append(label_item.text())
         if set(current_labels) != set(existing_labels):
             self.update_labels(current_labels)
         else:
+            # 更新所有行的颜色（包括两行）
             for i in range(self.table_widget.rowCount()):
                 label_item = self.table_widget.item(i, 0)
                 if label_item:
