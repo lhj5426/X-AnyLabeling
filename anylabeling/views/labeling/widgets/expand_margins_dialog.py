@@ -4,9 +4,10 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 import functools
 
 class ClickableLabel(QtWidgets.QLabel):
-    """A QLabel that emits signals for left and right clicks."""
+    """A QLabel that emits signals for left, right and middle clicks."""
     leftClicked = QtCore.pyqtSignal()
     rightClicked = QtCore.pyqtSignal()
+    middleClicked = QtCore.pyqtSignal()
 
     def __init__(self, *args, **kwargs):
         super(ClickableLabel, self).__init__(*args, **kwargs)
@@ -34,6 +35,8 @@ class ClickableLabel(QtWidgets.QLabel):
             self.leftClicked.emit()
         elif event.button() == QtCore.Qt.RightButton:
             self.rightClicked.emit()
+        elif event.button() == QtCore.Qt.MiddleButton:
+            self.middleClicked.emit()
         super(ClickableLabel, self).mousePressEvent(event)
 
 class ExpandMarginsDialog(QtWidgets.QDialog):
@@ -203,12 +206,13 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
 
                 apply_button1 = ClickableLabel(translated_edge)
                 apply_button1.setToolTip(
-                    self.tr("左键: 应用到本页全部 '{label}' 标签的'{edge}'边\n右键: 应用到本页选中 '{label}' 标签的'{edge}'边").format(
+                    self.tr("左键: 应用到本页全部 '{label}' 标签的'{edge}'边\n右键: 应用到本页选中 '{label}' 标签的'{edge}'边\n中键: 清零").format(
                         label=label, edge=translated_edge
                     )
                 )
                 apply_button1.leftClicked.connect(functools.partial(self.on_single_edge_apply, row1, edge, "all"))
                 apply_button1.rightClicked.connect(functools.partial(self.on_single_edge_apply, row1, edge, "selected"))
+                apply_button1.middleClicked.connect(functools.partial(self.on_single_edge_clear, row1, edge))
                 
                 container1 = QtWidgets.QWidget()
                 container_layout1 = QtWidgets.QHBoxLayout(container1)
@@ -227,12 +231,13 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
 
                 apply_button2 = ClickableLabel(translated_edge)
                 apply_button2.setToolTip(
-                    self.tr("左键: 应用到本页全部 '{label}' 标签的'{edge}'边\n右键: 应用到本页选中 '{label}' 标签的'{edge}'边").format(
+                    self.tr("左键: 应用到本页全部 '{label}' 标签的'{edge}'边\n右键: 应用到本页选中 '{label}' 标签的'{edge}'边\n中键: 清零").format(
                         label=label, edge=translated_edge
                     )
                 )
                 apply_button2.leftClicked.connect(functools.partial(self.on_single_edge_apply, row2, edge, "all"))
                 apply_button2.rightClicked.connect(functools.partial(self.on_single_edge_apply, row2, edge, "selected"))
+                apply_button2.middleClicked.connect(functools.partial(self.on_single_edge_clear, row2, edge))
                 
                 container2 = QtWidgets.QWidget()
                 container_layout2 = QtWidgets.QHBoxLayout(container2)
@@ -482,6 +487,18 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             self.apply_single_label.emit(margins)
         elif scope == "selected":
             self.apply_single_label_selected.emit(margins)
+
+    def on_single_edge_clear(self, row, edge_name):
+        """中键清零：将指定行的指定边距值设为0"""
+        edges = ["Top", "Bottom", "Left", "Right"]
+        try:
+            edge_index = edges.index(edge_name)
+            spinbox_col = edge_index * 2 + 1
+            spinbox = self.table_widget.cellWidget(row, spinbox_col)
+            if spinbox:
+                spinbox.setValue(0.0)
+        except (ValueError, AttributeError):
+            pass
 
     def on_jump_to_image(self):
         index = self.jump_spinbox.value() - 1

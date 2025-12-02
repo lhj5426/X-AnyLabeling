@@ -3266,6 +3266,8 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.reset_state()
         self.label_filter_combobox.text_box.clear()
         self.gid_filter_combobox.gid_box.clear()
+        # 更新标签页管理器（翻页到空白页时刷新为空）
+        self._update_object_manager()
 
     def reset_attribute(self, text):
         # Skip validation for auto-labeling special constants
