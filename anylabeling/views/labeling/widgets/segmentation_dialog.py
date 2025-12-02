@@ -49,24 +49,12 @@ class SegmentationDialog(QtWidgets.QDialog):
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(10)
 
-        # Title
-        title_label = QtWidgets.QLabel(self.tr("矩形分割工具"))
-        title_font = QtGui.QFont()
-        title_font.setPointSize(14)
-        title_font.setBold(True)
-        title_label.setFont(title_font)
-        title_label.setAlignment(QtCore.Qt.AlignCenter)
-        main_layout.addWidget(title_label)
-
         # Instructions
         instructions = QtWidgets.QLabel(
             self.tr(
-                "使用说明：\n"
-                "1. 点击下方按钮选择分割模式\n"
-                "2. 在画布上选择一个矩形标注框\n"
-                "3. 左键单独切割一个，右键批量切割十字线覆盖的所有矩形\n"
-                "4. 原矩形将被分割为两个新矩形\n"
-                "5. 鼠标中键可快速退出分割模式"
+                "左键【单独分割】 右键【分割线内全部】\n"
+                "中键【退出分割模式】\n"
+                "分割模式下 按【大键盘区】数字键1和2可切换垂直/水平模式"
             )
         )
         instructions.setWordWrap(True)

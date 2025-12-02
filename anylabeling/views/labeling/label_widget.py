@@ -4632,6 +4632,8 @@ class LabelingWidget(QtWidgets.QWidget):
         # 开启十字线并设置为仅垂直线
         self.canvas.cross_line_show = True
         self.canvas.set_crosshair_style('vertical_only')
+        # 禁用数字快捷键1和2，让分割模式优先
+        self._disable_digit_shortcuts_for_segmentation()
 
     def on_enter_horizontal_cut_mode(self):
         """Enter horizontal cut mode."""
@@ -4643,6 +4645,29 @@ class LabelingWidget(QtWidgets.QWidget):
         # 开启十字线并设置为仅水平线
         self.canvas.cross_line_show = True
         self.canvas.set_crosshair_style('horizontal_only')
+        # 禁用数字快捷键1和2，让分割模式优先
+        self._disable_digit_shortcuts_for_segmentation()
+
+    def _disable_digit_shortcuts_for_segmentation(self):
+        """禁用数字快捷键1和2，让分割模式可以使用这些键"""
+        if hasattr(self, 'actions') and hasattr(self.actions, 'digit_shortcut_1'):
+            # 保存原来的快捷键
+            if not hasattr(self, '_saved_digit_shortcuts'):
+                self._saved_digit_shortcuts = {
+                    '1': self.actions.digit_shortcut_1.shortcut(),
+                    '2': self.actions.digit_shortcut_2.shortcut(),
+                }
+            # 清空快捷键
+            self.actions.digit_shortcut_1.setShortcut('')
+            self.actions.digit_shortcut_2.setShortcut('')
+
+    def _restore_digit_shortcuts(self):
+        """恢复数字快捷键1和2"""
+        if hasattr(self, '_saved_digit_shortcuts') and hasattr(self, 'actions'):
+            if hasattr(self.actions, 'digit_shortcut_1'):
+                self.actions.digit_shortcut_1.setShortcut(self._saved_digit_shortcuts.get('1', '1'))
+                self.actions.digit_shortcut_2.setShortcut(self._saved_digit_shortcuts.get('2', '2'))
+            delattr(self, '_saved_digit_shortcuts')
 
     def on_exit_segmentation_mode(self):
         """Exit segmentation mode."""
@@ -4653,6 +4678,8 @@ class LabelingWidget(QtWidgets.QWidget):
         if hasattr(self, '_saved_crosshair_state'):
             self.canvas.cross_line_show = self._saved_crosshair_state
             delattr(self, '_saved_crosshair_state')
+        # 恢复数字快捷键
+        self._restore_digit_shortcuts()
         self.canvas.deselect_shape()
         self.canvas.update()
 
@@ -4665,7 +4692,6 @@ class LabelingWidget(QtWidgets.QWidget):
         if self.segmentation_dialog:
             # Trigger the exit button in the dialog to keep UI in sync
             self.segmentation_dialog.on_exit_mode()
-
     def _toggle_dialog(self, dialog_attr, open_method):
         """通用的对话框切换方法
         
@@ -8627,6 +8653,44 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.canvas.undo_last_point()
             event.accept()
             return
+        
+        # 分割模式下，按1切换垂直分割，按2切换水平分割
+        if self.segmentation_mode is not None:
+            if event.key() == Qt.Key_1:
+                # 切换到垂直分割模式
+                if self.segmentation_mode != 'vertical':
+                    self.on_enter_vertical_cut_mode()
+                    # 同步更新对话框按钮状态
+                    if self.segmentation_dialog:
+                        self.segmentation_dialog.vertical_button.setChecked(True)
+                        self.segmentation_dialog.horizontal_button.setChecked(False)
+                        self.segmentation_dialog.current_mode = 'vertical'
+                        self.segmentation_dialog.mode_label.setText(self.segmentation_dialog.tr("当前模式: 垂直分割"))
+                        self.segmentation_dialog.mode_label.setStyleSheet(
+                            "padding: 8px; background-color: #d4edda; "
+                            "border-radius: 5px; font-weight: bold; font-size: 12px; color: #155724;"
+                        )
+                        self.segmentation_dialog.log_message(self.segmentation_dialog.tr("已切换到垂直分割模式（按键1）"))
+                event.accept()
+                return
+            elif event.key() == Qt.Key_2:
+                # 切换到水平分割模式
+                if self.segmentation_mode != 'horizontal':
+                    self.on_enter_horizontal_cut_mode()
+                    # 同步更新对话框按钮状态
+                    if self.segmentation_dialog:
+                        self.segmentation_dialog.horizontal_button.setChecked(True)
+                        self.segmentation_dialog.vertical_button.setChecked(False)
+                        self.segmentation_dialog.current_mode = 'horizontal'
+                        self.segmentation_dialog.mode_label.setText(self.segmentation_dialog.tr("当前模式: 水平分割"))
+                        self.segmentation_dialog.mode_label.setStyleSheet(
+                            "padding: 8px; background-color: #d1ecf1; "
+                            "border-radius: 5px; font-weight: bold; font-size: 12px; color: #0c5460;"
+                        )
+                        self.segmentation_dialog.log_message(self.segmentation_dialog.tr("已切换到水平分割模式（按键2）"))
+                event.accept()
+                return
+        
         super(LabelingWidget, self).keyPressEvent(event)
 
     def resizeEvent(self, _):

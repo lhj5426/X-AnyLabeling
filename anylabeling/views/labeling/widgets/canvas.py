@@ -5451,6 +5451,43 @@ class Canvas(
             event.accept()
             return
 
+        # 分割模式下，按1切换垂直分割，按2切换水平分割
+        if self.segmentation_mode is not None:
+            if event.key() == Qt.Key_1:
+                # 切换到垂直分割模式
+                if self.segmentation_mode != 'vertical':
+                    self.parent.on_enter_vertical_cut_mode()
+                    # 同步更新对话框按钮状态
+                    if self.parent.segmentation_dialog:
+                        self.parent.segmentation_dialog.vertical_button.setChecked(True)
+                        self.parent.segmentation_dialog.horizontal_button.setChecked(False)
+                        self.parent.segmentation_dialog.current_mode = 'vertical'
+                        self.parent.segmentation_dialog.mode_label.setText(self.parent.segmentation_dialog.tr("当前模式: 垂直分割"))
+                        self.parent.segmentation_dialog.mode_label.setStyleSheet(
+                            "padding: 8px; background-color: #d4edda; "
+                            "border-radius: 5px; font-weight: bold; font-size: 12px; color: #155724;"
+                        )
+                        self.parent.segmentation_dialog.log_message(self.parent.segmentation_dialog.tr("已切换到垂直分割模式（按键1）"))
+                event.accept()
+                return
+            elif event.key() == Qt.Key_2:
+                # 切换到水平分割模式
+                if self.segmentation_mode != 'horizontal':
+                    self.parent.on_enter_horizontal_cut_mode()
+                    # 同步更新对话框按钮状态
+                    if self.parent.segmentation_dialog:
+                        self.parent.segmentation_dialog.horizontal_button.setChecked(True)
+                        self.parent.segmentation_dialog.vertical_button.setChecked(False)
+                        self.parent.segmentation_dialog.current_mode = 'horizontal'
+                        self.parent.segmentation_dialog.mode_label.setText(self.parent.segmentation_dialog.tr("当前模式: 水平分割"))
+                        self.parent.segmentation_dialog.mode_label.setStyleSheet(
+                            "padding: 8px; background-color: #d1ecf1; "
+                            "border-radius: 5px; font-weight: bold; font-size: 12px; color: #0c5460;"
+                        )
+                        self.parent.segmentation_dialog.log_message(self.parent.segmentation_dialog.tr("已切换到水平分割模式（按键2）"))
+                event.accept()
+                return
+
         if self.editing():
             keymap_config = self.parent._config.get("keymap", {})
             selected_label = None
