@@ -514,6 +514,11 @@ https://github.com/user-attachments/assets/4ab78a74-5a1a-4855-8ed3-acd84dff332c
 
 https://github.com/user-attachments/assets/37c13989-a8b8-4bd1-9a01-a305a5e629d6
 
+101.对齐工具 增加 手动输入标签和 指定宽高
+
+https://github.com/user-attachments/assets/4af68996-391b-477b-bf44-2c1811bd21b0
+
+
 
 
 
