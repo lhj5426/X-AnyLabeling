@@ -10090,8 +10090,30 @@ class LabelingWidget(QtWidgets.QWidget):
 
         processed_files = 0
         modified_shapes_total = 0
+        total_files = len(self.image_list)
 
-        for image_path in self.image_list:
+        # 创建进度对话框
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在处理边距扩缩..."),
+            self.tr("取消"),
+            0,
+            total_files,
+            self
+        )
+        progress.setWindowTitle(self.tr("边距扩缩"))
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        for i, image_path in enumerate(self.image_list):
+            # 检查是否取消
+            if progress.wasCanceled():
+                break
+            
+            # 更新进度
+            progress.setValue(i)
+            progress.setLabelText(self.tr(f"正在处理: {i + 1}/{total_files}"))
+            QtWidgets.QApplication.processEvents()  # 保持UI响应
             label_file_path = osp.splitext(image_path)[0] + ".json"
             if self.output_dir:
                 label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
@@ -10194,6 +10216,10 @@ class LabelingWidget(QtWidgets.QWidget):
                 logger.error(f"处理文件失败 {label_file_path}: {e}")
                 continue
         
+        # 关闭进度条
+        progress.setValue(total_files)
+        progress.close()
+        
         # Reload current file to reflect changes if it was modified
         self.load_file(self.filename)
 
@@ -10234,7 +10260,29 @@ class LabelingWidget(QtWidgets.QWidget):
         processed_files = 0
         modified_shapes_total = 0
 
-        for image_path in files_to_process:
+        # 创建进度对话框
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在处理边距扩缩..."),
+            self.tr("取消"),
+            0,
+            num_files,
+            self
+        )
+        progress.setWindowTitle(self.tr("边距扩缩"))
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        for i, image_path in enumerate(files_to_process):
+            # 检查是否取消
+            if progress.wasCanceled():
+                break
+            
+            # 更新进度
+            progress.setValue(i)
+            progress.setLabelText(self.tr(f"正在处理: {i + 1}/{num_files}"))
+            QtWidgets.QApplication.processEvents()  # 保持UI响应
+            
             label_file_path = osp.splitext(image_path)[0] + ".json"
             if self.output_dir:
                 label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
@@ -10336,6 +10384,10 @@ class LabelingWidget(QtWidgets.QWidget):
             except Exception as e:
                 logger.error(f"处理文件失败 {label_file_path}: {e}")
                 continue
+        
+        # 关闭进度条
+        progress.setValue(num_files)
+        progress.close()
         
         # Reload current file to reflect changes if it was modified
         self.load_file(self.filename)
@@ -10394,11 +10446,15 @@ class LabelingWidget(QtWidgets.QWidget):
             self.status(self.tr(f"无效的图片索引: {index + 1}"))
 
     def _update_expand_margins_colors(self):
-        """Update colors in expand margins dialog if it's open and visible."""
+        """Update colors and current page in expand margins dialog if it's open and visible."""
         if (hasattr(self, 'expand_margins_dialog') and
             self.expand_margins_dialog is not None and
             self.expand_margins_dialog.isVisible()):
             self.expand_margins_dialog.refresh_colors()
+            # 更新当前页码（让"从"和"跳转到"跟随当前页）
+            if self.file_list_widget:
+                current_page = self.file_list_widget.currentRow() + 1
+                self.expand_margins_dialog.set_current_page(current_page)
 
     def _update_rectangle_scale_page_range(self):
         """Update page range in rectangle scale dialog if it's open and visible."""

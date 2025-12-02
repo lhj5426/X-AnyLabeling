@@ -524,6 +524,9 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
     def set_current_page(self, page_number):
         if self.jump_spinbox.minimum() <= page_number <= self.jump_spinbox.maximum():
             self.jump_spinbox.setValue(page_number)
+        # 同时更新"从"的值，让范围起点跟随当前页码
+        if self.start_spinbox.minimum() <= page_number <= self.start_spinbox.maximum():
+            self.start_spinbox.setValue(page_number)
 
     def restore_window_position(self):
         settings = QtCore.QSettings()
