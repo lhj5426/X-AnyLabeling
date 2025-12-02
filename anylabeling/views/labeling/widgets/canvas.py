@@ -3331,12 +3331,21 @@ class Canvas(
                     p.fillPath(overlap_path, self.overlap_color)
 
         # Draw degrees
+        # 获取锁定标签配置
+        locked_labels_str = self._config.get("locked_labels", "")
+        locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
+        locked_hide_info = self._config.get("locked_hide_info", False)
+        
         for shape in self.shapes:
             if (
                 shape.shape_type == "rotation"
                 and len(shape.points) == 4
                 and self.is_visible(shape)
             ):
+                # 如果启用了"锁定后不显示宽高和角度"，且该shape被锁定（且未被session解锁），则跳过
+                if locked_hide_info and shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False):
+                    continue
+                    
                 d = shape.point_size / shape.scale
                 center = QtCore.QPointF(
                     (shape.points[0].x() + shape.points[2].x()) / 2,
@@ -3400,6 +3409,10 @@ class Canvas(
             )
             for shape in self.shapes:
                 if not self.is_visible(shape) or shape.shape_type not in ['rectangle', 'rotation']:
+                    continue
+                
+                # 如果启用了"锁定后不显示宽高和角度"，且该shape被锁定（且未被session解锁），则跳过
+                if locked_hide_info and shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False):
                     continue
                 
                 text = ""

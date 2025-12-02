@@ -119,6 +119,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
 
         self.jump_spinbox = QtWidgets.QSpinBox()
         self.jump_spinbox.setPrefix(self.tr("跳转到: "))
+        self.jump_spinbox.setWrapping(True)  # 启用循环滚动：最大值+1回到最小值，最小值-1回到最大值
         if total_files > 0:
             self.jump_spinbox.setRange(1, total_files)
         self.btn_jump = QtWidgets.QPushButton(self.tr("跳转"))
