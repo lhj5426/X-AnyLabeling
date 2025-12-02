@@ -10021,6 +10021,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Mark as dirty but not as manually edited (this is AI inference, not user edit)
         self.set_dirty(mark_as_manually_edited=False)
+        
+        # 更新标签数量显示
+        self.update_label_counts()
 
     def clear_auto_labeling_marks(self):
         """Clear auto labeling marks from the current image."""
@@ -10221,6 +10224,8 @@ class LabelingWidget(QtWidgets.QWidget):
 
         if updated_shapes:
             self.set_dirty()
+            # 更新标签数量显示
+            self.update_label_counts()
 
     def shape_text_changed(self):
         description = self.shape_text_edit.toPlainText()
