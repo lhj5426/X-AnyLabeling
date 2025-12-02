@@ -510,5 +510,11 @@ https://github.com/user-attachments/assets/4ab78a74-5a1a-4855-8ed3-acd84dff332c
 
 <img width="723" height="788" alt="image" src="https://github.com/user-attachments/assets/e9b074ff-9cd4-4875-a2e1-ebdbdc776eb8" />
 
+100 锁定标签 支持隐藏宽高和角度了
+
+https://github.com/user-attachments/assets/37c13989-a8b8-4bd1-9a01-a305a5e629d6
+
+
+
 
 
