@@ -3565,6 +3565,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.set_dirty()
         # Update expand margins dialog colors after union operation
         self._update_expand_margins_colors()
+        self._update_alignment_dialog_page_range()
 
         # Update UI state
         if self.no_shape():
@@ -4155,8 +4156,16 @@ class LabelingWidget(QtWidgets.QWidget):
             self.alignment_dialog.unify_height.connect(lambda auto_exit: self._perform_alignment('unify_height', auto_exit))
             self.alignment_dialog.unify_width.connect(lambda auto_exit: self._perform_alignment('unify_width', auto_exit))
             self.alignment_dialog.unify_angle.connect(lambda auto_exit: self._perform_alignment('unify_angle', auto_exit))
+            # Connect specified size signals
+            self.alignment_dialog.apply_specified_size.connect(self.on_apply_specified_size)
+            self.alignment_dialog.apply_specified_size_range.connect(self.on_apply_specified_size_range)
             # Connect canvas signal
             self.canvas.reference_selected.connect(self.on_reference_shape_selected)
+
+        # 更新范围spinbox
+        current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
+        total_pages = len(self.image_list) if self.image_list else 1
+        self.alignment_dialog.update_page_range(current_page, total_pages)
 
         # 使用通用的toggle逻辑
         if self.alignment_dialog.isMinimized():
@@ -4455,6 +4464,379 @@ class LabelingWidget(QtWidgets.QWidget):
             self.on_alignment_dialog_finished()
         else:
             self.alignment_dialog.log(self.tr("保持对齐模式，可继续执行其他操作"))
+
+    def on_apply_specified_size(self, label, width, height, scope):
+        """应用指定尺寸到指定标签的矩形
+        
+        Args:
+            label: 目标标签名
+            width: 目标宽度（0表示不修改）
+            height: 目标高度（0表示不修改）
+            scope: 范围 - "current"(本页), "selected"(选中), "all"(全部)
+        """
+        if scope == "current":
+            self._apply_specified_size_current(label, width, height)
+        elif scope == "selected":
+            self._apply_specified_size_selected(label, width, height)
+        elif scope == "all":
+            self._apply_specified_size_all(label, width, height)
+
+    def _apply_specified_size_current(self, label, width, height):
+        """应用指定尺寸到当前页面的指定标签"""
+        modified_count = 0
+        for shape in self.canvas.shapes:
+            if shape.label == label and shape.shape_type in ['rectangle', 'rotation']:
+                if self._resize_shape_to_size(shape, width, height):
+                    modified_count += 1
+        
+        if modified_count > 0:
+            self.canvas.update()
+            self.set_dirty()
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr(f"本页: 已调整 {modified_count} 个 '{label}' 标签的尺寸"))
+        else:
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr(f"本页: 未找到 '{label}' 标签的矩形"))
+
+    def _apply_specified_size_selected(self, label, width, height):
+        """应用指定尺寸到选中的指定标签"""
+        if not self.canvas.selected_shapes:
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr("没有选中的标注框"))
+            return
+        
+        modified_count = 0
+        for shape in self.canvas.selected_shapes:
+            if shape.label == label and shape.shape_type in ['rectangle', 'rotation']:
+                if self._resize_shape_to_size(shape, width, height):
+                    modified_count += 1
+        
+        if modified_count > 0:
+            self.canvas.update()
+            self.set_dirty()
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr(f"选中: 已调整 {modified_count} 个 '{label}' 标签的尺寸"))
+        else:
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr(f"选中: 未找到 '{label}' 标签的矩形"))
+
+    def _apply_specified_size_all(self, label, width, height):
+        """应用指定尺寸到全部页面的指定标签"""
+        if not self.image_list:
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr("没有加载图像列表"))
+            return
+
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            self.tr("确认操作"),
+            self.tr(f"确定要将 '{label}' 标签的尺寸调整为 宽:{width} 高:{height} 吗？\n"
+                    f"这将影响全部 {len(self.image_list)} 个文件，且无法撤销。"),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        total_files = len(self.image_list)
+        processed_files = 0
+        modified_shapes_total = 0
+
+        # 创建进度对话框
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在调整尺寸..."),
+            self.tr("取消"),
+            0,
+            total_files,
+            self
+        )
+        progress.setWindowTitle(self.tr("调整尺寸"))
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        for i, image_path in enumerate(self.image_list):
+            if progress.wasCanceled():
+                break
+            
+            progress.setValue(i)
+            progress.setLabelText(self.tr(f"正在处理: {i + 1}/{total_files}"))
+            QtWidgets.QApplication.processEvents()
+
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+            
+            if not osp.exists(label_file_path):
+                continue
+
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                shapes_data = data.get("shapes", [])
+                modified_in_file = False
+                modified_count = 0
+
+                for shape_dict in shapes_data:
+                    if shape_dict.get("label") != label:
+                        continue
+                    
+                    shape_type = shape_dict.get("shape_type")
+                    if shape_type not in ['rectangle', 'rotation']:
+                        continue
+
+                    points = shape_dict.get("points", [])
+                    if not points:
+                        continue
+
+                    if shape_type == "rectangle":
+                        xs = [p[0] for p in points]
+                        ys = [p[1] for p in points]
+                        cx = (min(xs) + max(xs)) / 2
+                        cy = (min(ys) + max(ys)) / 2
+                        
+                        old_w = max(xs) - min(xs)
+                        old_h = max(ys) - min(ys)
+                        new_w = width if width > 0 else old_w
+                        new_h = height if height > 0 else old_h
+                        
+                        shape_dict["points"] = [
+                            [cx - new_w/2, cy - new_h/2],
+                            [cx + new_w/2, cy - new_h/2],
+                            [cx + new_w/2, cy + new_h/2],
+                            [cx - new_w/2, cy + new_h/2]
+                        ]
+                        modified_in_file = True
+                        modified_count += 1
+
+                    elif shape_type == "rotation":
+                        import numpy as np
+                        np_points = np.array(points)
+                        center = np.mean(np_points, axis=0)
+                        
+                        old_w = np.linalg.norm(np_points[0] - np_points[1])
+                        old_h = np.linalg.norm(np_points[0] - np_points[3])
+                        new_w = width if width > 0 else old_w
+                        new_h = height if height > 0 else old_h
+                        
+                        vec = np_points[1] - np_points[0]
+                        angle = np.arctan2(vec[1], vec[0])
+                        
+                        hw, hh = new_w / 2.0, new_h / 2.0
+                        cos_a, sin_a = np.cos(angle), np.sin(angle)
+                        
+                        local_pts = np.array([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]])
+                        rot_matrix = np.array([[cos_a, -sin_a], [sin_a, cos_a]])
+                        rotated = np.dot(local_pts, rot_matrix.T) + center
+                        
+                        shape_dict["points"] = rotated.tolist()
+                        modified_in_file = True
+                        modified_count += 1
+
+                if modified_in_file:
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    processed_files += 1
+                    modified_shapes_total += modified_count
+
+            except Exception as e:
+                logger.error(f"处理文件失败 {label_file_path}: {e}")
+                continue
+
+        progress.setValue(total_files)
+        progress.close()
+
+        self.load_file(self.filename)
+
+        if self.alignment_dialog:
+            self.alignment_dialog.log(self.tr(f"全部: 处理了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框"))
+
+    def on_apply_specified_size_range(self, label, width, height, start_index, end_index):
+        """应用指定尺寸到指定范围的页面"""
+        if not self.image_list:
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr("没有加载图像列表"))
+            return
+
+        if not (0 <= start_index < len(self.image_list) and 0 <= end_index < len(self.image_list)):
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr("范围无效"))
+            return
+
+        files_to_process = self.image_list[start_index:end_index + 1]
+        num_files = len(files_to_process)
+
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            self.tr("确认操作"),
+            self.tr(f"确定要将 '{label}' 标签的尺寸调整为 宽:{width} 高:{height} 吗？\n"
+                    f"范围: 第 {start_index + 1} 到 {end_index + 1} 页，共 {num_files} 个文件，且无法撤销。"),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        processed_files = 0
+        modified_shapes_total = 0
+
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在调整尺寸..."),
+            self.tr("取消"),
+            0,
+            num_files,
+            self
+        )
+        progress.setWindowTitle(self.tr("调整尺寸"))
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+
+        for i, image_path in enumerate(files_to_process):
+            if progress.wasCanceled():
+                break
+            
+            progress.setValue(i)
+            progress.setLabelText(self.tr(f"正在处理: {i + 1}/{num_files}"))
+            QtWidgets.QApplication.processEvents()
+
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+            
+            if not osp.exists(label_file_path):
+                continue
+
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                shapes_data = data.get("shapes", [])
+                modified_in_file = False
+                modified_count = 0
+
+                for shape_dict in shapes_data:
+                    if shape_dict.get("label") != label:
+                        continue
+                    
+                    shape_type = shape_dict.get("shape_type")
+                    if shape_type not in ['rectangle', 'rotation']:
+                        continue
+
+                    points = shape_dict.get("points", [])
+                    if not points:
+                        continue
+
+                    if shape_type == "rectangle":
+                        xs = [p[0] for p in points]
+                        ys = [p[1] for p in points]
+                        cx = (min(xs) + max(xs)) / 2
+                        cy = (min(ys) + max(ys)) / 2
+                        
+                        old_w = max(xs) - min(xs)
+                        old_h = max(ys) - min(ys)
+                        new_w = width if width > 0 else old_w
+                        new_h = height if height > 0 else old_h
+                        
+                        shape_dict["points"] = [
+                            [cx - new_w/2, cy - new_h/2],
+                            [cx + new_w/2, cy - new_h/2],
+                            [cx + new_w/2, cy + new_h/2],
+                            [cx - new_w/2, cy + new_h/2]
+                        ]
+                        modified_in_file = True
+                        modified_count += 1
+
+                    elif shape_type == "rotation":
+                        import numpy as np
+                        np_points = np.array(points)
+                        center = np.mean(np_points, axis=0)
+                        
+                        old_w = np.linalg.norm(np_points[0] - np_points[1])
+                        old_h = np.linalg.norm(np_points[0] - np_points[3])
+                        new_w = width if width > 0 else old_w
+                        new_h = height if height > 0 else old_h
+                        
+                        vec = np_points[1] - np_points[0]
+                        angle = np.arctan2(vec[1], vec[0])
+                        
+                        hw, hh = new_w / 2.0, new_h / 2.0
+                        cos_a, sin_a = np.cos(angle), np.sin(angle)
+                        
+                        local_pts = np.array([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]])
+                        rot_matrix = np.array([[cos_a, -sin_a], [sin_a, cos_a]])
+                        rotated = np.dot(local_pts, rot_matrix.T) + center
+                        
+                        shape_dict["points"] = rotated.tolist()
+                        modified_in_file = True
+                        modified_count += 1
+
+                if modified_in_file:
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    processed_files += 1
+                    modified_shapes_total += modified_count
+
+            except Exception as e:
+                logger.error(f"处理文件失败 {label_file_path}: {e}")
+                continue
+
+        progress.setValue(num_files)
+        progress.close()
+
+        self.load_file(self.filename)
+
+        if self.alignment_dialog:
+            self.alignment_dialog.log(self.tr(f"范围: 处理了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框"))
+
+    def _resize_shape_to_size(self, shape, width, height):
+        """调整单个shape到指定尺寸"""
+        if shape.shape_type == "rectangle":
+            rect = shape.bounding_rect()
+            cx = rect.center().x()
+            cy = rect.center().y()
+            
+            new_w = width if width > 0 else rect.width()
+            new_h = height if height > 0 else rect.height()
+            
+            shape.points = [
+                QtCore.QPointF(cx - new_w/2, cy - new_h/2),
+                QtCore.QPointF(cx + new_w/2, cy - new_h/2),
+                QtCore.QPointF(cx + new_w/2, cy + new_h/2),
+                QtCore.QPointF(cx - new_w/2, cy + new_h/2)
+            ]
+            return True
+            
+        elif shape.shape_type == "rotation":
+            center_x = sum(p.x() for p in shape.points) / 4
+            center_y = sum(p.y() for p in shape.points) / 4
+            
+            old_w = utils.distance(shape.points[1] - shape.points[0])
+            old_h = utils.distance(shape.points[2] - shape.points[1])
+            new_w = width if width > 0 else old_w
+            new_h = height if height > 0 else old_h
+            
+            angle = shape.direction
+            hw, hh = new_w / 2.0, new_h / 2.0
+            cos_a, sin_a = math.cos(angle), math.sin(angle)
+            
+            local_pts = [
+                QtCore.QPointF(-hw, -hh),
+                QtCore.QPointF(hw, -hh),
+                QtCore.QPointF(hw, hh),
+                QtCore.QPointF(-hw, hh)
+            ]
+            
+            shape.points = [
+                QtCore.QPointF(
+                    p.x() * cos_a - p.y() * sin_a + center_x,
+                    p.x() * sin_a + p.y() * cos_a + center_y
+                ) for p in local_pts
+            ]
+            return True
+        
+        return False
 
     def open_keymap_dialog(self):
         if not hasattr(self, 'keymap_dialog') or self.keymap_dialog is None or not self.keymap_dialog.isVisible():
@@ -8626,6 +9008,9 @@ class LabelingWidget(QtWidgets.QWidget):
         # Update expand margins dialog colors if open
         self._update_expand_margins_colors()
 
+        # Update alignment dialog page range if open
+        self._update_alignment_dialog_page_range()
+
         # Update rectangle scale dialog page range if open
         self._update_rectangle_scale_page_range()
 
@@ -10455,6 +10840,15 @@ class LabelingWidget(QtWidgets.QWidget):
             if self.file_list_widget:
                 current_page = self.file_list_widget.currentRow() + 1
                 self.expand_margins_dialog.set_current_page(current_page)
+
+    def _update_alignment_dialog_page_range(self):
+        """Update page range in alignment dialog if it's open and visible."""
+        if (hasattr(self, 'alignment_dialog') and
+            self.alignment_dialog is not None and
+            self.alignment_dialog.isVisible()):
+            current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
+            total_pages = len(self.image_list) if self.image_list else 1
+            self.alignment_dialog.update_page_range(current_page, total_pages)
 
     def _update_rectangle_scale_page_range(self):
         """Update page range in rectangle scale dialog if it's open and visible."""
