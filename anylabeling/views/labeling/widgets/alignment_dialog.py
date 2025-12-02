@@ -238,72 +238,36 @@ class AlignmentDialog(QtWidgets.QDialog):
         separator.setFrameShadow(QtWidgets.QFrame.Sunken)
         unify_layout.addWidget(separator)
         
-        # 指定尺寸区域
-        size_label_layout = QtWidgets.QHBoxLayout()
-        size_label_layout.addWidget(QtWidgets.QLabel(self.tr("标签:")))
+        # 指定尺寸区域 - 第一行：标签 输入框 + 所有按钮
+        row1_layout = QtWidgets.QHBoxLayout()
+        row1_layout.setSpacing(5)
+        label_lbl = QtWidgets.QLabel(self.tr("标签:"))
+        label_lbl.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        row1_layout.addWidget(label_lbl)
         self.size_label_input = QtWidgets.QLineEdit()
-        self.size_label_input.setPlaceholderText(self.tr("输入要调整的标签名"))
-        size_label_layout.addWidget(self.size_label_input)
-        unify_layout.addLayout(size_label_layout)
+        self.size_label_input.setPlaceholderText(self.tr("标签名"))
+        self.size_label_input.setFixedWidth(92)
+        row1_layout.addWidget(self.size_label_input)
         
-        size_input_layout = QtWidgets.QHBoxLayout()
-        size_input_layout.setSpacing(3)  # 减小间距
-        width_label = QtWidgets.QLabel(self.tr("宽:"))
-        width_label.setFixedWidth(22)
-        size_input_layout.addWidget(width_label)
-        self.size_width_input = QtWidgets.QSpinBox()
-        self.size_width_input.setRange(0, 9999)
-        self.size_width_input.setValue(0)
-        self.size_width_input.setSpecialValueText(self.tr("不变"))
-        self.size_width_input.setToolTip(self.tr("0表示不修改宽度"))
-        size_input_layout.addWidget(self.size_width_input)
-        
-        size_input_layout.addSpacing(8)
-        height_label = QtWidgets.QLabel(self.tr("高:"))
-        height_label.setFixedWidth(22)
-        size_input_layout.addWidget(height_label)
-        self.size_height_input = QtWidgets.QSpinBox()
-        self.size_height_input.setRange(0, 9999)
-        self.size_height_input.setValue(0)
-        self.size_height_input.setSpecialValueText(self.tr("不变"))
-        self.size_height_input.setToolTip(self.tr("0表示不修改高度"))
-        size_input_layout.addWidget(self.size_height_input)
-        
-        # 范围选择放在同一行
-        size_input_layout.addSpacing(15)
-        from_label = QtWidgets.QLabel(self.tr("从:"))
-        from_label.setFixedWidth(22)
-        size_input_layout.addWidget(from_label)
-        self.size_start_spinbox = QtWidgets.QSpinBox()
-        self.size_start_spinbox.setRange(1, 9999)
-        self.size_start_spinbox.setValue(1)
-        size_input_layout.addWidget(self.size_start_spinbox)
-        
-        size_input_layout.addSpacing(8)
-        to_label = QtWidgets.QLabel(self.tr("到:"))
-        to_label.setFixedWidth(22)
-        size_input_layout.addWidget(to_label)
-        self.size_end_spinbox = QtWidgets.QSpinBox()
-        self.size_end_spinbox.setRange(1, 9999)
-        self.size_end_spinbox.setValue(1)
-        size_input_layout.addWidget(self.size_end_spinbox)
-        size_input_layout.addStretch()
-        unify_layout.addLayout(size_input_layout)
-        
-        # 应用按钮
-        apply_size_layout = QtWidgets.QHBoxLayout()
         self.btn_apply_size_current = QtWidgets.QPushButton(self.tr("本页"))
         self.btn_apply_size_selected = QtWidgets.QPushButton(self.tr("选中"))
         self.btn_apply_size_range = QtWidgets.QPushButton(self.tr("范围"))
         self.btn_apply_size_all = QtWidgets.QPushButton(self.tr("全部"))
+        
+        # 设置按钮固定宽度
+        btn_width = 50
+        self.btn_apply_size_current.setFixedWidth(btn_width)
+        self.btn_apply_size_selected.setFixedWidth(btn_width)
+        self.btn_apply_size_range.setFixedWidth(btn_width)
+        self.btn_apply_size_all.setFixedWidth(btn_width)
         
         apply_btn_style = """
             QPushButton {
                 background-color: #5cb85c;
                 color: white;
                 border: none;
-                border-radius: 5px;
-                padding: 5px 12px;
+                border-radius: 4px;
+                padding: 5px 0px;
             }
             QPushButton:hover {
                 background-color: #4cae4c;
@@ -317,11 +281,50 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_apply_size_range.setStyleSheet(range_btn_style)
         self.btn_apply_size_all.setStyleSheet(all_btn_style)
         
-        apply_size_layout.addWidget(self.btn_apply_size_current)
-        apply_size_layout.addWidget(self.btn_apply_size_selected)
-        apply_size_layout.addWidget(self.btn_apply_size_range)
-        apply_size_layout.addWidget(self.btn_apply_size_all)
-        unify_layout.addLayout(apply_size_layout)
+        row1_layout.addWidget(self.btn_apply_size_current)
+        row1_layout.addWidget(self.btn_apply_size_selected)
+        row1_layout.addWidget(self.btn_apply_size_range)
+        row1_layout.addWidget(self.btn_apply_size_all)
+        row1_layout.addStretch()  # 把所有内容推到左边
+        unify_layout.addLayout(row1_layout)
+        
+        # 第二行：宽 [] 高 [] 从 [] 到 []
+        row2_layout = QtWidgets.QHBoxLayout()
+        row2_layout.setSpacing(5)
+        row2_layout.addWidget(QtWidgets.QLabel(self.tr("宽:")))
+        self.size_width_input = QtWidgets.QSpinBox()
+        self.size_width_input.setRange(0, 9999)
+        self.size_width_input.setValue(0)
+        self.size_width_input.setSpecialValueText(self.tr("不变"))
+        self.size_width_input.setToolTip(self.tr("0表示不修改宽度"))
+        self.size_width_input.setFixedWidth(60)
+        row2_layout.addWidget(self.size_width_input)
+        
+        row2_layout.addWidget(QtWidgets.QLabel(self.tr("高:")))
+        self.size_height_input = QtWidgets.QSpinBox()
+        self.size_height_input.setRange(0, 9999)
+        self.size_height_input.setValue(0)
+        self.size_height_input.setSpecialValueText(self.tr("不变"))
+        self.size_height_input.setToolTip(self.tr("0表示不修改高度"))
+        self.size_height_input.setFixedWidth(60)
+        row2_layout.addWidget(self.size_height_input)
+        
+        row2_layout.addSpacing(10)
+        row2_layout.addWidget(QtWidgets.QLabel(self.tr("从:")))
+        self.size_start_spinbox = QtWidgets.QSpinBox()
+        self.size_start_spinbox.setRange(1, 9999)
+        self.size_start_spinbox.setValue(1)
+        self.size_start_spinbox.setFixedWidth(55)
+        row2_layout.addWidget(self.size_start_spinbox)
+        
+        row2_layout.addWidget(QtWidgets.QLabel(self.tr("到:")))
+        self.size_end_spinbox = QtWidgets.QSpinBox()
+        self.size_end_spinbox.setRange(1, 9999)
+        self.size_end_spinbox.setValue(1)
+        self.size_end_spinbox.setFixedWidth(55)
+        row2_layout.addWidget(self.size_end_spinbox)
+        row2_layout.addStretch()
+        unify_layout.addLayout(row2_layout)
         
         main_layout.addWidget(unify_group)
 
