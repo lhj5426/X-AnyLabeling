@@ -244,13 +244,13 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
     def update_labels(self, labels):
         current_values = {}
         if self.table_widget.rowCount() > 0:
-            current_values = self.get_margin_values()
+            current_values = self.get_margin_values_raw()  # 使用原始值保存
         self.table_widget.setRowCount(0)
         self.populate_table(labels)
         self.restore_margin_values(current_values)
 
     def get_margin_values(self):
-        """获取边距值，合并每个标签的两行（第一行+第二行）"""
+        """获取边距值，合并每个标签的两行（第一行+第二行）用于应用"""
         margins = {}
         # 每个标签占两行，所以步进为2
         for i in range(0, self.table_widget.rowCount(), 2):
@@ -272,6 +272,31 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             
             # 合并两行的值（相加）
             margins[label] = (top1 + top2, bottom1 + bottom2, left1 + left2, right1 + right2)
+        return margins
+
+    def get_margin_values_raw(self):
+        """获取边距值的原始值（两行各4个值），用于保存和恢复"""
+        margins = {}
+        # 每个标签占两行，所以步进为2
+        for i in range(0, self.table_widget.rowCount(), 2):
+            label = self.table_widget.item(i, 0).text()
+            row1 = i      # 第一行
+            row2 = i + 1  # 第二行
+            
+            # 获取第一行的值
+            top1 = self.table_widget.cellWidget(row1, 1).value()
+            bottom1 = self.table_widget.cellWidget(row1, 3).value()
+            left1 = self.table_widget.cellWidget(row1, 5).value()
+            right1 = self.table_widget.cellWidget(row1, 7).value()
+            
+            # 获取第二行的值
+            top2 = self.table_widget.cellWidget(row2, 1).value() if row2 < self.table_widget.rowCount() else 0.0
+            bottom2 = self.table_widget.cellWidget(row2, 3).value() if row2 < self.table_widget.rowCount() else 0.0
+            left2 = self.table_widget.cellWidget(row2, 5).value() if row2 < self.table_widget.rowCount() else 0.0
+            right2 = self.table_widget.cellWidget(row2, 7).value() if row2 < self.table_widget.rowCount() else 0.0
+            
+            # 保存两行的原始值（8个值）
+            margins[label] = (top1, bottom1, left1, right1, top2, bottom2, left2, right2)
         return margins
 
     def restore_margin_values(self, saved_values):
