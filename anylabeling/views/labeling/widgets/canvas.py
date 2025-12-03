@@ -380,6 +380,20 @@ class Canvas(
         self.cross_line_opacity = 0.5
         self.cross_line_style = "dash"  # "solid" or "dash"
 
+        # Set magnifier (放大镜) options - 跟随鼠标的矩形放大镜
+        self.magnifier_enabled = self._config.get('magnifier_enabled', False)  # 是否启用放大镜
+        self.magnifier_width = self._config.get('magnifier_width', 500)  # 放大镜宽度
+        self.magnifier_height = self._config.get('magnifier_height', 500)  # 放大镜高度
+        self.magnifier_zoom = self._config.get('magnifier_zoom', 1.0)  # 放大倍数
+        self.magnifier_percent = self._config.get('magnifier_percent', 0)  # 原图百分比（0=禁用，100=1:1）
+        self.magnifier_last_percent = self._config.get('magnifier_percent', 100)  # 记住上次的百分比值（用于模式切换）
+        self.magnifier_show_crosshair = self._config.get('magnifier_show_crosshair', True)  # 是否显示中心十字线
+        self.magnifier_crosshair_color = self._config.get('magnifier_crosshair_color', [255, 0, 0])  # 十字线颜色 (RGB)
+        self.magnifier_crosshair_width = self._config.get('magnifier_crosshair_width', 1)  # 十字线宽度
+        self.magnifier_border_color = self._config.get('magnifier_border_color', [128, 128, 128])  # 边框颜色 (RGB)
+        self.magnifier_border_width = self._config.get('magnifier_border_width', 2)  # 边框宽度
+        self.magnifier_center_pos = None  # 放大镜中心位置（图像坐标）
+
         self.is_loading = False
         self.loading_text = self.tr("Loading...")
         self.loading_angle = 0
@@ -1832,6 +1846,11 @@ class Canvas(
             # Block context menu in special modes
             if self.segmentation_mode or self.is_reference_selection_mode:
                 return  # Don't show context menu in these modes
+
+            # 放大镜模式下显示放大镜专用菜单
+            if self.magnifier_enabled:
+                self.show_magnifier_context_menu(ev.pos())
+                return
 
             menu = self.menus[len(self.selected_shapes_copy) > 0]
             self.restore_cursor()
@@ -4353,6 +4372,10 @@ class Canvas(
         # Draw paste preview (粘贴预览)
         if self.paste_preview_mode:
             self.draw_paste_preview(p)
+
+        # Draw magnifier (放大镜)
+        if self.magnifier_enabled:
+            self.draw_magnifier(p)
 
         p.end()
 
@@ -6909,3 +6932,283 @@ class Canvas(
                     p.drawPath(path)
 
             p.restore()
+
+    def draw_magnifier(self, p):
+        """
+        绘制放大镜效果
+
+        正方形放大镜跟随鼠标移动，鼠标位于放大镜正中心，中心显示十字线。
+        
+        Args:
+            p: QPainter对象
+        """
+        if not self.magnifier_enabled or self.pixmap is None:
+            return
+
+        # 获取当前鼠标位置（屏幕坐标）
+        cursor_pos = self.mapFromGlobal(QtGui.QCursor.pos())
+        
+        # 检查鼠标是否在画布内
+        if not self.rect().contains(cursor_pos):
+            return
+
+        # 转换为图像坐标
+        try:
+            image_pos = self.transform_pos(QtCore.QPointF(cursor_pos))
+        except (AttributeError, ZeroDivisionError):
+            return
+
+        # 检查是否在图像范围内
+        if (image_pos.x() < 0 or image_pos.y() < 0 or 
+            image_pos.x() > self.pixmap.width() or 
+            image_pos.y() > self.pixmap.height()):
+            return
+
+        # 使用自定义宽高
+        magnifier_w = self.magnifier_width
+        magnifier_h = self.magnifier_height
+        half_w = magnifier_w / 2
+        half_h = magnifier_h / 2
+
+        # 重置painter变换，在屏幕坐标系中绘制
+        p.save()
+        p.resetTransform()
+
+        # 放大镜中心就是鼠标位置
+        magnifier_center = QtCore.QPointF(cursor_pos.x(), cursor_pos.y())
+        magnifier_x = cursor_pos.x() - half_w
+        magnifier_y = cursor_pos.y() - half_h
+
+        # 计算要截取的源图像区域（以鼠标位置为中心）
+        # 百分比模式：magnifier_percent > 0 时，按原图百分比显示
+        # 普通模式：magnifier_percent = 0 时，根据zoom倍率计算
+        if self.magnifier_percent > 0:
+            # 百分比模式：100% = 1:1，50% = 缩小一半，200% = 放大一倍
+            scale_factor = self.magnifier_percent / 100.0
+            source_w = magnifier_w / scale_factor
+            source_h = magnifier_h / scale_factor
+        else:
+            source_w = magnifier_w / self.magnifier_zoom
+            source_h = magnifier_h / self.magnifier_zoom
+        source_x = image_pos.x() - source_w / 2
+        source_y = image_pos.y() - source_h / 2
+
+        # 性能优化：只创建需要区域大小的临时pixmap，而不是整个图像
+        # 计算实际需要的区域（考虑边界）
+        crop_x = max(0, int(source_x))
+        crop_y = max(0, int(source_y))
+        crop_w = min(int(source_w) + 2, self.pixmap.width() - crop_x)
+        crop_h = min(int(source_h) + 2, self.pixmap.height() - crop_y)
+        
+        if crop_w <= 0 or crop_h <= 0:
+            p.restore()
+            return
+
+        # 只截取需要的区域
+        cropped_pixmap = self.pixmap.copy(crop_x, crop_y, crop_w, crop_h)
+        
+        # 创建小尺寸的临时pixmap用于绘制形状
+        temp_pixmap = QtGui.QPixmap(crop_w, crop_h)
+        temp_pixmap.fill(Qt.transparent)
+        
+        temp_painter = QtGui.QPainter(temp_pixmap)
+        temp_painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        
+        # 绘制裁剪后的图像
+        temp_painter.drawPixmap(0, 0, cropped_pixmap)
+        
+        # 平移坐标系以匹配裁剪区域
+        temp_painter.translate(-crop_x, -crop_y)
+        
+        # 保存当前 Shape.scale 并设置为 1.0
+        original_scale = Shape.scale
+        Shape.scale = 1.0
+        
+        # 只绘制与裁剪区域相交的形状
+        crop_rect = QtCore.QRectF(crop_x, crop_y, crop_w, crop_h)
+        visible_shapes_in_crop = []
+        for shape in self.shapes:
+            if self.is_visible(shape) and shape.bounding_rect().intersects(crop_rect):
+                shape.paint(temp_painter)
+                visible_shapes_in_crop.append(shape)
+        
+        # 绘制重叠区域（使用自定义颜色）
+        if self.show_overlap and visible_shapes_in_crop:
+            overlap_regions = self._find_overlapping_areas(visible_shapes_in_crop)
+            for overlap_path in overlap_regions:
+                if not overlap_path.isEmpty():
+                    temp_painter.fillPath(overlap_path, self.overlap_color)
+        
+        # 绘制当前正在绘制的形状
+        if self.current:
+            self.current.paint(temp_painter)
+            if self.line and len(self.line.points) == 2:
+                self.line.paint(temp_painter)
+        
+        # 恢复 Shape.scale
+        Shape.scale = original_scale
+        
+        temp_painter.end()
+
+        # 绘制放大的图像（矩形）
+        # 调整source_rect以匹配裁剪后的坐标
+        adjusted_source_x = source_x - crop_x
+        adjusted_source_y = source_y - crop_y
+        source_rect = QtCore.QRectF(adjusted_source_x, adjusted_source_y, source_w, source_h)
+        target_rect = QtCore.QRectF(magnifier_x, magnifier_y, magnifier_w, magnifier_h)
+        p.drawPixmap(target_rect, temp_pixmap, source_rect)
+
+        # 绘制放大镜边框
+        border_color = QtGui.QColor(*self.magnifier_border_color)
+        pen = QtGui.QPen(border_color, self.magnifier_border_width)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(target_rect)
+
+        # 绘制中心十字线
+        if self.magnifier_show_crosshair:
+            crosshair_color = QtGui.QColor(*self.magnifier_crosshair_color)
+            crosshair_pen = QtGui.QPen(crosshair_color, self.magnifier_crosshair_width)
+            p.setPen(crosshair_pen)
+            
+            # 水平线（贯穿整个放大镜）
+            p.drawLine(
+                QtCore.QPointF(magnifier_x, magnifier_center.y()),
+                QtCore.QPointF(magnifier_x + magnifier_w, magnifier_center.y())
+            )
+            # 垂直线（贯穿整个放大镜）
+            p.drawLine(
+                QtCore.QPointF(magnifier_center.x(), magnifier_y),
+                QtCore.QPointF(magnifier_center.x(), magnifier_y + magnifier_h)
+            )
+
+        # 绘制放大倍率文字（左上角）
+        if self.magnifier_percent > 0:
+            zoom_text = f"{self.magnifier_percent}%"
+        else:
+            zoom_text = f"x{self.magnifier_zoom:.1f}"
+        font = QtGui.QFont("Arial", 14, QtGui.QFont.Bold)
+        p.setFont(font)
+        
+        # 文字背景
+        fm = QtGui.QFontMetrics(font)
+        text_width = fm.horizontalAdvance(zoom_text)
+        text_height = fm.height()
+        text_x = magnifier_x + 8
+        text_y = magnifier_y + 8
+        
+        # 绘制半透明背景
+        bg_rect = QtCore.QRectF(text_x - 2, text_y - 2, text_width + 4, text_height + 2)
+        p.setBrush(QtGui.QColor(0, 0, 0, 150))
+        p.setPen(Qt.NoPen)
+        p.drawRect(bg_rect)
+        
+        # 绘制文字
+        p.setPen(QtGui.QColor(255, 255, 255))
+        p.drawText(QtCore.QPointF(text_x, text_y + fm.ascent()), zoom_text)
+
+        p.restore()
+
+    def toggle_magnifier(self, enabled=None):
+        """
+        切换放大镜显示状态
+        
+        Args:
+            enabled: 如果为None，则切换状态；否则设置为指定值
+        """
+        if enabled is None:
+            self.magnifier_enabled = not self.magnifier_enabled
+        else:
+            self.magnifier_enabled = enabled
+        self.update()
+        return self.magnifier_enabled
+
+    def set_magnifier_zoom(self, zoom):
+        """设置放大镜倍数"""
+        self.magnifier_zoom = max(1.0, min(10.0, zoom))
+        self.update()
+
+    def set_magnifier_size_mode(self, mode):
+        """设置放大镜大小模式: small, medium, large"""
+        if mode in ['small', 'medium', 'large']:
+            self.magnifier_size_mode = mode
+            self.update()
+
+    def show_magnifier_context_menu(self, pos):
+        """显示放大镜右键菜单"""
+        menu = QtWidgets.QMenu(self)
+        
+        # 当前模式显示
+        is_percent_mode = self.magnifier_percent > 0
+        if is_percent_mode:
+            current_mode_text = f"当前: 百分比模式 ({self.magnifier_percent}%)"
+        else:
+            current_mode_text = f"当前: 倍率模式 (x{self.magnifier_zoom:.1f})"
+        mode_label = menu.addAction(current_mode_text)
+        mode_label.setEnabled(False)
+        menu.addSeparator()
+        
+        # 模式切换
+        switch_mode_action = menu.addAction("切换到百分比模式" if not is_percent_mode else "切换到倍率模式")
+        menu.addSeparator()
+        
+        # 增加/减少（根据当前模式）
+        if is_percent_mode:
+            zoom_up_action = menu.addAction("增加百分比(I)  +10%")
+            zoom_down_action = menu.addAction("减少百分比(D)  -10%")
+        else:
+            zoom_up_action = menu.addAction("增加倍率(I)  +0.5x")
+            zoom_down_action = menu.addAction("减少倍率(D)  -0.5x")
+        menu.addSeparator()
+        
+        settings_action = menu.addAction("设置...")
+        menu.addSeparator()
+        close_action = menu.addAction("关闭")
+        
+        # 显示菜单并获取选择
+        action = menu.exec_(self.mapToGlobal(pos))
+        
+        if action == switch_mode_action:
+            # 切换模式
+            if is_percent_mode:
+                self.magnifier_last_percent = self.magnifier_percent  # 记住当前百分比
+                self.magnifier_percent = 0  # 切换到倍率模式
+            else:
+                self.magnifier_percent = self.magnifier_last_percent  # 恢复上次的百分比
+            self.update()
+        elif action == zoom_up_action:
+            if is_percent_mode:
+                self.magnifier_percent = min(500, self.magnifier_percent + 10)
+            else:
+                self.set_magnifier_zoom(self.magnifier_zoom + 0.5)
+            self.update()
+        elif action == zoom_down_action:
+            if is_percent_mode:
+                self.magnifier_percent = max(10, self.magnifier_percent - 10)
+            else:
+                self.set_magnifier_zoom(self.magnifier_zoom - 0.5)
+            self.update()
+        elif action == settings_action:
+            self.show_magnifier_settings_dialog()
+        elif action == close_action:
+            self.toggle_magnifier(False)
+    
+    def show_magnifier_settings_dialog(self):
+        """显示放大镜设置对话框"""
+        from .magnifier_settings_dialog import MagnifierSettingsDialog
+        dialog = MagnifierSettingsDialog(self, canvas=self, config=self._config)
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            settings = dialog.get_settings()
+            # 应用设置到canvas
+            self.magnifier_width = settings['magnifier_width']
+            self.magnifier_height = settings['magnifier_height']
+            self.magnifier_zoom = settings['magnifier_zoom']
+            self.magnifier_percent = settings['magnifier_percent']
+            self.magnifier_show_crosshair = settings['magnifier_show_crosshair']
+            self.magnifier_crosshair_color = settings['magnifier_crosshair_color']
+            self.magnifier_crosshair_width = settings['magnifier_crosshair_width']
+            self.magnifier_border_color = settings['magnifier_border_color']
+            self.magnifier_border_width = settings['magnifier_border_width']
+            # 保存到config
+            self._config.update(settings)
+            self.update()

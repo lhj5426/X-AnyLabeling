@@ -1744,6 +1744,21 @@ class LabelingWidget(QtWidgets.QWidget):
             checkable=True,
             checked=self._config["canvas"]["crosshair"]["show"],
         )
+        toggle_magnifier = action(
+            self.tr("放大镜"),
+            self.toggle_magnifier,
+            shortcuts.get("toggle_magnifier", "M"),
+            tip=self.tr("显示/隐藏放大镜"),
+            icon="zoom-in",
+            checkable=True,
+            checked=self._config.get("magnifier_enabled", False),
+        )
+        set_magnifier = action(
+            self.tr("设置放大镜"),
+            self.set_magnifier_settings,
+            tip=self.tr("配置放大镜的大小、倍率、十字线等"),
+            icon="edit",
+        )
         show_groups = action(
             self.tr("&Show Groups"),
             lambda x: self.set_canvas_params("show_groups", x),
@@ -2385,6 +2400,8 @@ class LabelingWidget(QtWidgets.QWidget):
             brightness_contrast=brightness_contrast,
             set_cross_line=set_cross_line,
             toggle_cross_line=toggle_cross_line,
+            toggle_magnifier=toggle_magnifier,
+            set_magnifier=set_magnifier,
             show_groups=show_groups,
             show_texts=show_texts,
             show_labels=show_labels,
@@ -2686,6 +2703,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 brightness_contrast,
                 set_cross_line,
                 toggle_cross_line,
+                toggle_magnifier,
+                set_magnifier,
                 show_texts,
                 show_labels,
                 show_scores,
@@ -9066,6 +9085,12 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.set_cross_line(**settings)
         self.actions.toggle_cross_line.setChecked(new_show_state)
 
+    def toggle_magnifier(self):
+        """Toggle magnifier visibility."""
+        new_state = self.canvas.toggle_magnifier()
+        self._config["magnifier_enabled"] = new_state
+        self.actions.toggle_magnifier.setChecked(new_state)
+
     def restore_crosshair_if_needed(self):
         """Restore crosshair to its original state if it was auto-toggled."""
         if self._crosshair_was_toggled_for_drawing:
@@ -11747,3 +11772,59 @@ class LabelingWidget(QtWidgets.QWidget):
         self.vertical_viewer_dialog.image_switched.connect(self.load_file)
         self.vertical_viewer_dialog.open_horizontal_viewer.connect(self.open_horizontal_viewer)
         self.vertical_viewer_dialog.show()
+
+    def toggle_magnifier(self):
+        """切换放大镜显示状态"""
+        new_state = self.canvas.toggle_magnifier()
+        self._config["magnifier_enabled"] = new_state
+        # 更新菜单项的选中状态
+        if hasattr(self, 'actions') and hasattr(self.actions, 'toggle_magnifier'):
+            self.actions.toggle_magnifier.setChecked(new_state)
+    
+    def set_magnifier_settings(self):
+        """打开放大镜设置对话框"""
+        from .widgets.magnifier_settings_dialog import MagnifierSettingsDialog
+        dialog = MagnifierSettingsDialog(self, canvas=self.canvas, config=self._config)
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            settings = dialog.get_settings()
+            # 应用设置到canvas
+            self.canvas.magnifier_width = settings['magnifier_width']
+            self.canvas.magnifier_height = settings['magnifier_height']
+            self.canvas.magnifier_zoom = settings['magnifier_zoom']
+            self.canvas.magnifier_100_percent_mode = settings['magnifier_100_percent_mode']
+            self.canvas.magnifier_show_crosshair = settings['magnifier_show_crosshair']
+            self.canvas.magnifier_crosshair_color = settings['magnifier_crosshair_color']
+            self.canvas.magnifier_crosshair_width = settings['magnifier_crosshair_width']
+            self.canvas.magnifier_border_color = settings['magnifier_border_color']
+            self.canvas.magnifier_border_width = settings['magnifier_border_width']
+            # 保存到config
+            self._config.update(settings)
+            self.canvas.update()
+
+    def toggle_magnifier(self):
+        """切换放大镜显示状态"""
+        new_state = self.canvas.toggle_magnifier()
+        self._config["magnifier_enabled"] = new_state
+        # 更新菜单项的选中状态
+        if hasattr(self, 'actions') and hasattr(self.actions, 'toggle_magnifier'):
+            self.actions.toggle_magnifier.setChecked(new_state)
+    
+    def set_magnifier_settings(self):
+        """打开放大镜设置对话框"""
+        from .widgets.magnifier_settings_dialog import MagnifierSettingsDialog
+        dialog = MagnifierSettingsDialog(self, canvas=self.canvas, config=self._config)
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            settings = dialog.get_settings()
+            # 应用设置到canvas
+            self.canvas.magnifier_width = settings['magnifier_width']
+            self.canvas.magnifier_height = settings['magnifier_height']
+            self.canvas.magnifier_zoom = settings['magnifier_zoom']
+            self.canvas.magnifier_percent = settings['magnifier_percent']
+            self.canvas.magnifier_show_crosshair = settings['magnifier_show_crosshair']
+            self.canvas.magnifier_crosshair_color = settings['magnifier_crosshair_color']
+            self.canvas.magnifier_crosshair_width = settings['magnifier_crosshair_width']
+            self.canvas.magnifier_border_color = settings['magnifier_border_color']
+            self.canvas.magnifier_border_width = settings['magnifier_border_width']
+            # 保存到config
+            self._config.update(settings)
+            self.canvas.update()
