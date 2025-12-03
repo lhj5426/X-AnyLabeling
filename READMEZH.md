@@ -518,8 +518,19 @@ https://github.com/user-attachments/assets/37c13989-a8b8-4bd1-9a01-a305a5e629d6
 
 https://github.com/user-attachments/assets/4af68996-391b-477b-bf44-2c1811bd21b0
 
+102.模型标签覆盖 添加视觉颜色区分 不覆盖用绿色表示 覆盖用红色表示 从视觉上更直观
 
+<img width="912" height="271" alt="image" src="https://github.com/user-attachments/assets/b977fc92-b9d1-4fa0-9378-fe4fb4f4dd6b" />
 
+103.颜色管理器添加 导航窗 导航框的颜色自定义 导航框线条宽度 以及对角线 
+
+https://github.com/user-attachments/assets/e494f544-65fc-433d-b3a1-16c6e7ce2617
+
+104.标签支持独立填充透明度设置 增加高亮时 高亮后边框颜色自定义 以及线条宽度设置
+
+https://github.com/user-attachments/assets/1b519340-4fa4-4c8a-9542-9eba382dbe2c
+
+https://github.com/user-attachments/assets/e704ab58-ea1d-4943-aa46-3e4a875c8c5d
 
 
 
