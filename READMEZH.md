@@ -532,5 +532,13 @@ https://github.com/user-attachments/assets/1b519340-4fa4-4c8a-9542-9eba382dbe2c
 
 https://github.com/user-attachments/assets/e704ab58-ea1d-4943-aa46-3e4a875c8c5d
 
+105.增加放大镜功能 支持倍率放大 和 以原图100%模式局部显示
+
+https://github.com/user-attachments/assets/31b3f2e7-a1cb-46ac-a623-baeca66fb2a6
+
+
+
+
+
 
 
