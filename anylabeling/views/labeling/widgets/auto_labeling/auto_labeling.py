@@ -215,8 +215,9 @@ class AutoLabelingWidget(QWidget):
         # --- Configuration for: toggle_preserve_existing_annotations ---
         self.toggle_preserve_existing_annotations.setChecked(False)
         self.toggle_preserve_existing_annotations.setCheckable(True)
+        # 初始状态：标签覆盖开启 - 红色，表示会覆盖
         self.toggle_preserve_existing_annotations.setStyleSheet(
-            get_normal_button_style()
+            self._get_replace_button_style("#d9534f", "#c9302c")
         )
         tooltip_on = self.tr(
             "Existing shapes will be preserved during updates. Click to switch to overwriting."
@@ -226,16 +227,7 @@ class AutoLabelingWidget(QWidget):
         )
         self.toggle_preserve_existing_annotations.setToolTip(tooltip_off)
         self.toggle_preserve_existing_annotations.clicked.connect(
-            lambda checked: (
-                self.toggle_preserve_existing_annotations.setToolTip(
-                    tooltip_on if checked else tooltip_off
-                ),
-                self.toggle_preserve_existing_annotations.setText(
-                    self.tr("Replace (Off)")
-                    if checked
-                    else self.tr("Replace (On)")
-                ),
-            )
+            lambda checked: self._update_replace_button_state(checked, tooltip_on, tooltip_off)
         )
         self.toggle_preserve_existing_annotations.toggled.connect(
             self.on_preserve_existing_annotations_state_changed
@@ -762,6 +754,47 @@ class AutoLabelingWidget(QWidget):
         self.model_manager.set_auto_labeling_preserve_existing_annotations_state(
             state
         )
+
+    def _get_replace_button_style(self, bg_color, hover_color):
+        """生成标签覆盖按钮的样式，保持和其他按钮一样的尺寸"""
+        return f"""
+            QPushButton {{
+                height: 24px;
+                min-width: 80px;
+                padding: 5px 8px;
+                border-radius: 8px;
+                background-color: {bg_color};
+                color: white;
+                border: 1px solid #d2d2d7;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_color};
+            }}
+            QPushButton:pressed {{
+                background-color: {hover_color};
+            }}
+        """
+
+    def _update_replace_button_state(self, checked, tooltip_on, tooltip_off):
+        """更新标签覆盖按钮的状态和颜色"""
+        self.toggle_preserve_existing_annotations.setToolTip(
+            tooltip_on if checked else tooltip_off
+        )
+        # 去掉括号，直接用"标签覆盖关闭"和"标签覆盖开启"
+        self.toggle_preserve_existing_annotations.setText(
+            self.tr("标签覆盖关闭") if checked else self.tr("标签覆盖开启")
+        )
+        # 关闭时绿色，开启时红色
+        if checked:
+            # 关闭 - 绿色，表示安全，不会覆盖
+            self.toggle_preserve_existing_annotations.setStyleSheet(
+                self._get_replace_button_style("#5cb85c", "#4cae4c")
+            )
+        else:
+            # 开启 - 红色，表示危险，会覆盖
+            self.toggle_preserve_existing_annotations.setStyleSheet(
+                self._get_replace_button_style("#d9534f", "#c9302c")
+            )
 
     def on_reset_tracker(self):
         """Handle reset tracker"""

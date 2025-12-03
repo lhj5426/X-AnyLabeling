@@ -99,14 +99,30 @@ class NavigatorWidget(QWidget):
 
         self.navigator_select_line_color = QColor(255, 0, 255, 255)
         self.navigator_hover_line_color = QColor(255, 255, 0, 255)
+        self.show_viewport_cross = False  # 是否显示视口框对角线
         
     def set_colors(
         self,
-        select_line_color: QColor,
-        hover_line_color: QColor,
+        select_line_color: QColor = None,
+        hover_line_color: QColor = None,
+        viewport_color: QColor = None,
+        viewport_width: float = None,
     ):
-        self.navigator_select_line_color = select_line_color
-        self.navigator_hover_line_color = hover_line_color
+        if select_line_color is not None:
+            self.navigator_select_line_color = select_line_color
+        if hover_line_color is not None:
+            self.navigator_hover_line_color = hover_line_color
+        if viewport_color is not None:
+            current_width = self.viewport_pen.widthF()
+            self.viewport_pen = QPen(viewport_color, current_width)
+        if viewport_width is not None:
+            current_color = self.viewport_pen.color()
+            self.viewport_pen = QPen(current_color, viewport_width)
+
+    def set_viewport_cross(self, show: bool):
+        """设置是否显示视口框对角线"""
+        self.show_viewport_cross = show
+        self.update()
 
     def set_image(self, image_data: Any) -> None:
         """
@@ -331,6 +347,17 @@ class NavigatorWidget(QWidget):
                 painter.setPen(self.viewport_pen)
                 painter.setBrush(QBrush(Qt.NoBrush))  # No fill
                 painter.drawRect(self.viewport_rect)
+                # Draw diagonal center lines (cross from corners)
+                if self.show_viewport_cross:
+                    # Draw two diagonal lines from corners
+                    painter.drawLine(
+                        self.viewport_rect.topLeft(),
+                        self.viewport_rect.bottomRight()
+                    )
+                    painter.drawLine(
+                        self.viewport_rect.topRight(),
+                        self.viewport_rect.bottomLeft()
+                    )
                 
     def _draw_shapes_overlay(self, painter):
         """Draw shapes overlay on thumbnail"""

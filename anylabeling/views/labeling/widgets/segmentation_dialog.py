@@ -322,3 +322,24 @@ class SegmentationDialog(QtWidgets.QDialog):
         self.save_window_position()
         super(SegmentationDialog, self).hideEvent(event)
 
+
+    def keyPressEvent(self, event):
+        """Handle key press events for mode switching."""
+        key = event.key()
+        # 数字键1切换到垂直分割模式
+        if key == QtCore.Qt.Key_1:
+            if self.current_mode != 'vertical':
+                self.vertical_button.setChecked(True)
+                self.horizontal_button.setChecked(False)
+                self.on_vertical_mode()
+            event.accept()
+            return
+        # 数字键2切换到水平分割模式
+        elif key == QtCore.Qt.Key_2:
+            if self.current_mode != 'horizontal':
+                self.horizontal_button.setChecked(True)
+                self.vertical_button.setChecked(False)
+                self.on_horizontal_mode()
+            event.accept()
+            return
+        super(SegmentationDialog, self).keyPressEvent(event)

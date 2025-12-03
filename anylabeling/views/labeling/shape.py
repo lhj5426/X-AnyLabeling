@@ -108,6 +108,14 @@ class Shape:
         self.cache_description = None
         self.visible = True
         self.is_session_unlocked = False
+        
+        # 标签独立透明度（None表示使用全局设置）
+        self.label_alpha_idle = None
+        self.label_alpha_highlight = None
+        
+        # 标签独立边框颜色和粗细（None表示使用默认值）
+        self._border_color = None
+        self._border_width = None
 
         # Rotation setting
         self.direction = direction
@@ -378,9 +386,19 @@ class Shape:
         return QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
 
     def paint(self, painter: QtGui.QPainter):  # noqa: max-complexity: 18
-        """Paint shape using QPainter"""
+        """Paint shape using QPainter
+        
+        矩形边框有5种颜色状态：
+        状态1: 没有点击没有高亮 → 默认颜色 (line_color)
+        状态2: 鼠标悬浮在矩形上 → 画布悬停线条颜色 (canvas_hover_line_color)
+        状态3: 鼠标点击在矩形上 → 画布选中线条颜色 (canvas_select_line_color)
+        状态4: 高亮时 → 自定义边框颜色 (_border_color)
+        状态5: 鼠标点击高亮的矩形并移开鼠标后 → 自定义边框颜色 (_border_color)
+        """
         if self.points:
+            # 确定边框颜色和线条宽度
             if self.is_mouse_selected:
+                # 状态3: 鼠标点击在矩形上 → 画布选中线条颜色
                 color = self.canvas_select_line_color
                 width = (
                     self.canvas_select_line_width
@@ -388,6 +406,7 @@ class Shape:
                     else self.line_width
                 )
             elif self.is_hovered:
+                # 状态2: 鼠标悬浮在矩形上 → 画布悬停线条颜色
                 color = self.canvas_hover_line_color
                 width = (
                     self.canvas_hover_line_width
@@ -395,15 +414,27 @@ class Shape:
                     else self.line_width
                 )
             elif self.selected:
-                color = self.select_line_color
-                width = (
-                    self.select_line_width
-                    if self.select_line_width is not None
-                    else self.line_width
-                )
+                # 状态4/5: 高亮时或点击高亮矩形后移开鼠标 → 自定义边框颜色和粗细
+                if Shape.highlighting_enabled and self._border_color is not None:
+                    color = self._border_color
+                    width = self._border_width if self._border_width is not None else self.line_width
+                else:
+                    color = self.select_line_color
+                    width = (
+                        self.select_line_width
+                        if self.select_line_width is not None
+                        else self.line_width
+                    )
             else:
-                color = self.line_color
-                width = self.line_width
+                # 状态1: 没有点击没有高亮 → 默认颜色
+                # 状态4: 高亮时未被选中的矩形也用自定义边框颜色和粗细
+                if Shape.highlighting_enabled and self._border_color is not None:
+                    color = self._border_color
+                    width = self._border_width if self._border_width is not None else self.line_width
+                else:
+                    color = self.line_color
+                    width = self.line_width
+            
             pen = QtGui.QPen(color)
             # Try using integer sizes for smoother drawing(?)
             pen.setWidth(max(1, int(round(width / self.scale))))
@@ -524,9 +555,10 @@ class Shape:
             if self.fill:
                 r, g, b = self.line_color.red(), self.line_color.green(), self.line_color.blue()
                 if Shape.highlighting_enabled:
-                    alpha = Shape.alpha_highlight
+                    # 优先使用标签独立透明度，否则使用全局设置
+                    alpha = self.label_alpha_highlight if self.label_alpha_highlight is not None else Shape.alpha_highlight
                 else:
-                    alpha = Shape.alpha_idle
+                    alpha = self.label_alpha_idle if self.label_alpha_idle is not None else Shape.alpha_idle
                 
                 if alpha > 0:
                     fill_color = QtGui.QColor(r, g, b, alpha)

@@ -1,5 +1,5 @@
 
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QWidget, QDialogButtonBox, QFormLayout, QPushButton, QColorDialog, QDoubleSpinBox, QSpinBox, QHBoxLayout, QGridLayout, QLabel, QFrame
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QWidget, QDialogButtonBox, QFormLayout, QPushButton, QColorDialog, QDoubleSpinBox, QSpinBox, QHBoxLayout, QGridLayout, QLabel, QFrame, QCheckBox
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt, pyqtSignal, QCoreApplication
 
@@ -87,6 +87,22 @@ class ColorManagerDialog(QDialog):
 
         self.navigator_select_line_color_button = self.create_color_button(['shape', 'navigator_select_line_color'], self.config['shape']['navigator_select_line_color'])
         left_form.addRow(self.tr("导航器选中线条颜色:"), self.navigator_select_line_color_button)
+
+        self.navigator_viewport_color_button = self.create_color_button(['shape', 'navigator_viewport_color'], self.config['shape'].get('navigator_viewport_color', [255, 0, 0]))
+        left_form.addRow(self.tr("导航器视口框颜色:"), self.navigator_viewport_color_button)
+
+        self.navigator_viewport_width_spinbox = QDoubleSpinBox()
+        self.navigator_viewport_width_spinbox.setFixedWidth(SPINBOX_WIDTH)
+        self.navigator_viewport_width_spinbox.setRange(1.0, 10.0)
+        self.navigator_viewport_width_spinbox.setSingleStep(0.5)
+        self.navigator_viewport_width_spinbox.setValue(self.config['shape'].get('navigator_viewport_width', 2.0))
+        self.navigator_viewport_width_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'navigator_viewport_width'], value))
+        left_form.addRow(self.tr("导航器视口框线宽:"), self.navigator_viewport_width_spinbox)
+
+        self.navigator_viewport_cross_checkbox = QCheckBox()
+        self.navigator_viewport_cross_checkbox.setChecked(self.config['shape'].get('navigator_viewport_cross', False))
+        self.navigator_viewport_cross_checkbox.stateChanged.connect(lambda state: self._on_setting_changed(['shape', 'navigator_viewport_cross'], state == Qt.Checked))
+        left_form.addRow(self.tr("导航器视口框对角线:"), self.navigator_viewport_cross_checkbox)
 
         self.overlap_color_button = self.create_color_button(['shape', 'overlap_color'], self.config['shape']['overlap_color'])
         left_form.addRow(self.tr("重叠颜色:"), self.overlap_color_button)

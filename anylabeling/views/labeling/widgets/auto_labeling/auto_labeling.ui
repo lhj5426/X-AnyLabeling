@@ -332,7 +332,7 @@
      <item>
       <widget class="QPushButton" name="toggle_preserve_existing_annotations">
           <property name="text">
-              <string>Replace (On)</string>
+              <string>标签覆盖开启</string>
           </property>
       </widget>
      </item>

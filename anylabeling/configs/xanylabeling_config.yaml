@@ -34,6 +34,9 @@ default_shape_color: [0, 255, 0]
 shape_color: auto  # null, 'auto', 'manual'
 shift_auto_shape_color: 0
 label_colors: null
+label_border_colors: null  # 标签独立边框颜色设置，格式: {label: [r, g, b]}
+label_border_widths: null  # 标签独立边框粗细设置，格式: {label: width}
+label_alphas: null  # 标签独立透明度设置，格式: {label: [alpha_idle, alpha_highlight]}
 
 manually_edited_color: '#0000FF'  # Blue - 手动编辑颜色
 
@@ -58,6 +61,9 @@ shape:
   canvas_hover_line_width: null
   navigator_select_line_color: [255, 0, 255, 255]
   navigator_hover_line_color: [255, 255, 0, 255]
+  navigator_viewport_color: [255, 0, 0, 255]
+  navigator_viewport_width: 2.0
+  navigator_viewport_cross: false
   select_fill_color: [0, 255, 0, 155]
   shape_fill_alpha_idle: 50
   shape_fill_alpha_highlight: 180

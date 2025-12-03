@@ -36,10 +36,10 @@ class AlignmentDialog(QtWidgets.QDialog):
     unify_width = QtCore.pyqtSignal(bool)
     unify_angle = QtCore.pyqtSignal(bool)
     
-    # 指定尺寸信号: (标签, 宽度, 高度, 范围) 范围: "current", "selected", "range", "all"
-    apply_specified_size = QtCore.pyqtSignal(str, int, int, str)
-    # 指定尺寸范围信号: (标签, 宽度, 高度, 起始索引, 结束索引)
-    apply_specified_size_range = QtCore.pyqtSignal(str, int, int, int, int)
+    # 指定尺寸信号: (标签列表, 宽度, 高度, 范围) 范围: "current", "selected", "range", "all"
+    apply_specified_size = QtCore.pyqtSignal(list, int, int, str)
+    # 指定尺寸范围信号: (标签列表, 宽度, 高度, 起始索引, 结束索引)
+    apply_specified_size_range = QtCore.pyqtSignal(list, int, int, int, int)
 
     select_reference = QtCore.pyqtSignal(bool)
     reset_mode = QtCore.pyqtSignal()
@@ -238,28 +238,77 @@ class AlignmentDialog(QtWidgets.QDialog):
         separator.setFrameShadow(QtWidgets.QFrame.Sunken)
         unify_layout.addWidget(separator)
         
-        # 指定尺寸区域 - 第一行：标签 输入框 + 所有按钮
+        # 指定尺寸区域 - 标签选择列表（带复选框）
+        label_select_layout = QtWidgets.QHBoxLayout()
+        label_select_layout.addWidget(QtWidgets.QLabel(self.tr("选择标签:")))
+        
+        # 全选/全不选按钮
+        self.btn_select_all_labels = QtWidgets.QPushButton(self.tr("全选"))
+        self.btn_select_none_labels = QtWidgets.QPushButton(self.tr("全不选"))
+        self.btn_select_all_labels.setFixedWidth(50)
+        self.btn_select_none_labels.setFixedWidth(50)
+        self.btn_select_all_labels.clicked.connect(self._select_all_size_labels)
+        self.btn_select_none_labels.clicked.connect(self._select_none_size_labels)
+        label_select_layout.addWidget(self.btn_select_all_labels)
+        label_select_layout.addWidget(self.btn_select_none_labels)
+        label_select_layout.addStretch()
+        unify_layout.addLayout(label_select_layout)
+        
+        # 标签复选框列表（至少显示5行）
+        self.size_label_list = QtWidgets.QListWidget()
+        self.size_label_list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.size_label_list.setMinimumHeight(110)  # 约5行高度
+        self.size_label_list.setMaximumHeight(150)
+        unify_layout.addWidget(self.size_label_list)
+        
+        # 第一行：宽 高 从 到
         row1_layout = QtWidgets.QHBoxLayout()
         row1_layout.setSpacing(5)
-        label_lbl = QtWidgets.QLabel(self.tr("标签:"))
-        label_lbl.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
-        row1_layout.addWidget(label_lbl)
-        self.size_label_input = QtWidgets.QLineEdit()
-        self.size_label_input.setPlaceholderText(self.tr("标签名"))
-        self.size_label_input.setFixedWidth(92)
-        row1_layout.addWidget(self.size_label_input)
+        row1_layout.addWidget(QtWidgets.QLabel(self.tr("宽:")))
+        self.size_width_input = QtWidgets.QSpinBox()
+        self.size_width_input.setRange(0, 9999)
+        self.size_width_input.setValue(0)
+        self.size_width_input.setSpecialValueText(self.tr("不变"))
+        self.size_width_input.setToolTip(self.tr("0表示不修改宽度"))
+        self.size_width_input.setFixedWidth(60)
+        row1_layout.addWidget(self.size_width_input)
+        
+        row1_layout.addWidget(QtWidgets.QLabel(self.tr("高:")))
+        self.size_height_input = QtWidgets.QSpinBox()
+        self.size_height_input.setRange(0, 9999)
+        self.size_height_input.setValue(0)
+        self.size_height_input.setSpecialValueText(self.tr("不变"))
+        self.size_height_input.setToolTip(self.tr("0表示不修改高度"))
+        self.size_height_input.setFixedWidth(60)
+        row1_layout.addWidget(self.size_height_input)
+        
+        row1_layout.addSpacing(15)
+        row1_layout.addWidget(QtWidgets.QLabel(self.tr("从:")))
+        self.size_start_spinbox = QtWidgets.QSpinBox()
+        self.size_start_spinbox.setRange(1, 9999)
+        self.size_start_spinbox.setValue(1)
+        self.size_start_spinbox.setFixedWidth(55)
+        row1_layout.addWidget(self.size_start_spinbox)
+        
+        row1_layout.addWidget(QtWidgets.QLabel(self.tr("到:")))
+        self.size_end_spinbox = QtWidgets.QSpinBox()
+        self.size_end_spinbox.setRange(1, 9999)
+        self.size_end_spinbox.setValue(1)
+        self.size_end_spinbox.setFixedWidth(55)
+        row1_layout.addWidget(self.size_end_spinbox)
+        row1_layout.addStretch()
+        unify_layout.addLayout(row1_layout)
+        
+        # 第二行：4个按钮（和上面的范围输入框右边对齐）
+        row2_layout = QtWidgets.QHBoxLayout()
+        row2_layout.setSpacing(8)
         
         self.btn_apply_size_current = QtWidgets.QPushButton(self.tr("本页"))
         self.btn_apply_size_selected = QtWidgets.QPushButton(self.tr("选中"))
         self.btn_apply_size_range = QtWidgets.QPushButton(self.tr("范围"))
         self.btn_apply_size_all = QtWidgets.QPushButton(self.tr("全部"))
         
-        # 设置按钮固定宽度
-        btn_width = 50
-        self.btn_apply_size_current.setFixedWidth(btn_width)
-        self.btn_apply_size_selected.setFixedWidth(btn_width)
-        self.btn_apply_size_range.setFixedWidth(btn_width)
-        self.btn_apply_size_all.setFixedWidth(btn_width)
+        # 按钮不设固定宽度，让它们自动填充
         
         apply_btn_style = """
             QPushButton {
@@ -281,48 +330,18 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_apply_size_range.setStyleSheet(range_btn_style)
         self.btn_apply_size_all.setStyleSheet(all_btn_style)
         
-        row1_layout.addWidget(self.btn_apply_size_current)
-        row1_layout.addWidget(self.btn_apply_size_selected)
-        row1_layout.addWidget(self.btn_apply_size_range)
-        row1_layout.addWidget(self.btn_apply_size_all)
-        row1_layout.addStretch()  # 把所有内容推到左边
-        unify_layout.addLayout(row1_layout)
+        # 创建一个容器来包含4个按钮，固定总宽度和上面对齐
+        btn_container = QtWidgets.QWidget()
+        btn_container.setFixedWidth(365)  # 和上面的控件总宽度对齐
+        btn_inner_layout = QtWidgets.QHBoxLayout(btn_container)
+        btn_inner_layout.setContentsMargins(0, 0, 0, 0)
+        btn_inner_layout.setSpacing(8)
+        btn_inner_layout.addWidget(self.btn_apply_size_current, 1)
+        btn_inner_layout.addWidget(self.btn_apply_size_selected, 1)
+        btn_inner_layout.addWidget(self.btn_apply_size_range, 1)
+        btn_inner_layout.addWidget(self.btn_apply_size_all, 1)
         
-        # 第二行：宽 [] 高 [] 从 [] 到 []
-        row2_layout = QtWidgets.QHBoxLayout()
-        row2_layout.setSpacing(5)
-        row2_layout.addWidget(QtWidgets.QLabel(self.tr("宽:")))
-        self.size_width_input = QtWidgets.QSpinBox()
-        self.size_width_input.setRange(0, 9999)
-        self.size_width_input.setValue(0)
-        self.size_width_input.setSpecialValueText(self.tr("不变"))
-        self.size_width_input.setToolTip(self.tr("0表示不修改宽度"))
-        self.size_width_input.setFixedWidth(60)
-        row2_layout.addWidget(self.size_width_input)
-        
-        row2_layout.addWidget(QtWidgets.QLabel(self.tr("高:")))
-        self.size_height_input = QtWidgets.QSpinBox()
-        self.size_height_input.setRange(0, 9999)
-        self.size_height_input.setValue(0)
-        self.size_height_input.setSpecialValueText(self.tr("不变"))
-        self.size_height_input.setToolTip(self.tr("0表示不修改高度"))
-        self.size_height_input.setFixedWidth(60)
-        row2_layout.addWidget(self.size_height_input)
-        
-        row2_layout.addSpacing(10)
-        row2_layout.addWidget(QtWidgets.QLabel(self.tr("从:")))
-        self.size_start_spinbox = QtWidgets.QSpinBox()
-        self.size_start_spinbox.setRange(1, 9999)
-        self.size_start_spinbox.setValue(1)
-        self.size_start_spinbox.setFixedWidth(55)
-        row2_layout.addWidget(self.size_start_spinbox)
-        
-        row2_layout.addWidget(QtWidgets.QLabel(self.tr("到:")))
-        self.size_end_spinbox = QtWidgets.QSpinBox()
-        self.size_end_spinbox.setRange(1, 9999)
-        self.size_end_spinbox.setValue(1)
-        self.size_end_spinbox.setFixedWidth(55)
-        row2_layout.addWidget(self.size_end_spinbox)
+        row2_layout.addWidget(btn_container)
         row2_layout.addStretch()
         unify_layout.addLayout(row2_layout)
         
@@ -376,24 +395,43 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_apply_size_range.clicked.connect(self._emit_apply_size_range)
         self.btn_apply_size_all.clicked.connect(lambda: self._emit_apply_size("all"))
 
+    def _get_selected_labels(self):
+        """获取选中的标签列表"""
+        labels = []
+        for i in range(self.size_label_list.count()):
+            item = self.size_label_list.item(i)
+            if item.checkState() == QtCore.Qt.Checked:
+                labels.append(item.data(QtCore.Qt.UserRole))
+        return labels
+
+    def _select_all_size_labels(self):
+        """全选标签"""
+        for i in range(self.size_label_list.count()):
+            self.size_label_list.item(i).setCheckState(QtCore.Qt.Checked)
+
+    def _select_none_size_labels(self):
+        """全不选标签"""
+        for i in range(self.size_label_list.count()):
+            self.size_label_list.item(i).setCheckState(QtCore.Qt.Unchecked)
+
     def _emit_apply_size(self, scope):
         """发送指定尺寸信号"""
-        label = self.size_label_input.text().strip()
-        if not label:
-            self.log(self.tr("请输入标签名"))
+        labels = self._get_selected_labels()
+        if not labels:
+            self.log(self.tr("请选择至少一个标签"))
             return
         width = self.size_width_input.value()
         height = self.size_height_input.value()
         if width == 0 and height == 0:
             self.log(self.tr("宽度和高度不能都为0"))
             return
-        self.apply_specified_size.emit(label, width, height, scope)
+        self.apply_specified_size.emit(labels, width, height, scope)
 
     def _emit_apply_size_range(self):
         """发送指定尺寸范围信号"""
-        label = self.size_label_input.text().strip()
-        if not label:
-            self.log(self.tr("请输入标签名"))
+        labels = self._get_selected_labels()
+        if not labels:
+            self.log(self.tr("请选择至少一个标签"))
             return
         width = self.size_width_input.value()
         height = self.size_height_input.value()
@@ -405,7 +443,7 @@ class AlignmentDialog(QtWidgets.QDialog):
         if start > end:
             self.log(self.tr("起始位置不能大于结束位置"))
             return
-        self.apply_specified_size_range.emit(label, width, height, start, end)
+        self.apply_specified_size_range.emit(labels, width, height, start, end)
 
     def _on_exit_alignment_mode(self):
         """Handle exit alignment mode button click."""
@@ -452,6 +490,29 @@ class AlignmentDialog(QtWidgets.QDialog):
             self.size_end_spinbox.setRange(1, total_pages)
             self.size_start_spinbox.setValue(current_page)
             self.size_end_spinbox.setValue(total_pages)
+
+    def update_label_list(self, labels, label_colors=None):
+        """更新标签复选框列表"""
+        # 保存当前选中的标签
+        checked_labels = self._get_selected_labels()
+        
+        self.size_label_list.clear()
+        for label in labels:
+            item = QtWidgets.QListWidgetItem()
+            item.setText(label)
+            item.setData(QtCore.Qt.UserRole, label)
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            # 恢复之前的选中状态
+            if label in checked_labels:
+                item.setCheckState(QtCore.Qt.Checked)
+            else:
+                item.setCheckState(QtCore.Qt.Unchecked)
+            # 设置背景颜色
+            if label_colors and label in label_colors:
+                rgb = label_colors[label]
+                color = QtGui.QColor(rgb[0], rgb[1], rgb[2], 128)
+                item.setBackground(color)
+            self.size_label_list.addItem(item)
 
     def closeEvent(self, event):
         """Emit a closing signal when the dialog is closed."""

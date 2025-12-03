@@ -479,6 +479,7 @@ class LabelingWidget(QtWidgets.QWidget):
             # 确保canvas.shapes中的所有图形都被隐藏
             for shape in self.canvas.shapes:
                 shape.visible = False
+                self.canvas.set_shape_visible(shape, False)
             self.canvas.update()
             self.update_navigator_shapes()
         btn_deselect_all_shapes.clicked.connect(deselect_all_objects)
@@ -721,6 +722,20 @@ class LabelingWidget(QtWidgets.QWidget):
         self.unique_label_list.batch_change_label_color.connect(
             self.batch_change_label_color
         )
+        # 连接透明度设置信号
+        self.unique_label_list.change_label_alpha.connect(
+            self.change_label_alpha
+        )
+        self.unique_label_list.batch_change_label_alpha.connect(
+            self.batch_change_label_alpha
+        )
+        # 连接边框颜色设置信号
+        self.unique_label_list.change_label_border_color.connect(
+            self.change_label_border_color
+        )
+        self.unique_label_list.batch_change_label_border_color.connect(
+            self.batch_change_label_border_color
+        )
         # 创建标签控制按钮
         self.create_label_control_buttons()
 
@@ -808,6 +823,13 @@ class LabelingWidget(QtWidgets.QWidget):
             hover_line_color=QtGui.QColor(
                 *self._config["shape"]["navigator_hover_line_color"]
             ),
+            viewport_color=QtGui.QColor(
+                *self._config["shape"].get("navigator_viewport_color", [255, 0, 0, 255])
+            ),
+            viewport_width=self._config["shape"].get("navigator_viewport_width", 2.0),
+        )
+        self.navigator_dialog.navigator.set_viewport_cross(
+            self._config["shape"].get("navigator_viewport_cross", False)
         )
         self.navigator_dialog.navigator.navigation_requested.connect(
             self.on_navigator_request
@@ -4168,6 +4190,12 @@ class LabelingWidget(QtWidgets.QWidget):
         current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
         total_pages = len(self.image_list) if self.image_list else 1
         self.alignment_dialog.update_page_range(current_page, total_pages)
+        
+        # 更新标签复选框列表（带颜色）
+        labels = [self.unique_label_list.item(i).data(QtCore.Qt.UserRole) 
+                  for i in range(self.unique_label_list.count())]
+        label_colors = {label: self._get_rgb_by_label(label) for label in labels}
+        self.alignment_dialog.update_label_list(labels, label_colors)
 
         # 使用通用的toggle逻辑
         if self.alignment_dialog.isMinimized():
@@ -4316,18 +4344,25 @@ class LabelingWidget(QtWidgets.QWidget):
                     # Rebuild rectangle points explicitly from a QRectF to avoid
                     # unintended coupling between width/height changes due to point ordering
                     target_rect = shape.bounding_rect()
-                    new_left = target_rect.left()
-                    new_top = target_rect.top()
-                    new_right = target_rect.right()
-                    new_bottom = target_rect.bottom()
+                    # 以矩形中心为基准进行调整
+                    center_x = target_rect.center().x()
+                    center_y = target_rect.center().y()
+                    current_width = target_rect.width()
+                    current_height = target_rect.height()
 
                     if mode == 'unify_width':
                         ref_width = ref_rect.width()
-                        new_right = new_left + ref_width
+                        new_left = center_x - ref_width / 2
+                        new_right = center_x + ref_width / 2
+                        new_top = target_rect.top()
+                        new_bottom = target_rect.bottom()
                         action_taken = True
                     elif mode == 'unify_height':
                         ref_height = ref_rect.height()
-                        new_bottom = new_top + ref_height
+                        new_top = center_y - ref_height / 2
+                        new_bottom = center_y + ref_height / 2
+                        new_left = target_rect.left()
+                        new_right = target_rect.right()
                         action_taken = True
 
                     # Apply the new rectangle with canonical TL, TR, BR, BL order
@@ -4467,27 +4502,28 @@ class LabelingWidget(QtWidgets.QWidget):
         else:
             self.alignment_dialog.log(self.tr("保持对齐模式，可继续执行其他操作"))
 
-    def on_apply_specified_size(self, label, width, height, scope):
+    def on_apply_specified_size(self, labels, width, height, scope):
         """应用指定尺寸到指定标签的矩形
         
         Args:
-            label: 目标标签名
+            labels: 目标标签名列表
             width: 目标宽度（0表示不修改）
             height: 目标高度（0表示不修改）
             scope: 范围 - "current"(本页), "selected"(选中), "all"(全部)
         """
         if scope == "current":
-            self._apply_specified_size_current(label, width, height)
+            self._apply_specified_size_current(labels, width, height)
         elif scope == "selected":
-            self._apply_specified_size_selected(label, width, height)
+            self._apply_specified_size_selected(labels, width, height)
         elif scope == "all":
-            self._apply_specified_size_all(label, width, height)
+            self._apply_specified_size_all(labels, width, height)
 
-    def _apply_specified_size_current(self, label, width, height):
+    def _apply_specified_size_current(self, labels, width, height):
         """应用指定尺寸到当前页面的指定标签"""
+        labels_set = set(labels)
         modified_count = 0
         for shape in self.canvas.shapes:
-            if shape.label == label and shape.shape_type in ['rectangle', 'rotation']:
+            if shape.label in labels_set and shape.shape_type in ['rectangle', 'rotation']:
                 if self._resize_shape_to_size(shape, width, height):
                     modified_count += 1
         
@@ -4495,21 +4531,22 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.update()
             self.set_dirty()
             if self.alignment_dialog:
-                self.alignment_dialog.log(self.tr(f"本页: 已调整 {modified_count} 个 '{label}' 标签的尺寸"))
+                self.alignment_dialog.log(self.tr(f"本页: 已调整 {modified_count} 个标注框的尺寸"))
         else:
             if self.alignment_dialog:
-                self.alignment_dialog.log(self.tr(f"本页: 未找到 '{label}' 标签的矩形"))
+                self.alignment_dialog.log(self.tr(f"本页: 未找到匹配标签的矩形"))
 
-    def _apply_specified_size_selected(self, label, width, height):
+    def _apply_specified_size_selected(self, labels, width, height):
         """应用指定尺寸到选中的指定标签"""
         if not self.canvas.selected_shapes:
             if self.alignment_dialog:
                 self.alignment_dialog.log(self.tr("没有选中的标注框"))
             return
         
+        labels_set = set(labels)
         modified_count = 0
         for shape in self.canvas.selected_shapes:
-            if shape.label == label and shape.shape_type in ['rectangle', 'rotation']:
+            if shape.label in labels_set and shape.shape_type in ['rectangle', 'rotation']:
                 if self._resize_shape_to_size(shape, width, height):
                     modified_count += 1
         
@@ -4517,28 +4554,31 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.update()
             self.set_dirty()
             if self.alignment_dialog:
-                self.alignment_dialog.log(self.tr(f"选中: 已调整 {modified_count} 个 '{label}' 标签的尺寸"))
+                self.alignment_dialog.log(self.tr(f"选中: 已调整 {modified_count} 个标注框的尺寸"))
         else:
             if self.alignment_dialog:
-                self.alignment_dialog.log(self.tr(f"选中: 未找到 '{label}' 标签的矩形"))
+                self.alignment_dialog.log(self.tr(f"选中: 未找到匹配标签的矩形"))
 
-    def _apply_specified_size_all(self, label, width, height):
+    def _apply_specified_size_all(self, labels, width, height):
         """应用指定尺寸到全部页面的指定标签"""
         if not self.image_list:
             if self.alignment_dialog:
                 self.alignment_dialog.log(self.tr("没有加载图像列表"))
             return
 
+        labels_str = ", ".join(labels) if len(labels) <= 3 else f"{labels[0]}等{len(labels)}个标签"
         reply = QtWidgets.QMessageBox.question(
             self,
             self.tr("确认操作"),
-            self.tr(f"确定要将 '{label}' 标签的尺寸调整为 宽:{width} 高:{height} 吗？\n"
+            self.tr(f"确定要将 '{labels_str}' 的尺寸调整为 宽:{width} 高:{height} 吗？\n"
                     f"这将影响全部 {len(self.image_list)} 个文件，且无法撤销。"),
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No,
         )
         if reply != QtWidgets.QMessageBox.Yes:
             return
+        
+        labels_set = set(labels)
 
         total_files = len(self.image_list)
         processed_files = 0
@@ -4581,7 +4621,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 modified_count = 0
 
                 for shape_dict in shapes_data:
-                    if shape_dict.get("label") != label:
+                    if shape_dict.get("label") not in labels_set:
                         continue
                     
                     shape_type = shape_dict.get("shape_type")
@@ -4654,7 +4694,7 @@ class LabelingWidget(QtWidgets.QWidget):
         if self.alignment_dialog:
             self.alignment_dialog.log(self.tr(f"全部: 处理了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框"))
 
-    def on_apply_specified_size_range(self, label, width, height, start_index, end_index):
+    def on_apply_specified_size_range(self, labels, width, height, start_index, end_index):
         """应用指定尺寸到指定范围的页面"""
         if not self.image_list:
             if self.alignment_dialog:
@@ -4668,11 +4708,13 @@ class LabelingWidget(QtWidgets.QWidget):
 
         files_to_process = self.image_list[start_index:end_index + 1]
         num_files = len(files_to_process)
+        labels_set = set(labels)
+        labels_str = ", ".join(labels) if len(labels) <= 3 else f"{labels[0]}等{len(labels)}个标签"
 
         reply = QtWidgets.QMessageBox.question(
             self,
             self.tr("确认操作"),
-            self.tr(f"确定要将 '{label}' 标签的尺寸调整为 宽:{width} 高:{height} 吗？\n"
+            self.tr(f"确定要将 '{labels_str}' 的尺寸调整为 宽:{width} 高:{height} 吗？\n"
                     f"范围: 第 {start_index + 1} 到 {end_index + 1} 页，共 {num_files} 个文件，且无法撤销。"),
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No,
@@ -4719,7 +4761,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 modified_count = 0
 
                 for shape_dict in shapes_data:
-                    if shape_dict.get("label") != label:
+                    if shape_dict.get("label") not in labels_set:
                         continue
                     
                     shape_type = shape_dict.get("shape_type")
@@ -4976,6 +5018,12 @@ class LabelingWidget(QtWidgets.QWidget):
             self.segmentation_dialog.activateWindow()
         else:
             self.segmentation_dialog.show()
+            # 自动进入垂直分割模式
+            if self.segmentation_dialog.current_mode is None:
+                self.segmentation_dialog.vertical_button.setChecked(True)
+                self.segmentation_dialog.on_vertical_mode()
+            # 焦点切回画布，这样数字键快捷键可以正常工作
+            self.canvas.setFocus()
 
     def toggle_segmentation_dialog(self):
         """Toggle segmentation tool dialog (for shortcut).
@@ -4994,7 +5042,12 @@ class LabelingWidget(QtWidgets.QWidget):
             # Hidden: show it
             self.segmentation_dialog.show()
             self.segmentation_dialog.raise_()
-            self.segmentation_dialog.activateWindow()
+            # 自动进入垂直分割模式
+            if self.segmentation_dialog.current_mode is None:
+                self.segmentation_dialog.vertical_button.setChecked(True)
+                self.segmentation_dialog.on_vertical_mode()
+            # 焦点切回画布，这样数字键快捷键可以正常工作
+            self.canvas.setFocus()
         elif self.segmentation_dialog.isMinimized():
             # Minimized: restore it
             self.segmentation_dialog.setWindowState(
@@ -5004,6 +5057,9 @@ class LabelingWidget(QtWidgets.QWidget):
             self.segmentation_dialog.activateWindow()
         else:
             # Visible and normal: hide it (使用hide而不是close，这样主窗口可以接收快捷键)
+            # 自动退出分割模式
+            if self.segmentation_dialog.current_mode is not None:
+                self.segmentation_dialog.on_exit_mode()
             self.segmentation_dialog.hide()
 
     def on_enter_vertical_cut_mode(self):
@@ -5692,11 +5748,22 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.shapes.append(new_shape1)
         self.canvas.shapes.append(new_shape2)
 
-        # Update UI (add_label会根据shape.visible属性正确设置checkState)
+        # 保存所有形状的高亮状态（selected和fill属性）
+        highlight_states = {}
+        for s in self.canvas.shapes:
+            highlight_states[id(s)] = (getattr(s, 'selected', False), getattr(s, 'fill', False))
+
+        # Update UI
         self.set_dirty()
         self.canvas.deselect_shape()
         self.canvas.update()
         self.load_shapes(self.canvas.shapes)
+
+        # 恢复所有形状的高亮状态
+        for s in self.canvas.shapes:
+            if id(s) in highlight_states:
+                s.selected, s.fill = highlight_states[id(s)]
+        self.canvas.update()
 
         # Log success
         self.segmentation_dialog.log_message(
@@ -5933,6 +6000,11 @@ class LabelingWidget(QtWidgets.QWidget):
                     hover_line_color=QtGui.QColor(*self._config["shape"]["navigator_hover_line_color"])
                 )
                 self.navigator_dialog.navigator.update()
+            elif key == ['shape', 'navigator_viewport_color']:
+                self.navigator_dialog.navigator.set_colors(
+                    viewport_color=color,
+                )
+                self.navigator_dialog.navigator.update()
             elif key == ['shape', 'overlap_color']:
                 self.canvas.overlap_color = color
             elif key == ['shape', 'overlap_color_alpha']:
@@ -6045,6 +6117,13 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.canvas.alignment_reference_line_width = value
             elif key == ['shape', 'alignment_target_line_width']:
                 self.canvas.alignment_target_line_width = value
+            elif key == ['shape', 'navigator_viewport_width']:
+                self.navigator_dialog.navigator.set_colors(
+                    viewport_width=value,
+                )
+                self.navigator_dialog.navigator.update()
+            elif key == ['shape', 'navigator_viewport_cross']:
+                self.navigator_dialog.navigator.set_viewport_cross(value)
             elif key == 'paste_preview_line_width':
                 # 虚影线条粗细
                 self.canvas.paste_preview_line_width = value
@@ -7024,6 +7103,13 @@ class LabelingWidget(QtWidgets.QWidget):
         # 根据形状的visible属性设置checkState，保持可见性状态一致
         label_list_item.setCheckState(Qt.Checked if shape.visible else Qt.Unchecked)
         
+        # 应用标签独立透明度配置
+        label_alphas = self._config.get("label_alphas") or {}
+        if label_alphas and shape.label in label_alphas:
+            alpha_config = label_alphas[shape.label]
+            shape.label_alpha_idle = alpha_config.get("idle")
+            shape.label_alpha_highlight = alpha_config.get("highlight")
+        
         # 只在创建新图形时检测置顶
         if is_new_shape:
             pin_labels_str = self._config.get("pin_labels", "")
@@ -7121,6 +7207,7 @@ class LabelingWidget(QtWidgets.QWidget):
             # 确保canvas.shapes中的所有图形都被隐藏
             for shape in self.canvas.shapes:
                 shape.visible = False
+                self.canvas.set_shape_visible(shape, False)
             self.canvas.update()
             self.update_navigator_shapes()
         self.btn_deselect_all.clicked.connect(deselect_all_labels)
@@ -7219,6 +7306,17 @@ class LabelingWidget(QtWidgets.QWidget):
         shape.fill_color = QtGui.QColor(r, g, b, 128)
         shape.select_line_color = QtGui.QColor(r, g, b)
         shape.select_fill_color = QtGui.QColor(r, g, b, 155)
+        
+        # 更新独立边框颜色
+        border_rgb = self._get_border_rgb_by_label(shape.label)
+        if border_rgb:
+            shape._border_color = QtGui.QColor(*border_rgb)
+        else:
+            shape._border_color = None
+        
+        # 更新独立边框宽度
+        border_width = self._get_border_width_by_label(shape.label)
+        shape._border_width = border_width
 
     def _get_rgb_by_label(self, label, skip_label_info=False):
         if label in self.label_info and not skip_label_info:
@@ -7240,6 +7338,24 @@ class LabelingWidget(QtWidgets.QWidget):
         if self._config["default_shape_color"]:
             return self._config["default_shape_color"]
         return (0, 255, 0)
+
+    def _get_border_rgb_by_label(self, label):
+        """获取标签的独立边框颜色，如果没有设置则返回None"""
+        if (
+            self._config.get("label_border_colors")
+            and label in self._config["label_border_colors"]
+        ):
+            return self._config["label_border_colors"][label]
+        return None
+
+    def _get_border_width_by_label(self, label):
+        """获取标签的独立边框宽度，如果没有设置则返回None"""
+        if (
+            self._config.get("label_border_widths")
+            and label in self._config["label_border_widths"]
+        ):
+            return self._config["label_border_widths"][label]
+        return None
 
     def remove_labels(self, shapes):
         for shape in shapes:
@@ -7965,6 +8081,304 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.update()
         self.set_dirty()
 
+    def change_label_border_color(self, label):
+        """修改单个标签的边框颜色和宽度"""
+        self._change_label_border_settings([label])
+
+    def batch_change_label_border_color(self, labels):
+        """批量修改标签边框颜色和宽度"""
+        if not labels:
+            return
+        self._change_label_border_settings(labels)
+
+    def _change_label_border_settings(self, labels):
+        """修改标签边框颜色和宽度的内部实现（支持实时预览）"""
+        from PyQt5.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+            QPushButton, QDoubleSpinBox, QGroupBox
+        )
+        from PyQt5.QtGui import QColor
+
+        if not labels:
+            return
+
+        # 保存原始设置用于取消时恢复
+        original_settings = {}
+        for label in labels:
+            original_settings[label] = {
+                'color': self._get_border_rgb_by_label(label),
+                'width': self._get_border_width_by_label(label)
+            }
+
+        # 获取第一个标签的当前设置作为默认值
+        current_border_rgb = self._get_border_rgb_by_label(labels[0])
+        if current_border_rgb:
+            current_color = QColor(*current_border_rgb)
+        else:
+            current_rgb = self._get_rgb_by_label(labels[0])
+            current_color = QColor(*current_rgb)
+
+        current_width = self._get_border_width_by_label(labels[0])
+        if current_width is None:
+            current_width = self._config.get("shape", {}).get("line_width", 4.0)
+
+        # 创建非模态对话框
+        dialog = QDialog(self)
+        # 设置窗口标志：去掉问号，添加最小化按钮
+        dialog.setWindowFlags(
+            Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint
+        )
+        if len(labels) == 1:
+            dialog.setWindowTitle(self.tr(f"边框设置 - {labels[0]}"))
+        else:
+            dialog.setWindowTitle(self.tr(f"边框设置 ({len(labels)}个标签)"))
+        dialog.setMinimumWidth(300)
+
+        layout = QVBoxLayout(dialog)
+
+        # 颜色设置组
+        color_group = QGroupBox(self.tr("边框颜色"))
+        color_layout = QHBoxLayout(color_group)
+
+        color_preview = QLabel()
+        color_preview.setFixedSize(60, 30)
+        color_preview.setStyleSheet(f"background-color: {current_color.name()}; border: 1px solid black;")
+        color_layout.addWidget(color_preview)
+
+        color_btn = QPushButton(self.tr("选择颜色"))
+        selected_color = [current_color]  # 使用列表存储以便在闭包中修改
+
+        def update_preview():
+            """实时更新画布预览"""
+            color = selected_color[0]
+            width = width_spin.value()
+            for shape in self.canvas.shapes:
+                if shape.label in labels:
+                    shape._border_color = color
+                    shape._border_width = width
+            self.canvas.update()
+
+        def on_color_click():
+            from PyQt5.QtWidgets import QColorDialog
+            color = QColorDialog.getColor(selected_color[0], dialog, self.tr("选择边框颜色"))
+            if color.isValid():
+                selected_color[0] = color
+                color_preview.setStyleSheet(f"background-color: {color.name()}; border: 1px solid black;")
+                update_preview()
+
+        color_btn.clicked.connect(on_color_click)
+        color_layout.addWidget(color_btn)
+        color_layout.addStretch()
+        layout.addWidget(color_group)
+
+        # 宽度设置组
+        width_group = QGroupBox(self.tr("边框宽度"))
+        width_layout = QHBoxLayout(width_group)
+
+        width_spin = QDoubleSpinBox()
+        width_spin.setRange(0.5, 20.0)
+        width_spin.setSingleStep(0.5)
+        width_spin.setValue(current_width)
+        width_spin.setSuffix(" px")
+        width_spin.valueChanged.connect(update_preview)  # 实时预览
+        width_layout.addWidget(width_spin)
+        width_layout.addStretch()
+        layout.addWidget(width_group)
+
+        # 按钮
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton(self.tr("确定"))
+        cancel_btn = QPushButton(self.tr("取消"))
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        def on_accept():
+            """确定按钮点击"""
+            new_color = selected_color[0]
+            new_width = width_spin.value()
+            new_rgb = (new_color.red(), new_color.green(), new_color.blue())
+
+            # 更新边框颜色配置
+            if "label_border_colors" not in self._config or self._config["label_border_colors"] is None:
+                self._config["label_border_colors"] = {}
+
+            # 更新边框宽度配置
+            if "label_border_widths" not in self._config or self._config["label_border_widths"] is None:
+                self._config["label_border_widths"] = {}
+
+            for label in labels:
+                self._config["label_border_colors"][label] = new_rgb
+                self._config["label_border_widths"][label] = new_width
+
+            # shapes已经在预览时更新过了，这里确保最终值正确
+            for shape in self.canvas.shapes:
+                if shape.label in labels:
+                    shape._border_color = QtGui.QColor(*new_rgb)
+                    shape._border_width = new_width
+
+            self.canvas.update()
+            self.set_dirty()
+            dialog.close()
+
+        def on_reject():
+            """取消按钮点击或关闭窗口"""
+            # 恢复原始设置
+            for shape in self.canvas.shapes:
+                if shape.label in labels:
+                    orig = original_settings[shape.label]
+                    if orig['color']:
+                        shape._border_color = QtGui.QColor(*orig['color'])
+                    else:
+                        shape._border_color = None
+                    shape._border_width = orig['width']
+            self.canvas.update()
+            dialog.close()
+
+        ok_btn.clicked.connect(on_accept)
+        cancel_btn.clicked.connect(on_reject)
+        dialog.rejected.connect(on_reject)  # 处理窗口关闭按钮
+
+        # 使用非模态方式显示
+        dialog.show()
+
+    def change_label_alpha(self, label):
+        """修改单个标签的透明度"""
+        self._change_labels_alpha([label])
+
+    def batch_change_label_alpha(self, labels):
+        """批量修改标签透明度"""
+        self._change_labels_alpha(labels)
+
+    def _change_labels_alpha(self, labels):
+        """修改标签透明度的内部实现
+        
+        使用Shape的label_alpha_idle和label_alpha_highlight属性，
+        这样不会和颜色管理器中的全局透明度设置冲突。
+        设置为None时使用全局设置。
+        """
+        if not labels:
+            return
+
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton, QFormLayout
+        from PyQt5.QtCore import Qt
+        from views.labeling.shape import Shape
+
+        # 保存原始值用于取消时恢复
+        original_values = {}
+        for shape in self.canvas.shapes:
+            if shape.label in labels:
+                original_values[id(shape)] = (shape.label_alpha_idle, shape.label_alpha_highlight)
+
+        # 获取第一个标签的当前透明度作为默认值（从配置中读取）
+        current_alpha_idle = -1  # -1表示使用全局
+        current_alpha_highlight = -1
+        label_alphas = self._config.get("label_alphas") or {}
+        if label_alphas and labels[0] in label_alphas:
+            alpha_config = label_alphas[labels[0]]
+            if alpha_config.get("idle") is not None:
+                current_alpha_idle = alpha_config["idle"]
+            if alpha_config.get("highlight") is not None:
+                current_alpha_highlight = alpha_config["highlight"]
+
+        # 创建非模态对话框
+        dialog = QDialog(self)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dialog.setModal(False)  # 非模态
+        if len(labels) == 1:
+            dialog.setWindowTitle(self.tr(f"设置 '{labels[0]}' 的透明度"))
+        else:
+            dialog.setWindowTitle(self.tr(f"设置 {len(labels)} 个标签的透明度"))
+        dialog.setMinimumWidth(300)
+
+        layout = QVBoxLayout(dialog)
+
+        # 提示信息
+        hint_label = QLabel(self.tr("提示: -1 表示使用全局设置（实时预览）"))
+        hint_label.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(hint_label)
+
+        # 表单布局
+        form_layout = QFormLayout()
+
+        # 实时预览函数
+        def update_preview():
+            alpha_idle = idle_spinbox.value()
+            alpha_highlight = highlight_spinbox.value()
+            for shape in self.canvas.shapes:
+                if shape.label in labels:
+                    shape.label_alpha_idle = None if alpha_idle == -1 else alpha_idle
+                    shape.label_alpha_highlight = None if alpha_highlight == -1 else alpha_highlight
+            self.canvas.update()
+
+        # 默认透明度
+        idle_spinbox = QSpinBox()
+        idle_spinbox.setRange(-1, 255)
+        idle_spinbox.setValue(current_alpha_idle)
+        idle_spinbox.setToolTip(self.tr("形状未高亮时的透明度"))
+        idle_spinbox.valueChanged.connect(update_preview)
+        form_layout.addRow(self.tr("默认透明度:"), idle_spinbox)
+
+        # 高亮透明度
+        highlight_spinbox = QSpinBox()
+        highlight_spinbox.setRange(-1, 255)
+        highlight_spinbox.setValue(current_alpha_highlight)
+        highlight_spinbox.setToolTip(self.tr("形状高亮时的透明度"))
+        highlight_spinbox.valueChanged.connect(update_preview)
+        form_layout.addRow(self.tr("高亮透明度:"), highlight_spinbox)
+
+        layout.addLayout(form_layout)
+
+        # 按钮
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton(self.tr("确定"))
+        cancel_button = QPushButton(self.tr("取消"))
+        reset_button = QPushButton(self.tr("重置为全局"))
+        reset_button.setToolTip(self.tr("将两个值都设为-1，使用全局设置"))
+        
+        def reset_to_global():
+            idle_spinbox.setValue(-1)
+            highlight_spinbox.setValue(-1)
+        reset_button.clicked.connect(reset_to_global)
+        
+        def on_accept():
+            # 保存到配置中，这样切换页面后也能保持
+            alpha_idle = idle_spinbox.value()
+            alpha_highlight = highlight_spinbox.value()
+            if "label_alphas" not in self._config or self._config["label_alphas"] is None:
+                self._config["label_alphas"] = {}
+            for label in labels:
+                if alpha_idle == -1 and alpha_highlight == -1:
+                    # 都是-1时删除配置，使用全局
+                    if label in self._config["label_alphas"]:
+                        del self._config["label_alphas"][label]
+                else:
+                    self._config["label_alphas"][label] = {
+                        "idle": None if alpha_idle == -1 else alpha_idle,
+                        "highlight": None if alpha_highlight == -1 else alpha_highlight
+                    }
+            self.set_dirty()
+            dialog.accept()
+        
+        def on_reject():
+            # 恢复原始值
+            for shape in self.canvas.shapes:
+                if id(shape) in original_values:
+                    shape.label_alpha_idle, shape.label_alpha_highlight = original_values[id(shape)]
+            self.canvas.update()
+            dialog.reject()
+        
+        ok_button.clicked.connect(on_accept)
+        cancel_button.clicked.connect(on_reject)
+        button_layout.addWidget(reset_button)
+        button_layout.addStretch()
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+
+        dialog.show()
+
     def text_selection_changed(self, index):
         # 禁用这个函数，避免在创建新图形时重置复选框
         return
@@ -8646,6 +9060,7 @@ class LabelingWidget(QtWidgets.QWidget):
             if item.shape().selected:
                 item.setCheckState(Qt.Unchecked)
                 item.shape().visible = False
+                self.canvas.set_shape_visible(item.shape(), False)
                 shapes_to_hide.append(item.shape())
 
         self.selected_polygon_stack.extend(shapes_to_hide)
@@ -8660,6 +9075,7 @@ class LabelingWidget(QtWidgets.QWidget):
             if item:
                 item.setCheckState(Qt.Checked)
                 shape_to_show.visible = True
+                self.canvas.set_shape_visible(shape_to_show, True)
                 self.canvas.update()
                 # 更新导航器显示
                 self.update_navigator_shapes()
@@ -8678,6 +9094,7 @@ class LabelingWidget(QtWidgets.QWidget):
             if item:
                 item.setCheckState(Qt.Unchecked)
                 shape.visible = False
+                self.canvas.set_shape_visible(shape, False)
                 self.selected_polygon_stack.append(shape)
 
         self.canvas.update()
@@ -9559,7 +9976,9 @@ class LabelingWidget(QtWidgets.QWidget):
     def toggle_visibility_shapes(self, value):
         for index, item in enumerate(self.label_list):
             item.setCheckState(Qt.Checked if value else Qt.Unchecked)
-            self.label_list[index].shape().visible = True if value else False
+            shape = self.label_list[index].shape()
+            shape.visible = True if value else False
+            self.canvas.set_shape_visible(shape, value)
         self._config["show_shapes"] = value
         # 更新导航器显示
         self.update_navigator_shapes()
@@ -10856,6 +11275,11 @@ class LabelingWidget(QtWidgets.QWidget):
             current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
             total_pages = len(self.image_list) if self.image_list else 1
             self.alignment_dialog.update_page_range(current_page, total_pages)
+            # 更新标签复选框列表（带颜色）
+            labels = [self.unique_label_list.item(i).data(QtCore.Qt.UserRole) 
+                      for i in range(self.unique_label_list.count())]
+            label_colors = {label: self._get_rgb_by_label(label) for label in labels}
+            self.alignment_dialog.update_label_list(labels, label_colors)
 
     def _update_rectangle_scale_page_range(self):
         """Update page range in rectangle scale dialog if it's open and visible."""

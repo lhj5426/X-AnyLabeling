@@ -51,6 +51,15 @@ class UniqueLabelQListWidget(EscapableQListWidget):
     batch_delete_current_page_shapes = pyqtSignal(list)  # 批量删除本页所有选中标签的矩形
     batch_delete_all_label_shapes = pyqtSignal(list)  # 批量删除所有图片中选中标签的矩形和标签
     batch_change_label_color = pyqtSignal(list)  # 批量修改标签颜色
+    # 透明度设置信号
+    change_label_alpha = pyqtSignal(str)  # 修改单个标签透明度
+    batch_change_label_alpha = pyqtSignal(list)  # 批量修改标签透明度
+    # 边框颜色设置信号
+    change_label_border_color = pyqtSignal(str)  # 修改单个标签边框颜色
+    batch_change_label_border_color = pyqtSignal(list)  # 批量修改标签边框颜色
+    # 边框颜色设置信号
+    change_label_border_color = pyqtSignal(str)  # 修改单个标签边框颜色
+    batch_change_label_border_color = pyqtSignal(list)  # 批量修改标签边框颜色
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -243,7 +252,15 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             menu.addSeparator()
             change_color_action = menu.addAction(
                 utils.new_icon('color'),
-                self.tr(f"批量修改颜色 ({len(selected_labels)}个)")
+                self.tr(f"批量修改填充颜色 ({len(selected_labels)}个)")
+            )
+            change_border_color_action = menu.addAction(
+                utils.new_icon('color'),
+                self.tr(f"批量修改边框颜色 ({len(selected_labels)}个)")
+            )
+            change_alpha_action = menu.addAction(
+                utils.new_icon('color'),
+                self.tr(f"批量修改透明度 ({len(selected_labels)}个)")
             )
         else:
             label = selected_labels[0]
@@ -258,7 +275,15 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             menu.addSeparator()
             change_color_action = menu.addAction(
                 utils.new_icon('color'),
-                self.tr("修改颜色")
+                self.tr("修改填充颜色")
+            )
+            change_border_color_action = menu.addAction(
+                utils.new_icon('color'),
+                self.tr("修改边框颜色")
+            )
+            change_alpha_action = menu.addAction(
+                utils.new_icon('color'),
+                self.tr("修改透明度")
             )
 
         # 显示菜单并获取选择的动作
@@ -286,6 +311,20 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             else:
                 # 单个操作
                 self.change_label_color.emit(selected_labels[0])
+        elif action == change_border_color_action:
+            if is_multi_select:
+                # 批量操作：发送批量信号
+                self.batch_change_label_border_color.emit(selected_labels)
+            else:
+                # 单个操作
+                self.change_label_border_color.emit(selected_labels[0])
+        elif action == change_alpha_action:
+            if is_multi_select:
+                # 批量操作：发送批量信号
+                self.batch_change_label_alpha.emit(selected_labels)
+            else:
+                # 单个操作
+                self.change_label_alpha.emit(selected_labels[0])
 
     def get_ordered_labels(self):
         labels = []
