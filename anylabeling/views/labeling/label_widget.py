@@ -7311,12 +7311,18 @@ class LabelingWidget(QtWidgets.QWidget):
         border_rgb = self._get_border_rgb_by_label(shape.label)
         if border_rgb:
             shape._border_color = QtGui.QColor(*border_rgb)
+            # 同时更新select_line_color，避免两层颜色
+            shape.select_line_color = QtGui.QColor(*border_rgb)
         else:
             shape._border_color = None
         
-        # 更新独立边框宽度
+        # 更新独立边框宽度（高亮时）
         border_width = self._get_border_width_by_label(shape.label)
         shape._border_width = border_width
+        
+        # 更新独立边框宽度（点击后）
+        border_width_selected = self._get_border_width_selected_by_label(shape.label)
+        shape._border_width_selected = border_width_selected
 
     def _get_rgb_by_label(self, label, skip_label_info=False):
         if label in self.label_info and not skip_label_info:
@@ -7349,12 +7355,21 @@ class LabelingWidget(QtWidgets.QWidget):
         return None
 
     def _get_border_width_by_label(self, label):
-        """获取标签的独立边框宽度，如果没有设置则返回None"""
+        """获取标签的独立边框宽度（高亮时），如果没有设置则返回None"""
         if (
             self._config.get("label_border_widths")
             and label in self._config["label_border_widths"]
         ):
             return self._config["label_border_widths"][label]
+        return None
+
+    def _get_border_width_selected_by_label(self, label):
+        """获取标签的独立边框宽度（点击后），如果没有设置则返回None"""
+        if (
+            self._config.get("label_border_widths_selected")
+            and label in self._config["label_border_widths_selected"]
+        ):
+            return self._config["label_border_widths_selected"][label]
         return None
 
     def remove_labels(self, shapes):
@@ -8107,7 +8122,9 @@ class LabelingWidget(QtWidgets.QWidget):
         for label in labels:
             original_settings[label] = {
                 'color': self._get_border_rgb_by_label(label),
-                'width': self._get_border_width_by_label(label)
+                'width': self._get_border_width_by_label(label),
+                'width_selected': self._get_border_width_selected_by_label(label),
+                'select_line_color': self._get_rgb_by_label(label)  # 保存原始select_line_color
             }
 
         # 获取第一个标签的当前设置作为默认值
@@ -8121,6 +8138,10 @@ class LabelingWidget(QtWidgets.QWidget):
         current_width = self._get_border_width_by_label(labels[0])
         if current_width is None:
             current_width = self._config.get("shape", {}).get("line_width", 4.0)
+        
+        current_width_selected = self._get_border_width_selected_by_label(labels[0])
+        if current_width_selected is None:
+            current_width_selected = self._config.get("shape", {}).get("line_width", 4.0)
 
         # 创建非模态对话框
         dialog = QDialog(self)
@@ -8148,14 +8169,24 @@ class LabelingWidget(QtWidgets.QWidget):
         color_btn = QPushButton(self.tr("选择颜色"))
         selected_color = [current_color]  # 使用列表存储以便在闭包中修改
 
+        # 保存原始高亮状态
+        from views.labeling.shape import Shape
+        original_highlighting = Shape.highlighting_enabled
+
         def update_preview():
             """实时更新画布预览"""
+            # 临时开启高亮模式以便预览
+            Shape.highlighting_enabled = True
             color = selected_color[0]
             width = width_spin.value()
+            width_selected = width_selected_spin.value()
             for shape in self.canvas.shapes:
                 if shape.label in labels:
                     shape._border_color = color
                     shape._border_width = width
+                    shape._border_width_selected = width_selected
+                    # 同时更新select_line_color，避免两层颜色
+                    shape.select_line_color = color
             self.canvas.update()
 
         def on_color_click():
@@ -8171,19 +8202,33 @@ class LabelingWidget(QtWidgets.QWidget):
         color_layout.addStretch()
         layout.addWidget(color_group)
 
-        # 宽度设置组
-        width_group = QGroupBox(self.tr("边框宽度"))
+        # 高亮时边框宽度设置组
+        width_group = QGroupBox(self.tr("高亮时边框宽度"))
         width_layout = QHBoxLayout(width_group)
 
         width_spin = QDoubleSpinBox()
-        width_spin.setRange(0.5, 20.0)
-        width_spin.setSingleStep(0.5)
+        width_spin.setRange(0, 20.0)  # 允许0，表示只显示填充色不显示边框
+        width_spin.setSingleStep(1)
         width_spin.setValue(current_width)
         width_spin.setSuffix(" px")
         width_spin.valueChanged.connect(update_preview)  # 实时预览
         width_layout.addWidget(width_spin)
         width_layout.addStretch()
         layout.addWidget(width_group)
+
+        # 点击后边框宽度设置组
+        width_selected_group = QGroupBox(self.tr("点击后边框宽度"))
+        width_selected_layout = QHBoxLayout(width_selected_group)
+
+        width_selected_spin = QDoubleSpinBox()
+        width_selected_spin.setRange(1, 20.0)  # 点击后不允许0，避免隐形
+        width_selected_spin.setSingleStep(1)
+        width_selected_spin.setValue(current_width_selected)
+        width_selected_spin.setSuffix(" px")
+        width_selected_spin.valueChanged.connect(update_preview)  # 实时预览
+        width_selected_layout.addWidget(width_selected_spin)
+        width_selected_layout.addStretch()
+        layout.addWidget(width_selected_group)
 
         # 按钮
         btn_layout = QHBoxLayout()
@@ -8194,36 +8239,49 @@ class LabelingWidget(QtWidgets.QWidget):
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
 
+        # 使用标志位防止重复处理
+        accepted = [False]
+
         def on_accept():
             """确定按钮点击"""
+            accepted[0] = True
             new_color = selected_color[0]
             new_width = width_spin.value()
+            new_width_selected = width_selected_spin.value()
             new_rgb = (new_color.red(), new_color.green(), new_color.blue())
 
             # 更新边框颜色配置
             if "label_border_colors" not in self._config or self._config["label_border_colors"] is None:
                 self._config["label_border_colors"] = {}
 
-            # 更新边框宽度配置
+            # 更新高亮时边框宽度配置
             if "label_border_widths" not in self._config or self._config["label_border_widths"] is None:
                 self._config["label_border_widths"] = {}
+
+            # 更新点击后边框宽度配置
+            if "label_border_widths_selected" not in self._config or self._config["label_border_widths_selected"] is None:
+                self._config["label_border_widths_selected"] = {}
 
             for label in labels:
                 self._config["label_border_colors"][label] = new_rgb
                 self._config["label_border_widths"][label] = new_width
+                self._config["label_border_widths_selected"][label] = new_width_selected
 
             # shapes已经在预览时更新过了，这里确保最终值正确
             for shape in self.canvas.shapes:
                 if shape.label in labels:
                     shape._border_color = QtGui.QColor(*new_rgb)
                     shape._border_width = new_width
+                    shape._border_width_selected = new_width_selected
 
             self.canvas.update()
             self.set_dirty()
-            dialog.close()
+            dialog.accept()  # 使用accept()而不是close()
 
         def on_reject():
             """取消按钮点击或关闭窗口"""
+            if accepted[0]:
+                return  # 已经确定了，不需要恢复
             # 恢复原始设置
             for shape in self.canvas.shapes:
                 if shape.label in labels:
@@ -8233,12 +8291,20 @@ class LabelingWidget(QtWidgets.QWidget):
                     else:
                         shape._border_color = None
                     shape._border_width = orig['width']
+                    shape._border_width_selected = orig['width_selected']
             self.canvas.update()
-            dialog.close()
+
+        def on_finished(result):
+            """对话框关闭时处理"""
+            # 恢复原始高亮状态
+            Shape.highlighting_enabled = original_highlighting
+            self.canvas.update()
+            if result == QDialog.Rejected:
+                on_reject()
 
         ok_btn.clicked.connect(on_accept)
-        cancel_btn.clicked.connect(on_reject)
-        dialog.rejected.connect(on_reject)  # 处理窗口关闭按钮
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.finished.connect(on_finished)
 
         # 使用非模态方式显示
         dialog.show()

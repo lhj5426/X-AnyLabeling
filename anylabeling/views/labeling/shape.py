@@ -115,7 +115,8 @@ class Shape:
         
         # 标签独立边框颜色和粗细（None表示使用默认值）
         self._border_color = None
-        self._border_width = None
+        self._border_width = None  # 高亮时的边框宽度
+        self._border_width_selected = None  # 点击后（取消高亮）的边框宽度
 
         # Rotation setting
         self.direction = direction
@@ -415,29 +416,64 @@ class Shape:
                 )
             elif self.selected:
                 # 状态4/5: 高亮时或点击高亮矩形后移开鼠标 → 自定义边框颜色和粗细
+                # 自定义边框颜色和宽度只在高亮模式下生效
                 if Shape.highlighting_enabled and self._border_color is not None:
                     color = self._border_color
-                    width = self._border_width if self._border_width is not None else self.line_width
                 else:
                     color = self.select_line_color
-                    width = (
-                        self.select_line_width
-                        if self.select_line_width is not None
-                        else self.line_width
-                    )
+                # 边框宽度：高亮模式下根据 fill 状态选择不同的宽度
+                if Shape.highlighting_enabled:
+                    if self.fill:
+                        # 高亮状态（有填充）使用高亮边框宽度
+                        if self._border_width is not None:
+                            width = self._border_width
+                        elif self.select_line_width is not None:
+                            width = self.select_line_width
+                        else:
+                            width = self.line_width
+                    else:
+                        # 点击后取消高亮（无填充）使用点击后边框宽度
+                        if self._border_width_selected is not None:
+                            width = self._border_width_selected
+                        elif self.select_line_width is not None:
+                            width = self.select_line_width
+                        else:
+                            width = self.line_width
+                elif self.select_line_width is not None:
+                    width = self.select_line_width
+                else:
+                    width = self.line_width
             else:
                 # 状态1: 没有点击没有高亮 → 默认颜色
-                # 状态4: 高亮时未被选中的矩形也用自定义边框颜色和粗细
+                # 自定义边框颜色和宽度只在高亮模式下生效
                 if Shape.highlighting_enabled and self._border_color is not None:
                     color = self._border_color
-                    width = self._border_width if self._border_width is not None else self.line_width
                 else:
                     color = self.line_color
+                # 边框宽度：高亮模式下根据 fill 状态选择不同的宽度
+                if Shape.highlighting_enabled:
+                    if self.fill:
+                        # 有填充时使用高亮边框宽度
+                        if self._border_width is not None:
+                            width = self._border_width
+                        else:
+                            width = self.line_width
+                    else:
+                        # 无填充时（被点击过）使用点击后边框宽度
+                        if self._border_width_selected is not None:
+                            width = self._border_width_selected
+                        else:
+                            width = self.line_width
+                else:
                     width = self.line_width
             
             pen = QtGui.QPen(color)
             # Try using integer sizes for smoother drawing(?)
-            pen.setWidth(max(1, int(round(width / self.scale))))
+            # 当 width 为 0 时，设置 pen 宽度为 0（不绘制边框）
+            if width > 0:
+                pen.setWidth(max(1, int(round(width / self.scale))))
+            else:
+                pen.setWidth(0)
             painter.setPen(pen)
 
             line_path = QtGui.QPainterPath()
@@ -548,10 +584,8 @@ class Shape:
                 if self.is_closed():
                     line_path.lineTo(self.points[0])
 
-            painter.drawPath(line_path)
-            painter.drawPath(vrtx_path)
-            if self._vertex_fill_color is not None:
-                painter.fillPath(vrtx_path, self._vertex_fill_color)
+            # 先填充，再画边框，这样边框会完整显示在填充色上面（像相框一样）
+            # 避免边框和填充色之间出现过渡色
             if self.fill:
                 r, g, b = self.line_color.red(), self.line_color.green(), self.line_color.blue()
                 if Shape.highlighting_enabled:
@@ -563,6 +597,14 @@ class Shape:
                 if alpha > 0:
                     fill_color = QtGui.QColor(r, g, b, alpha)
                     painter.fillPath(line_path, fill_color)
+            
+            # 画边框（在填充之后，这样边框完整显示）
+            # 当边框宽度为 0 时，跳过边框绘制，只显示填充色
+            if width > 0:
+                painter.drawPath(line_path)
+            painter.drawPath(vrtx_path)
+            if self._vertex_fill_color is not None:
+                painter.fillPath(vrtx_path, self._vertex_fill_color)
 
     def draw_vertex(self, path, i, show_difficult=False):
         """Draw a vertex"""
