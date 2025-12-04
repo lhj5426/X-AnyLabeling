@@ -536,6 +536,14 @@ https://github.com/user-attachments/assets/e704ab58-ea1d-4943-aa46-3e4a875c8c5d
 
 https://github.com/user-attachments/assets/31b3f2e7-a1cb-46ac-a623-baeca66fb2a6
 
+106.放大镜 添加自动探测功能
+
+https://github.com/user-attachments/assets/da5900d0-5310-482c-80df-044a1fc0d230
+
+107.标签转换显示进度条了 不再傻等了
+
+https://github.com/user-attachments/assets/4e001679-2a48-4686-b66f-5638dcaf55d1
+
 
 
 
