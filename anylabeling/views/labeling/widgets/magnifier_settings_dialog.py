@@ -32,14 +32,14 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         
         size_layout.addWidget(QtWidgets.QLabel("宽度:"), 0, 0)
         self.width_spin = QtWidgets.QSpinBox()
-        self.width_spin.setRange(100, 1500)
+        self.width_spin.setRange(100, 3000)
         self.width_spin.setSingleStep(50)
         self.width_spin.setSuffix(" px")
         size_layout.addWidget(self.width_spin, 0, 1)
         
         size_layout.addWidget(QtWidgets.QLabel("高度:"), 0, 2)
         self.height_spin = QtWidgets.QSpinBox()
-        self.height_spin.setRange(100, 1500)
+        self.height_spin.setRange(100, 3000)
         self.height_spin.setSingleStep(50)
         self.height_spin.setSuffix(" px")
         size_layout.addWidget(self.height_spin, 0, 3)
@@ -134,14 +134,14 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         
         detect_layout.addWidget(QtWidgets.QLabel("探测框宽度:"), 0, 0)
         self.detect_width_spin = QtWidgets.QSpinBox()
-        self.detect_width_spin.setRange(20, 500)
+        self.detect_width_spin.setRange(20, 9999)
         self.detect_width_spin.setSingleStep(10)
         self.detect_width_spin.setSuffix(" px")
         detect_layout.addWidget(self.detect_width_spin, 0, 1)
         
         detect_layout.addWidget(QtWidgets.QLabel("探测框高度:"), 0, 2)
         self.detect_height_spin = QtWidgets.QSpinBox()
-        self.detect_height_spin.setRange(20, 500)
+        self.detect_height_spin.setRange(20, 9999)
         self.detect_height_spin.setSingleStep(10)
         self.detect_height_spin.setSuffix(" px")
         detect_layout.addWidget(self.detect_height_spin, 0, 3)

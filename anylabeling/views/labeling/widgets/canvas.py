@@ -7193,6 +7193,212 @@ class Canvas(
                     painter.setPen(text_pen)
                     painter.drawText(base_pos, text)
 
+    def _draw_magnifier_path_selection(self, painter, crop_rect):
+        """
+        在放大镜中绘制SHIFT+左键路径选择线
+        
+        Args:
+            painter: QPainter对象
+            crop_rect: 裁剪区域矩形
+        """
+        if not self.path_selection_mode or len(self.path_selection_points) < 2:
+            return
+        
+        # 固定像素大小（在图像坐标系中）
+        line_width = 3
+        circle_radius = 6
+        border_width = 2
+        
+        # 绘制路径线（深天蓝色）
+        pen = QtGui.QPen(QtGui.QColor(0, 191, 255), line_width, Qt.SolidLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        
+        # 绘制路径段
+        for i in range(len(self.path_selection_points) - 1):
+            start = self.path_selection_points[i]
+            end = self.path_selection_points[i + 1]
+            painter.drawLine(start, end)
+        
+        # 绘制起点圆圈
+        if len(self.path_selection_points) > 0:
+            start_point = self.path_selection_points[0]
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))
+            painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
+            painter.drawEllipse(start_point, circle_radius, circle_radius)
+            
+            # 绘制终点圆圈
+            if len(self.path_selection_points) > 1:
+                end_point = self.path_selection_points[-1]
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))
+                painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
+                painter.drawEllipse(end_point, circle_radius, circle_radius)
+
+    def _draw_magnifier_ctrl_path_selection(self, painter, crop_rect):
+        """
+        在放大镜中绘制SHIFT+右键隐藏路径线（包含序号）
+        
+        Args:
+            painter: QPainter对象
+            crop_rect: 裁剪区域矩形
+        """
+        if not self.ctrl_path_selection_mode or len(self.ctrl_path_selection_points) < 2:
+            return
+        
+        # 固定像素大小（在图像坐标系中）
+        line_width = 3
+        circle_radius = 6
+        border_width = 2
+        
+        # 绘制路径线（红色）
+        pen = QtGui.QPen(QtGui.QColor(255, 50, 50), line_width, Qt.SolidLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        
+        # 绘制路径段
+        for i in range(len(self.ctrl_path_selection_points) - 1):
+            start = self.ctrl_path_selection_points[i]
+            end = self.ctrl_path_selection_points[i + 1]
+            painter.drawLine(start, end)
+        
+        # 绘制起点圆圈
+        if len(self.ctrl_path_selection_points) > 0:
+            start_point = self.ctrl_path_selection_points[0]
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 50, 50)))
+            painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
+            painter.drawEllipse(start_point, circle_radius, circle_radius)
+            
+            # 绘制终点圆圈
+            if len(self.ctrl_path_selection_points) > 1:
+                end_point = self.ctrl_path_selection_points[-1]
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 50, 50)))
+                painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
+                painter.drawEllipse(end_point, circle_radius, circle_radius)
+        
+        # 绘制被选中形状的序号（与crop_rect相交的形状）
+        number_radius = 12
+        for i, shape in enumerate(self.ctrl_path_intersected_shapes):
+            if not shape.visible:
+                continue
+            
+            # 检查形状是否与裁剪区域相交
+            if not shape.bounding_rect().intersects(crop_rect):
+                continue
+            
+            position = i + 1  # 1-based position
+            is_even = (position % 2 == 0)  # 偶数位置将被隐藏
+            
+            # 使用不同颜色：绿色表示保留（奇数），红色表示隐藏（偶数）
+            if is_even:
+                highlight_color = QtGui.QColor(255, 50, 50)  # 红色 - 将被隐藏
+            else:
+                highlight_color = QtGui.QColor(50, 200, 50)  # 绿色 - 将保留
+            
+            # 计算形状中心
+            if shape.points:
+                sum_x = sum(pt.x() for pt in shape.points)
+                sum_y = sum(pt.y() for pt in shape.points)
+                center = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
+                
+                # 绘制序号背景圆圈
+                painter.setBrush(QtGui.QBrush(highlight_color))
+                painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
+                painter.drawEllipse(center, number_radius, number_radius)
+                
+                # 绘制序号文字
+                font = QtGui.QFont()
+                font.setPointSize(10)
+                font.setBold(True)
+                painter.setFont(font)
+                painter.setPen(QtGui.QColor(255, 255, 255))
+                
+                text = str(position)
+                fm = QtGui.QFontMetrics(font)
+                text_width = fm.horizontalAdvance(text)
+                text_height = fm.height()
+                text_x = center.x() - text_width / 2
+                text_y = center.y() + text_height / 4
+                painter.drawText(QtCore.QPointF(text_x, text_y), text)
+
+    def _draw_magnifier_delete_path_selection(self, painter, crop_rect):
+        """
+        在放大镜中绘制ALT+右键删除路径线（包含删除标识）
+        
+        Args:
+            painter: QPainter对象
+            crop_rect: 裁剪区域矩形
+        """
+        if not self.delete_path_selection_mode or len(self.delete_path_selection_points) < 2:
+            return
+        
+        # 固定像素大小（在图像坐标系中）
+        line_width = 3
+        circle_radius = 6
+        border_width = 2
+        
+        # 绘制路径线（绿色）
+        pen = QtGui.QPen(QtGui.QColor(50, 200, 50), line_width, Qt.SolidLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        
+        # 绘制路径段
+        for i in range(len(self.delete_path_selection_points) - 1):
+            start = self.delete_path_selection_points[i]
+            end = self.delete_path_selection_points[i + 1]
+            painter.drawLine(start, end)
+        
+        # 绘制起点圆圈
+        if len(self.delete_path_selection_points) > 0:
+            start_point = self.delete_path_selection_points[0]
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(50, 200, 50)))
+            painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
+            painter.drawEllipse(start_point, circle_radius, circle_radius)
+            
+            # 绘制终点圆圈
+            if len(self.delete_path_selection_points) > 1:
+                end_point = self.delete_path_selection_points[-1]
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(50, 200, 50)))
+                painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
+                painter.drawEllipse(end_point, circle_radius, circle_radius)
+        
+        # 绘制被选中形状的删除标识（与crop_rect相交的形状）
+        number_radius = 12
+        highlight_color = QtGui.QColor(255, 50, 50)  # 红色 - 将被删除
+        
+        for shape in self.delete_path_intersected_shapes:
+            if not shape.visible:
+                continue
+            
+            # 检查形状是否与裁剪区域相交
+            if not shape.bounding_rect().intersects(crop_rect):
+                continue
+            
+            # 计算形状中心
+            if shape.points:
+                sum_x = sum(pt.x() for pt in shape.points)
+                sum_y = sum(pt.y() for pt in shape.points)
+                center = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
+                
+                # 绘制删除标识背景圆圈
+                painter.setBrush(QtGui.QBrush(highlight_color))
+                painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
+                painter.drawEllipse(center, number_radius, number_radius)
+                
+                # 绘制"删"字
+                font = QtGui.QFont()
+                font.setPointSize(10)
+                font.setBold(True)
+                painter.setFont(font)
+                painter.setPen(QtGui.QColor(255, 255, 255))
+                
+                text = "删"
+                fm = QtGui.QFontMetrics(font)
+                text_width = fm.horizontalAdvance(text)
+                text_height = fm.height()
+                text_x = center.x() - text_width / 2
+                text_y = center.y() + text_height / 4
+                painter.drawText(QtCore.QPointF(text_x, text_y), text)
+
     def draw_magnifier(self, p):
         """
         绘制放大镜效果
@@ -7304,6 +7510,15 @@ class Canvas(
             self.current.paint(temp_painter)
             if self.line and len(self.line.points) == 2:
                 self.line.paint(temp_painter)
+        
+        # 绘制路径选择线（SHIFT+左键选择线）
+        self._draw_magnifier_path_selection(temp_painter, crop_rect)
+        
+        # 绘制隐藏路径线（SHIFT+右键隐藏线）
+        self._draw_magnifier_ctrl_path_selection(temp_painter, crop_rect)
+        
+        # 绘制删除路径线（ALT+右键删除线）
+        self._draw_magnifier_delete_path_selection(temp_painter, crop_rect)
         
         # 绘制角度和宽高信息（在放大镜中显示）
         self._draw_magnifier_shape_info(temp_painter, visible_shapes_in_crop)

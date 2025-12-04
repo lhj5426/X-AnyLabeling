@@ -7448,6 +7448,8 @@ class LabelingWidget(QtWidgets.QWidget):
         # 将形状添加到画布
         self.canvas.load_shapes(shapes, replace=replace)
         self.canvas.update()
+        # 形状添加到canvas后再次更新标签计数，确保计数准确
+        self.update_label_counts()
 
     def load_shapes_at_position(self, shapes, target_pos, replace=True, update_last_label=True):
         """
@@ -9223,6 +9225,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.canvas.update()
         self.update_navigator_shapes()
+        self.update_label_counts()  # 更新标签数量
+        self._update_object_manager()  # 更新标签页管理器
+        self._update_expand_margins_colors()  # 更新边距扩展工具
         self.set_dirty()
 
     def get_next_files(self, filename, num_files):
