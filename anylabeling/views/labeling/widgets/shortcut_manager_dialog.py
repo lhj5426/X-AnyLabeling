@@ -130,6 +130,8 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
                 ("toggle_overlap", self.tr("切换重叠显示")),
                 ("toggle_crosshair", self.tr("切换十字线")),
                 ("toggle_degrees", self.tr("切换角度显示")),
+                ("toggle_magnifier", self.tr("切换放大镜")),
+                ("toggle_magnifier_auto_detect", self.tr("切换自动探测放大镜")),
             ],
             self.tr("视图控制"): [
                 ("fit_window", self.tr("适应窗口")),
@@ -199,6 +201,9 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
         scroll_widget = QtWidgets.QWidget()
         self.scroll_layout = QtWidgets.QVBoxLayout(scroll_widget)
         
+        # 存储每个快捷键项目的widget，用于过滤
+        self.shortcut_items = {}  # key -> (container_widget, desc_label)
+        
         # Create shortcut groups with two-column layout
         for category, shortcuts in self.shortcut_categories.items():
             group_box = QtWidgets.QGroupBox(category)
@@ -214,16 +219,22 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
             group_layout.setHorizontalSpacing(10)
             group_layout.setVerticalSpacing(5)
 
-            # 两列布局
+            # 两列布局 - 每个项目用一个容器widget包装
             for idx, (key, description) in enumerate(shortcuts):
                 # 计算行列位置
                 row = idx // 2
                 col_offset = (idx % 2) * 3  # 0 或 3
 
+                # 创建容器widget来包装每个项目的3个控件
+                item_container = QtWidgets.QWidget()
+                item_layout = QtWidgets.QHBoxLayout(item_container)
+                item_layout.setContentsMargins(0, 0, 0, 0)
+                item_layout.setSpacing(5)
+
                 # Description label
                 desc_label = QtWidgets.QLabel(description)
                 desc_label.setMinimumWidth(100)
-                group_layout.addWidget(desc_label, row, col_offset)
+                item_layout.addWidget(desc_label)
 
                 # Shortcut edit
                 shortcut_edit = ShortcutLineEdit()
@@ -232,13 +243,19 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
                     lambda text, k=key: self.on_shortcut_changed(k, text)
                 )
                 self.shortcut_edits[key] = shortcut_edit
-                group_layout.addWidget(shortcut_edit, row, col_offset + 1)
+                item_layout.addWidget(shortcut_edit)
 
                 # Clear button
                 clear_btn = QtWidgets.QPushButton(self.tr("清除"))
                 clear_btn.setMaximumWidth(60)
                 clear_btn.clicked.connect(lambda checked, edit=shortcut_edit: edit.clear())
-                group_layout.addWidget(clear_btn, row, col_offset + 2)
+                item_layout.addWidget(clear_btn)
+
+                # 添加到grid布局
+                group_layout.addWidget(item_container, row, col_offset, 1, 3)
+                
+                # 存储引用用于过滤
+                self.shortcut_items[key] = (item_container, description)
 
             group_box.setLayout(group_layout)
             self.scroll_layout.addWidget(group_box)
@@ -293,41 +310,46 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
             self.shortcuts[key] = ""
 
     def filter_shortcuts(self, text):
-        """Filter shortcuts based on search text."""
-        text = text.lower()
+        """Filter shortcuts based on search text - 只显示匹配的项目."""
+        text = text.lower().strip()
 
-        # Iterate through all group boxes
+        # 如果搜索框为空，显示所有项目
+        if not text:
+            for key, (container, desc) in self.shortcut_items.items():
+                container.setVisible(True)
+            # 显示所有分组
+            for i in range(self.scroll_layout.count()):
+                item = self.scroll_layout.itemAt(i)
+                if item and item.widget():
+                    item.widget().setVisible(True)
+            return
+
+        # 遍历每个快捷键项目，检查是否匹配
+        for key, (container, desc) in self.shortcut_items.items():
+            current_value = self.shortcut_edits[key].text().lower()
+            # 检查描述或快捷键值是否包含搜索文本
+            if text in desc.lower() or text in current_value:
+                container.setVisible(True)
+            else:
+                container.setVisible(False)
+
+        # 检查每个分组是否有可见的项目，如果没有则隐藏整个分组
         for i in range(self.scroll_layout.count()):
             item = self.scroll_layout.itemAt(i)
             if item and item.widget():
                 widget = item.widget()
                 if isinstance(widget, QtWidgets.QGroupBox):
-                    # Check if any shortcut in this group matches
                     shortcut_keys = widget.property("shortcut_keys")
                     if shortcut_keys:
-                        visible = False
-
-                        # Check category name
-                        if text in widget.title().lower():
-                            visible = True
-                        else:
-                            # Check each shortcut in the group
-                            for key in shortcut_keys:
-                                # Find description
-                                for category, shortcuts in self.shortcut_categories.items():
-                                    for sk, desc in shortcuts:
-                                        if sk == key:
-                                            # Check description or current shortcut value
-                                            current_value = self.shortcut_edits[key].text().lower()
-                                            if text in desc.lower() or text in current_value:
-                                                visible = True
-                                                break
-                                    if visible:
-                                        break
-                                if visible:
+                        # 检查该分组中是否有可见的项目
+                        has_visible = False
+                        for key in shortcut_keys:
+                            if key in self.shortcut_items:
+                                container, _ = self.shortcut_items[key]
+                                if container.isVisible():
+                                    has_visible = True
                                     break
-
-                        widget.setVisible(visible)
+                        widget.setVisible(has_visible)
 
     def reset_to_defaults(self):
         """Reset all shortcuts to default values."""

@@ -115,18 +115,34 @@ def shape_conversion(self, mode):
     if response.exec_() != QtWidgets.QMessageBox.Ok:
         return
 
+    total_files = len(label_file_list)
     progress_dialog = QProgressDialog(
-        self.tr("Converting..."), self.tr("Cancel"), 0, 0, self
+        self.tr("转换中..."), self.tr("取消"), 0, total_files, self
     )
     progress_dialog.setWindowModality(Qt.WindowModal)
-    progress_dialog.setWindowTitle(self.tr("Progress"))
+    progress_dialog.setWindowTitle(self.tr("标签转换进度"))
     progress_dialog.setMinimumWidth(400)
     progress_dialog.setMinimumHeight(150)
     progress_dialog.setStyleSheet(get_progress_dialog_style())
+    progress_dialog.setValue(0)
     progress_dialog.show()
+    
+    # 处理事件以确保对话框显示
+    QtWidgets.QApplication.processEvents()
 
     try:
+        converted_count = 0
         for i, label_file in enumerate(label_file_list):
+            # 更新进度条文本
+            progress_dialog.setLabelText(
+                self.tr(f"转换中... ({i + 1}/{total_files})\n{label_file.split('/')[-1]}")
+            )
+            progress_dialog.setValue(i)
+            QtWidgets.QApplication.processEvents()
+            
+            if progress_dialog.wasCanceled():
+                break
+            
             with open(label_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
 
@@ -140,6 +156,7 @@ def shape_conversion(self, mode):
                 logger.warning(f"'shapes' key not found in {label_file}, skipping.")
                 continue
 
+            file_modified = False
             for j in range(len(data["shapes"])):
                 shape = data["shapes"][j]
                 if not isinstance(shape, dict):
@@ -158,6 +175,7 @@ def shape_conversion(self, mode):
                 if mode == "hbb_to_obb" and shape_type == "rectangle":
                     shape["shape_type"] = "rotation"
                     shape["direction"] = 0
+                    file_modified = True
 
                 elif mode == "obb_to_hbb" and shape_type == "rotation":
                     if "direction" in shape:
@@ -176,6 +194,7 @@ def shape_conversion(self, mode):
                         [xmax, ymax],
                         [xmin, ymax],
                     ]
+                    file_modified = True
 
                 elif mode == "polygon_to_hbb" and shape_type == "polygon":
                     shape["shape_type"] = "rectangle"
@@ -192,6 +211,7 @@ def shape_conversion(self, mode):
                         [xmax, ymax],
                         [xmin, ymax],
                     ]
+                    file_modified = True
 
                 elif mode == "polygon_to_obb" and shape_type == "polygon":
                     points = np.array(shape.get("points", []))
@@ -202,14 +222,14 @@ def shape_conversion(self, mode):
                     shape["direction"] = calculate_rotation_theta(
                         rotation_box
                     )
+                    file_modified = True
 
-            with open(label_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            if file_modified:
+                with open(label_file, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                converted_count += 1
 
-            progress_dialog.setValue(i)
-            if progress_dialog.wasCanceled():
-                break
-
+        progress_dialog.setValue(total_files)
         progress_dialog.close()
         popup = Popup(
             "转换成功！",

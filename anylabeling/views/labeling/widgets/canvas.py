@@ -393,6 +393,15 @@ class Canvas(
         self.magnifier_border_color = self._config.get('magnifier_border_color', [128, 128, 128])  # 边框颜色 (RGB)
         self.magnifier_border_width = self._config.get('magnifier_border_width', 2)  # 边框宽度
         self.magnifier_center_pos = None  # 放大镜中心位置（图像坐标）
+        
+        # 自动探测放大镜设置
+        self.magnifier_auto_detect = self._config.get('magnifier_auto_detect', False)  # 是否启用自动探测
+        self.magnifier_detect_width = self._config.get('magnifier_detect_width', 100)  # 探测框宽度
+        self.magnifier_detect_height = self._config.get('magnifier_detect_height', 100)  # 探测框高度
+        self.magnifier_detect_sensitivity = self._config.get('magnifier_detect_sensitivity', 60)  # 探测灵敏度 (0-100%)
+        self.magnifier_detect_vertex_only = self._config.get('magnifier_detect_vertex_only', False)  # 只探测顶点附近
+        self.magnifier_detect_vertex_range = self._config.get('magnifier_detect_vertex_range', 30)  # 顶点探测范围
+        self.magnifier_auto_triggered = False  # 自动探测触发的放大镜状态
 
         self.is_loading = False
         self.loading_text = self.tr("Loading...")
@@ -4374,8 +4383,19 @@ class Canvas(
             self.draw_paste_preview(p)
 
         # Draw magnifier (放大镜)
-        if self.magnifier_enabled:
+        # 检查自动探测模式
+        if self.magnifier_auto_detect and not self.magnifier_enabled:
+            cursor_pos = self.mapFromGlobal(QtGui.QCursor.pos())
+            if self.rect().contains(cursor_pos):
+                self.magnifier_auto_triggered = self.check_magnifier_auto_detect(cursor_pos)
+        
+        # 绘制放大镜（手动启用或自动探测触发）
+        if self.magnifier_enabled or self.magnifier_auto_triggered:
             self.draw_magnifier(p)
+        
+        # 绘制探测框（仅在自动探测模式下且放大镜未手动启用时）
+        if self.magnifier_auto_detect and not self.magnifier_enabled:
+            self.draw_detect_box(p)
 
         p.end()
 
@@ -6933,6 +6953,246 @@ class Canvas(
 
             p.restore()
 
+    def draw_detect_box(self, p):
+        """
+        绘制自动探测框
+        
+        探测框跟随鼠标移动，用于显示探测区域范围。
+        使用放大镜边框颜色。
+        
+        Args:
+            p: QPainter对象
+        """
+        if not self.magnifier_auto_detect or self.pixmap is None:
+            return
+        
+        # 获取当前鼠标位置（屏幕坐标）
+        cursor_pos = self.mapFromGlobal(QtGui.QCursor.pos())
+        
+        # 检查鼠标是否在画布内
+        if not self.rect().contains(cursor_pos):
+            return
+        
+        # 转换为图像坐标
+        try:
+            image_pos = self.transform_pos(QtCore.QPointF(cursor_pos))
+        except (AttributeError, ZeroDivisionError):
+            return
+        
+        # 检查是否在图像范围内
+        if (image_pos.x() < 0 or image_pos.y() < 0 or 
+            image_pos.x() > self.pixmap.width() or 
+            image_pos.y() > self.pixmap.height()):
+            return
+        
+        # 计算探测框在图像坐标中的位置
+        detect_half_w = self.magnifier_detect_width / 2
+        detect_half_h = self.magnifier_detect_height / 2
+        detect_rect = QtCore.QRectF(
+            image_pos.x() - detect_half_w,
+            image_pos.y() - detect_half_h,
+            self.magnifier_detect_width,
+            self.magnifier_detect_height
+        )
+        
+        # 使用边框颜色绘制探测框（虚线）
+        border_color = QtGui.QColor(*self.magnifier_border_color)
+        pen = QtGui.QPen(border_color, 2)
+        pen.setStyle(Qt.DashLine)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(detect_rect)
+        
+        # 计算并显示当前占用百分比
+        overlap_percent = self._calculate_detect_overlap(image_pos, detect_rect)
+        if overlap_percent >= 0:
+            percent_text = f"{overlap_percent:.0f}%"
+            font = QtGui.QFont("Arial", 10, QtGui.QFont.Bold)
+            p.setFont(font)
+            fm = QtGui.QFontMetrics(font)
+            text_width = fm.horizontalAdvance(percent_text)
+            text_height = fm.height()
+            
+            # 在探测框左上角显示
+            text_x = detect_rect.left() + 3
+            text_y = detect_rect.top() + text_height
+            
+            # 绘制背景
+            bg_rect = QtCore.QRectF(text_x - 2, text_y - text_height + 2, text_width + 4, text_height)
+            p.setBrush(QtGui.QColor(0, 0, 0, 180))
+            p.setPen(Qt.NoPen)
+            p.drawRect(bg_rect)
+            
+            # 绘制文字（根据是否达到阈值显示不同颜色）
+            sensitivity = self.magnifier_detect_sensitivity
+            if overlap_percent >= sensitivity:
+                p.setPen(QtGui.QColor(0, 255, 0))  # 绿色 - 达到阈值
+            else:
+                p.setPen(QtGui.QColor(255, 255, 255))  # 白色 - 未达到
+            p.drawText(QtCore.QPointF(text_x, text_y - 2), percent_text)
+
+    def _calculate_detect_overlap(self, image_pos, detect_rect):
+        """
+        计算探测框被占用的百分比
+        
+        Args:
+            image_pos: 鼠标位置（图像坐标）
+            detect_rect: 探测框区域
+        
+        Returns:
+            float: 占用百分比（0-100），-1表示无有效形状
+        """
+        locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
+        detect_area = self.magnifier_detect_width * self.magnifier_detect_height
+        if detect_area <= 0:
+            return -1
+        
+        total_overlap = 0  # 累计所有形状的重叠面积
+        for shape in self.shapes:
+            if not self.is_visible(shape):
+                continue
+            if shape.label in locked_labels:
+                continue
+            
+            shape_rect = shape.bounding_rect()
+            if shape_rect.isEmpty():
+                continue
+            
+            # 只探测顶点附近
+            if self.magnifier_detect_vertex_only:
+                if not self._is_near_shape_vertex(image_pos, shape):
+                    continue
+            
+            intersection = detect_rect.intersected(shape_rect)
+            if intersection.isEmpty():
+                continue
+            
+            intersection_area = intersection.width() * intersection.height()
+            total_overlap += intersection_area
+        
+        # 计算总占用百分比（可能超过100%如果有重叠）
+        overlap_ratio = (total_overlap / detect_area) * 100
+        return min(overlap_ratio, 100)  # 限制最大100%
+
+    def _draw_magnifier_shape_info(self, painter, shapes):
+        """
+        在放大镜中绘制形状的角度和宽高信息
+        
+        Args:
+            painter: QPainter对象
+            shapes: 要绘制信息的形状列表
+        """
+        # 获取锁定标签设置
+        locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
+        locked_hide_info = self._config.get("locked_hide_info", False)
+        
+        # 绘制角度（rotation类型）
+        if self.show_degrees:
+            painter.setFont(
+                QtGui.QFont(
+                    "Arial",
+                    int(max(6.0, int(round(8.0 / 1.0)))),  # 使用scale=1.0
+                )
+            )
+            for shape in shapes:
+                if shape.shape_type != 'rotation':
+                    continue
+                
+                # 如果启用了"锁定后不显示宽高和角度"，且该shape被锁定，则跳过
+                if locked_hide_info and shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False):
+                    continue
+                
+                d = shape.point_size / 1.0  # 使用scale=1.0
+                center = QtCore.QPointF(
+                    (shape.points[0].x() + shape.points[2].x()) / 2,
+                    (shape.points[0].y() + shape.points[2].y()) / 2,
+                )
+                
+                degrees = f"{math.degrees(shape.direction):.2f}"
+                fm = QtGui.QFontMetrics(painter.font())
+                rect = fm.boundingRect(degrees)
+                
+                padding_left = 1
+                padding_right = 3
+                padding_y = 0
+                
+                bg_x = int(rect.x() + center.x() - d - padding_left)
+                bg_y = int(rect.y() + center.y() + d - padding_y)
+                bg_w = int(rect.width() + padding_left + padding_right)
+                bg_h = int(rect.height() + 2 * padding_y)
+                
+                # 绘制背景
+                painter.fillRect(bg_x, bg_y, bg_w, bg_h, QtGui.QColor("#B38B6D"))
+                
+                # 绘制边框
+                border_pen = QtGui.QPen(QtGui.QColor("#000000"), 1, QtCore.Qt.SolidLine)
+                painter.setPen(border_pen)
+                painter.drawRect(bg_x, bg_y, bg_w, bg_h)
+                
+                # 绘制文字
+                text_pen = QtGui.QPen(QtGui.QColor("#FFFFFF"), 7, QtCore.Qt.SolidLine)
+                painter.setPen(text_pen)
+                painter.drawText(int(center.x() - d), int(center.y() + d), degrees)
+        
+        # 绘制宽高
+        if self.show_wh:
+            painter.setFont(
+                QtGui.QFont(
+                    "Arial", int(max(6.0, int(round(8.0 / 1.0))))  # 使用scale=1.0
+                )
+            )
+            for shape in shapes:
+                if shape.shape_type not in ['rectangle', 'rotation']:
+                    continue
+                
+                # 如果启用了"锁定后不显示宽高和角度"，且该shape被锁定，则跳过
+                if locked_hide_info and shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False):
+                    continue
+                
+                text = ""
+                if shape.shape_type == 'rectangle':
+                    rect = shape.bounding_rect()
+                    w = rect.width()
+                    h = rect.height()
+                    text = f"{w:.0f}:{h:.0f}"
+                elif shape.shape_type == 'rotation':
+                    w = utils.distance(shape.points[0] - shape.points[1])
+                    h = utils.distance(shape.points[1] - shape.points[2])
+                    text = f"{w:.0f}:{h:.0f}"
+                
+                if text:
+                    fm = QtGui.QFontMetrics(painter.font())
+                    text_rect = fm.boundingRect(text)
+                    
+                    padding_x = 2
+                    padding_y = 0
+                    
+                    if shape.shape_type == 'rotation':
+                        center = (shape.points[0] + shape.points[2]) / 2.0
+                        line_height = text_rect.height()
+                        base_pos = QtCore.QPointF(center.x() - text_rect.width() / 2.0, center.y() + text_rect.height() / 4.0 + line_height)
+                    else:  # rectangle
+                        center = shape.bounding_rect().center()
+                        base_pos = QtCore.QPointF(center.x() - text_rect.width() / 2.0, center.y() + text_rect.height() / 4.0)
+                    
+                    bg_x = int(text_rect.x() + base_pos.x() - padding_x)
+                    bg_y = int(text_rect.y() + base_pos.y() - padding_y)
+                    bg_w = int(text_rect.width() + 2 * padding_x)
+                    bg_h = int(text_rect.height() + 2 * padding_y)
+                    
+                    # 绘制背景
+                    painter.fillRect(bg_x, bg_y, bg_w, bg_h, QtGui.QColor("#195905"))
+                    
+                    # 绘制边框
+                    border_pen = QtGui.QPen(QtGui.QColor("#D68A59"), 1, QtCore.Qt.SolidLine)
+                    painter.setPen(border_pen)
+                    painter.drawRect(bg_x, bg_y, bg_w, bg_h)
+                    
+                    # 绘制文字
+                    text_pen = QtGui.QPen(QtGui.QColor("#FFFFFF"))
+                    painter.setPen(text_pen)
+                    painter.drawText(base_pos, text)
+
     def draw_magnifier(self, p):
         """
         绘制放大镜效果
@@ -6942,7 +7202,7 @@ class Canvas(
         Args:
             p: QPainter对象
         """
-        if not self.magnifier_enabled or self.pixmap is None:
+        if (not self.magnifier_enabled and not self.magnifier_auto_triggered) or self.pixmap is None:
             return
 
         # 获取当前鼠标位置（屏幕坐标）
@@ -7045,6 +7305,9 @@ class Canvas(
             if self.line and len(self.line.points) == 2:
                 self.line.paint(temp_painter)
         
+        # 绘制角度和宽高信息（在放大镜中显示）
+        self._draw_magnifier_shape_info(temp_painter, visible_shapes_in_crop)
+        
         # 恢复 Shape.scale
         Shape.scale = original_scale
         
@@ -7122,6 +7385,129 @@ class Canvas(
             self.magnifier_enabled = enabled
         self.update()
         return self.magnifier_enabled
+
+    def toggle_magnifier_auto_detect(self, enabled=None):
+        """
+        切换自动探测放大镜状态
+        
+        Args:
+            enabled: 如果为None，则切换状态；否则设置为指定值
+        """
+        if enabled is None:
+            self.magnifier_auto_detect = not self.magnifier_auto_detect
+        else:
+            self.magnifier_auto_detect = enabled
+        
+        # 关闭自动探测时，也关闭自动触发的放大镜
+        if not self.magnifier_auto_detect:
+            self.magnifier_auto_triggered = False
+        
+        self.update()
+        return self.magnifier_auto_detect
+
+    def check_magnifier_auto_detect(self, cursor_pos):
+        """
+        检查是否应该自动触发放大镜
+        
+        Args:
+            cursor_pos: 鼠标位置（屏幕坐标）
+        
+        Returns:
+            bool: 是否应该显示放大镜
+        """
+        if not self.magnifier_auto_detect or self.pixmap is None:
+            return False
+        
+        # 转换为图像坐标
+        try:
+            image_pos = self.transform_pos(QtCore.QPointF(cursor_pos))
+        except (AttributeError, ZeroDivisionError):
+            return False
+        
+        # 计算探测框区域（以鼠标位置为中心）
+        detect_half_w = self.magnifier_detect_width / 2
+        detect_half_h = self.magnifier_detect_height / 2
+        detect_rect = QtCore.QRectF(
+            image_pos.x() - detect_half_w,
+            image_pos.y() - detect_half_h,
+            self.magnifier_detect_width,
+            self.magnifier_detect_height
+        )
+        
+        # 检查是否有标注与探测框相交
+        sensitivity = self.magnifier_detect_sensitivity  # 百分比阈值 (0-100)
+        detect_area = self.magnifier_detect_width * self.magnifier_detect_height
+        total_overlap = 0
+        
+        # 获取锁定标签列表
+        locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
+        
+        for shape in self.shapes:
+            if not self.is_visible(shape):
+                continue
+            
+            # 排除被锁定的矩形（不参与探测）
+            if shape.label in locked_labels:
+                continue
+            
+            shape_rect = shape.bounding_rect()
+            if shape_rect.isEmpty():
+                continue
+            
+            # 只探测顶点附近
+            if self.magnifier_detect_vertex_only:
+                if not self._is_near_shape_vertex(image_pos, shape):
+                    continue
+            
+            # 计算交集
+            intersection = detect_rect.intersected(shape_rect)
+            if intersection.isEmpty():
+                continue
+            
+            intersection_area = intersection.width() * intersection.height()
+            total_overlap += intersection_area
+        
+        # 计算总占用百分比
+        if detect_area > 0:
+            overlap_percent = (total_overlap / detect_area) * 100
+            # 如果探测框被占用百分比达到阈值，触发放大镜
+            if overlap_percent >= sensitivity:
+                return True
+        
+        return False
+
+    def _is_near_shape_vertex(self, pos, shape):
+        """
+        检查位置是否靠近形状的顶点
+        
+        Args:
+            pos: 位置（图像坐标）
+            shape: 形状对象
+        
+        Returns:
+            bool: 是否靠近顶点
+        """
+        vertex_range = self.magnifier_detect_vertex_range
+        
+        # 检查所有顶点
+        for point in shape.points:
+            dx = pos.x() - point.x()
+            dy = pos.y() - point.y()
+            distance = (dx * dx + dy * dy) ** 0.5
+            if distance <= vertex_range:
+                return True
+        
+        # 对于矩形，还检查边中点
+        if shape.shape_type in ['rectangle', 'rotation'] and len(shape.points) >= 4:
+            midpoints = shape.get_edge_midpoints() if hasattr(shape, 'get_edge_midpoints') else []
+            for midpoint in midpoints:
+                dx = pos.x() - midpoint.x()
+                dy = pos.y() - midpoint.y()
+                distance = (dx * dx + dy * dy) ** 0.5
+                if distance <= vertex_range:
+                    return True
+        
+        return False
 
     def set_magnifier_zoom(self, zoom):
         """设置放大镜倍数"""
@@ -7209,6 +7595,10 @@ class Canvas(
             self.magnifier_crosshair_width = settings['magnifier_crosshair_width']
             self.magnifier_border_color = settings['magnifier_border_color']
             self.magnifier_border_width = settings['magnifier_border_width']
+            # 自动探测设置
+            self.magnifier_detect_width = settings['magnifier_detect_width']
+            self.magnifier_detect_height = settings['magnifier_detect_height']
+            self.magnifier_detect_sensitivity = settings['magnifier_detect_sensitivity']
             # 保存到config
             self._config.update(settings)
             self.update()

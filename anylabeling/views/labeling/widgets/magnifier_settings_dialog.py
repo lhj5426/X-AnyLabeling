@@ -1,11 +1,14 @@
-"""放大镜设置对话框"""
+"""放大镜设置对话框 - 非阻塞式"""
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import Qt
 
 
 class MagnifierSettingsDialog(QtWidgets.QDialog):
-    """放大镜设置对话框"""
+    """放大镜设置对话框 - 非阻塞式，实时预览"""
+    
+    # 设置变更信号
+    settings_changed = QtCore.pyqtSignal(dict)
     
     def __init__(self, parent=None, canvas=None, config=None):
         super().__init__(parent)
@@ -13,8 +16,12 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         self.config = config or {}
         self.setWindowTitle("放大镜设置")
         self.setMinimumWidth(400)
+        # 非阻塞式对话框
+        self.setWindowModality(Qt.NonModal)
+        self.setAttribute(Qt.WA_DeleteOnClose, False)
         self.setup_ui()
         self.load_settings()
+        self.connect_signals()
         
     def setup_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
@@ -48,7 +55,7 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         btn_500 = QtWidgets.QPushButton("500x500")
         btn_500.clicked.connect(lambda: self.set_size_preset(500, 500))
         preset_layout.addWidget(btn_500)
-        
+
         btn_800 = QtWidgets.QPushButton("800x800")
         btn_800.clicked.connect(lambda: self.set_size_preset(800, 800))
         preset_layout.addWidget(btn_800)
@@ -70,13 +77,13 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         self.zoom_spin.setSuffix(" x")
         zoom_layout.addWidget(self.zoom_spin, 0, 1)
         
-        # 原图百分比模式（可输入任意百分比）
+        # 原图百分比模式
         zoom_layout.addWidget(QtWidgets.QLabel("原图百分比:"), 1, 0)
         self.percent_spin = QtWidgets.QSpinBox()
-        self.percent_spin.setRange(0, 500)  # 0表示禁用，使用倍率；其他值表示原图的百分比
+        self.percent_spin.setRange(0, 500)
         self.percent_spin.setSingleStep(10)
         self.percent_spin.setSuffix(" %")
-        self.percent_spin.setSpecialValueText("禁用")  # 0时显示"禁用"
+        self.percent_spin.setSpecialValueText("禁用")
         self.percent_spin.setToolTip("设置放大镜显示原图的百分比（0=禁用，使用上面的倍率；100=原图1:1像素）")
         zoom_layout.addWidget(self.percent_spin, 1, 1)
         
@@ -102,7 +109,7 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         crosshair_layout.addWidget(self.crosshair_width_spin, 2, 1)
         
         layout.addWidget(crosshair_group)
-        
+
         # 边框设置
         border_group = QtWidgets.QGroupBox("边框")
         border_layout = QtWidgets.QGridLayout(border_group)
@@ -121,25 +128,119 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         
         layout.addWidget(border_group)
         
-        # 按钮
+        # 自动探测设置
+        detect_group = QtWidgets.QGroupBox("自动探测设置")
+        detect_layout = QtWidgets.QGridLayout(detect_group)
+        
+        detect_layout.addWidget(QtWidgets.QLabel("探测框宽度:"), 0, 0)
+        self.detect_width_spin = QtWidgets.QSpinBox()
+        self.detect_width_spin.setRange(20, 500)
+        self.detect_width_spin.setSingleStep(10)
+        self.detect_width_spin.setSuffix(" px")
+        detect_layout.addWidget(self.detect_width_spin, 0, 1)
+        
+        detect_layout.addWidget(QtWidgets.QLabel("探测框高度:"), 0, 2)
+        self.detect_height_spin = QtWidgets.QSpinBox()
+        self.detect_height_spin.setRange(20, 500)
+        self.detect_height_spin.setSingleStep(10)
+        self.detect_height_spin.setSuffix(" px")
+        detect_layout.addWidget(self.detect_height_spin, 0, 3)
+        
+        detect_layout.addWidget(QtWidgets.QLabel("进入百分比:"), 1, 0)
+        self.detect_sensitivity_spin = QtWidgets.QSpinBox()
+        self.detect_sensitivity_spin.setRange(0, 100)
+        self.detect_sensitivity_spin.setSingleStep(5)
+        self.detect_sensitivity_spin.setSuffix(" %")
+        self.detect_sensitivity_spin.setToolTip("探测框被占用多少百分比时触发放大镜")
+        detect_layout.addWidget(self.detect_sensitivity_spin, 1, 1)
+        
+        # 只探测顶点附近
+        self.vertex_only_check = QtWidgets.QCheckBox("只探测顶点附近")
+        self.vertex_only_check.setToolTip("只有当探测框靠近矩形顶点时才触发放大镜")
+        detect_layout.addWidget(self.vertex_only_check, 2, 0)
+        
+        detect_layout.addWidget(QtWidgets.QLabel("顶点范围:"), 2, 1)
+        self.vertex_range_spin = QtWidgets.QSpinBox()
+        self.vertex_range_spin.setRange(10, 200)
+        self.vertex_range_spin.setSingleStep(5)
+        self.vertex_range_spin.setSuffix(" px")
+        self.vertex_range_spin.setToolTip("探测框中心距离顶点的最大距离")
+        detect_layout.addWidget(self.vertex_range_spin, 2, 2)
+        
+        hint_label = QtWidgets.QLabel("提示: 探测框颜色使用上方边框颜色")
+        hint_label.setStyleSheet("color: gray; font-size: 11px;")
+        detect_layout.addWidget(hint_label, 3, 0, 1, 4)
+        
+        layout.addWidget(detect_group)
+        
+        # 按钮 - 只有关闭按钮
         button_layout = QtWidgets.QHBoxLayout()
         button_layout.addStretch()
         
-        ok_btn = QtWidgets.QPushButton("确定")
-        ok_btn.clicked.connect(self.accept)
-        button_layout.addWidget(ok_btn)
-        
-        cancel_btn = QtWidgets.QPushButton("取消")
-        cancel_btn.clicked.connect(self.reject)
-        button_layout.addWidget(cancel_btn)
+        close_btn = QtWidgets.QPushButton("关闭")
+        close_btn.clicked.connect(self.close)
+        button_layout.addWidget(close_btn)
         
         layout.addLayout(button_layout)
+
+    def connect_signals(self):
+        """连接信号，实现实时预览"""
+        # 窗口大小
+        self.width_spin.valueChanged.connect(self.apply_settings)
+        self.height_spin.valueChanged.connect(self.apply_settings)
+        # 缩放
+        self.zoom_spin.valueChanged.connect(self.apply_settings)
+        self.percent_spin.valueChanged.connect(self.apply_settings)
+        # 十字线
+        self.crosshair_check.stateChanged.connect(self.apply_settings)
+        self.crosshair_width_spin.valueChanged.connect(self.apply_settings)
+        # 边框
+        self.border_width_spin.valueChanged.connect(self.apply_settings)
+        # 自动探测
+        self.detect_width_spin.valueChanged.connect(self.apply_settings)
+        self.detect_height_spin.valueChanged.connect(self.apply_settings)
+        self.detect_sensitivity_spin.valueChanged.connect(self.apply_settings)
+        self.vertex_only_check.stateChanged.connect(self.apply_settings)
+        self.vertex_range_spin.valueChanged.connect(self.apply_settings)
+    
+    def apply_settings(self):
+        """实时应用设置到canvas"""
+        if self.canvas is None:
+            return
+        
+        settings = self.get_settings()
+        
+        # 应用到canvas
+        self.canvas.magnifier_width = settings['magnifier_width']
+        self.canvas.magnifier_height = settings['magnifier_height']
+        self.canvas.magnifier_zoom = settings['magnifier_zoom']
+        self.canvas.magnifier_percent = settings['magnifier_percent']
+        self.canvas.magnifier_show_crosshair = settings['magnifier_show_crosshair']
+        self.canvas.magnifier_crosshair_color = settings['magnifier_crosshair_color']
+        self.canvas.magnifier_crosshair_width = settings['magnifier_crosshair_width']
+        self.canvas.magnifier_border_color = settings['magnifier_border_color']
+        self.canvas.magnifier_border_width = settings['magnifier_border_width']
+        self.canvas.magnifier_detect_width = settings['magnifier_detect_width']
+        self.canvas.magnifier_detect_height = settings['magnifier_detect_height']
+        self.canvas.magnifier_detect_sensitivity = settings['magnifier_detect_sensitivity']
+        self.canvas.magnifier_detect_vertex_only = settings['magnifier_detect_vertex_only']
+        self.canvas.magnifier_detect_vertex_range = settings['magnifier_detect_vertex_range']
+        
+        # 保存到config
+        if self.config is not None:
+            self.config.update(settings)
+        
+        # 刷新canvas
+        self.canvas.update()
+        
+        # 发送信号
+        self.settings_changed.emit(settings)
     
     def set_size_preset(self, width, height):
         """设置预设尺寸"""
         self.width_spin.setValue(width)
         self.height_spin.setValue(height)
-        
+
     def load_settings(self):
         """从config加载当前设置"""
         # 窗口大小
@@ -148,7 +249,6 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         
         # 缩放
         self.zoom_spin.setValue(self.config.get('magnifier_zoom', 1.0))
-        # 原图百分比：0=禁用，100=原图100%
         self.percent_spin.setValue(self.config.get('magnifier_percent', 0))
         
         # 十字线
@@ -161,6 +261,13 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         self.border_color = self.config.get('magnifier_border_color', [128, 128, 128])
         self.update_color_button(self.border_color_btn, self.border_color)
         self.border_width_spin.setValue(self.config.get('magnifier_border_width', 2))
+        
+        # 自动探测
+        self.detect_width_spin.setValue(self.config.get('magnifier_detect_width', 100))
+        self.detect_height_spin.setValue(self.config.get('magnifier_detect_height', 100))
+        self.detect_sensitivity_spin.setValue(self.config.get('magnifier_detect_sensitivity', 60))
+        self.vertex_only_check.setChecked(self.config.get('magnifier_detect_vertex_only', False))
+        self.vertex_range_spin.setValue(self.config.get('magnifier_detect_vertex_range', 30))
         
     def update_color_button(self, btn, color):
         """更新颜色按钮的背景色"""
@@ -176,6 +283,7 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         if color.isValid():
             self.crosshair_color = [color.red(), color.green(), color.blue()]
             self.update_color_button(self.crosshair_color_btn, color)
+            self.apply_settings()
             
     def choose_border_color(self):
         """选择边框颜色"""
@@ -184,6 +292,7 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         if color.isValid():
             self.border_color = [color.red(), color.green(), color.blue()]
             self.update_color_button(self.border_color_btn, color)
+            self.apply_settings()
     
     def get_settings(self):
         """获取当前设置"""
@@ -191,10 +300,15 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
             'magnifier_width': self.width_spin.value(),
             'magnifier_height': self.height_spin.value(),
             'magnifier_zoom': self.zoom_spin.value(),
-            'magnifier_percent': self.percent_spin.value(),  # 0=禁用，其他值=原图百分比
+            'magnifier_percent': self.percent_spin.value(),
             'magnifier_show_crosshair': self.crosshair_check.isChecked(),
             'magnifier_crosshair_color': self.crosshair_color,
             'magnifier_crosshair_width': self.crosshair_width_spin.value(),
             'magnifier_border_color': self.border_color,
             'magnifier_border_width': self.border_width_spin.value(),
+            'magnifier_detect_width': self.detect_width_spin.value(),
+            'magnifier_detect_height': self.detect_height_spin.value(),
+            'magnifier_detect_sensitivity': self.detect_sensitivity_spin.value(),
+            'magnifier_detect_vertex_only': self.vertex_only_check.isChecked(),
+            'magnifier_detect_vertex_range': self.vertex_range_spin.value(),
         }

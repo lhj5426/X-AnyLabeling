@@ -180,7 +180,7 @@ shortcuts:
   invert_selection_labels: Alt+E
   invert_selection_shapes: Alt+I
   keymap_dialog: Ctrl+Shift+U
-  loop_thru_labels: N
+  loop_thru_labels: null
   object_manager: Ctrl+T
   open: Ctrl+I
   open_chatbot: null
@@ -220,7 +220,9 @@ shortcuts:
   undo: Ctrl+Z
   undo_last_point: Ctrl+Z
   ungroup_selected_shapes: U
-  union_selected_shapes: M
+  union_selected_shapes: null
+  toggle_magnifier: M
+  toggle_magnifier_auto_detect: N
   zoom_in: [Ctrl++, Ctrl+=]
   zoom_out: Ctrl+-
   zoom_to_original: Ctrl+0
