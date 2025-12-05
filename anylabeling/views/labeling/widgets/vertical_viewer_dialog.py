@@ -429,7 +429,17 @@ class VerticalViewerDialog(QtWidgets.QDialog):
 
     def eventFilter(self, obj, event):
         if obj == self.view:
-            if event.type() == QtCore.QEvent.Resize:
+            # 处理键盘事件 - A/D 翻页
+            if event.type() == QtCore.QEvent.KeyPress:
+                if event.key() == QtCore.Qt.Key_D:
+                    self.go_to_next_image()
+                    event.accept()
+                    return True
+                elif event.key() == QtCore.Qt.Key_A:
+                    self.go_to_prev_image()
+                    event.accept()
+                    return True
+            elif event.type() == QtCore.QEvent.Resize:
                 if self.fit_width_mode or self.fit_height_mode:
                     self.update_view_transform()
                 QtCore.QTimer.singleShot(100, self.check_visible_items)
@@ -649,9 +659,12 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         viewport_rect = self.view.viewport().rect()
         scene_rect = self.view.mapToScene(viewport_rect).boundingRect()
         
-        for item in self.items_list:
+        # 找到当前可见的图片索引范围
+        visible_indices = []
+        for i, item in enumerate(self.items_list):
             try:
                 if item.sceneBoundingRect().intersects(scene_rect):
+                    visible_indices.append(i)
                     if not item.loaded and not item.loading:
                         item.loading = True
                         loader = ImageLoader(item.path, SCENE_BASE_WIDTH)
@@ -659,6 +672,24 @@ class VerticalViewerDialog(QtWidgets.QDialog):
                         self.thread_pool.start(loader)
             except RuntimeError:
                 continue
+        
+        # 预加载前后各5张图片
+        if visible_indices:
+            preload_count = 5
+            min_idx = max(0, min(visible_indices) - preload_count)
+            max_idx = min(len(self.items_list) - 1, max(visible_indices) + preload_count)
+            
+            for i in range(min_idx, max_idx + 1):
+                if i not in visible_indices:
+                    item = self.items_list[i]
+                    try:
+                        if not item.loaded and not item.loading:
+                            item.loading = True
+                            loader = ImageLoader(item.path, SCENE_BASE_WIDTH)
+                            loader.signals.loaded.connect(self.on_image_loaded)
+                            self.thread_pool.start(loader)
+                    except RuntimeError:
+                        continue
 
     def on_image_loaded(self, path, image, ratio, shapes=[], scale_factor=1.0):
         if self.closing: return
@@ -743,14 +774,17 @@ class VerticalViewerDialog(QtWidgets.QDialog):
     def update_image_list(self, new_image_list, current_filename=None):
         """更新图片列表（当主界面打开新文件夹时调用）"""
         self.image_list = new_image_list
+        # 如果提供了current_filename则使用，否则重置到第一张
         if current_filename:
             self.current_filename = current_filename
+        elif new_image_list:
+            self.current_filename = new_image_list[0]
+        else:
+            self.current_filename = None
         self.reload_scene()
     
     def reload_scene(self):
-        center_item = self.get_center_item()
-        if center_item:
-            self.current_filename = center_item.path
+        # 不再覆盖current_filename，由update_image_list设置
         self.populate_scene()
 
     def toggle_sync_scroll(self):
@@ -844,6 +878,14 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.update_view_transform()
         self.check_visible_items()
 
+    def _ensure_item_loaded(self, item):
+        """确保图片项已加载，如果未加载则立即加载"""
+        if item and not item.loaded and not item.loading:
+            item.loading = True
+            loader = ImageLoader(item.path, SCENE_BASE_WIDTH)
+            loader.signals.loaded.connect(self.on_image_loaded)
+            self.thread_pool.start(loader)
+
     def go_to_next_image(self):
         """翻到下一张图片"""
         if self.sync_scroll_enabled:
@@ -861,6 +903,10 @@ class VerticalViewerDialog(QtWidgets.QDialog):
                 current_idx = self.items_list.index(center_item)
                 if current_idx + 1 < len(self.items_list):
                     next_item = self.items_list[current_idx + 1]
+                    # 预加载下一张和下下张图片
+                    self._ensure_item_loaded(next_item)
+                    if current_idx + 2 < len(self.items_list):
+                        self._ensure_item_loaded(self.items_list[current_idx + 2])
                     self.view.centerOn(next_item)
                     self.on_scroll()
 
@@ -881,8 +927,20 @@ class VerticalViewerDialog(QtWidgets.QDialog):
                 current_idx = self.items_list.index(center_item)
                 if current_idx - 1 >= 0:
                     prev_item = self.items_list[current_idx - 1]
+                    # 预加载上一张和上上张图片
+                    self._ensure_item_loaded(prev_item)
+                    if current_idx - 2 >= 0:
+                        self._ensure_item_loaded(self.items_list[current_idx - 2])
                     self.view.centerOn(prev_item)
                     self.on_scroll()
+
+    def event(self, event):
+        """重写event方法，拦截ShortcutOverride事件以阻止主窗口快捷键"""
+        if event.type() == QtCore.QEvent.ShortcutOverride:
+            if event.key() in (QtCore.Qt.Key_A, QtCore.Qt.Key_D):
+                event.accept()
+                return True
+        return super().event(event)
 
     def keyPressEvent(self, event):
         """处理键盘事件，支持 A/D 翻页"""

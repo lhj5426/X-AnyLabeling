@@ -10337,13 +10337,6 @@ class LabelingWidget(QtWidgets.QWidget):
             new_folder_path = self.last_open_dir 
             self.label_tool_dialog.refresh_state(total_files, 1, new_folder_path)
 
-        # 更新查看器窗口的图片列表
-        if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog and self.horizontal_viewer_dialog.isVisible():
-            self.horizontal_viewer_dialog.update_image_list(self.image_list, self.image_path)
-        
-        if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog and self.vertical_viewer_dialog.isVisible():
-            self.vertical_viewer_dialog.update_image_list(self.image_list, self.image_path)
-
         if load:
             self.filename = None
             # 尝试恢复上次浏览的页码
@@ -10352,6 +10345,14 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.file_list_widget.setCurrentRow(last_page)
             else:
                 self.open_next_image(load=load)
+        
+        # 更新查看器窗口的图片列表（在加载文件后，使用正确的当前文件名）
+        current_file = self.filename if self.filename else (self.image_list[0] if self.image_list else None)
+        if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog and self.horizontal_viewer_dialog.isVisible():
+            self.horizontal_viewer_dialog.update_image_list(self.image_list, current_file)
+        
+        if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog and self.vertical_viewer_dialog.isVisible():
+            self.vertical_viewer_dialog.update_image_list(self.image_list, current_file)
     
     def _load_folder_last_page(self, folder_path):
         """从文件夹读取上次浏览的页码和文件名"""
