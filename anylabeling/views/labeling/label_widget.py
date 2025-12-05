@@ -11361,6 +11361,12 @@ class LabelingWidget(QtWidgets.QWidget):
         if 0 <= index < self.file_list_widget.count():
             self.file_list_widget.setCurrentRow(index)
             self.status(self.tr(f"已跳转到第 {index + 1} 张图片。"))
+            # 同步更新查看器
+            if self.filename:
+                if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog and self.horizontal_viewer_dialog.isVisible():
+                    self.horizontal_viewer_dialog.jump_to_image(self.filename)
+                if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog and self.vertical_viewer_dialog.isVisible():
+                    self.vertical_viewer_dialog.jump_to_image(self.filename)
         else:
             self.status(self.tr(f"无效的图片索引: {index + 1}"))
 
