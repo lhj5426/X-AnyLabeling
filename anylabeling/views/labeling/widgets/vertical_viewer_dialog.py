@@ -95,41 +95,50 @@ class DividerItem(QtWidgets.QGraphicsItem):
         super().__init__(parent)
         self.width = width
         self.text_str = f" {index}/{total} "
-        self.font = QtGui.QFont("Arial", 14, QtGui.QFont.Bold)
+        self.font = QtGui.QFont("Arial", 10)
         
         fm = QtGui.QFontMetrics(self.font)
-        r = fm.boundingRect(self.text_str)
-        self.text_rect = QtCore.QRectF(r)
+        self.text_width = fm.horizontalAdvance(self.text_str)
+        self.text_height = fm.height()
         
+        # 背景框（紧凑）
         self.bg_rect = QtCore.QRectF(
-            -self.text_rect.width()/2 - 10, 
-            -self.text_rect.height()/2 - 2, 
-            self.text_rect.width() + 20, 
-            self.text_rect.height() + 4
+            -self.text_width / 2 - 4,
+            -self.text_height / 2,
+            self.text_width + 8,
+            self.text_height
         )
 
     def boundingRect(self):
-        return QtCore.QRectF(-50000, -30, 100000, 60)
+        return QtCore.QRectF(-50000, -10, 100000, 20)
 
     def paint(self, painter, option, widget):
-        pen = QtGui.QPen(QtGui.QColor("#555555"))
-        pen.setWidth(2)
-        pen.setCosmetic(True) 
-        painter.setPen(pen)
-        painter.drawLine(-50000, 0, 50000, 0)
-        
         scale = painter.transform().m11()
         if scale == 0: scale = 1.0
         inv_scale = 1.0 / scale
+        
+        # 计算文字区域在场景中的宽度（用于断开线条）
+        text_half_width = (self.text_width / 2 + 6) * inv_scale
+        center_x = self.width / 2
+        
+        # 画分隔线（在文字两侧，不穿过文字）
+        pen = QtGui.QPen(QtGui.QColor("#555555"))
+        pen.setWidth(1)
+        pen.setCosmetic(True) 
+        painter.setPen(pen)
+        painter.drawLine(-50000, 0, int(center_x - text_half_width), 0)
+        painter.drawLine(int(center_x + text_half_width), 0, 50000, 0)
         
         painter.save()
         painter.translate(self.width / 2, 0)
         painter.scale(inv_scale, inv_scale)
         
+        # 画背景框
         painter.setPen(QtCore.Qt.NoPen)
         painter.setBrush(QtGui.QBrush(QtGui.QColor("#1e1e1e")))
         painter.drawRect(self.bg_rect)
         
+        # 画文字
         painter.setPen(QtGui.QPen(QtGui.QColor("#aaaaaa")))
         painter.setFont(self.font)
         painter.drawText(self.bg_rect, QtCore.Qt.AlignCenter, self.text_str)
@@ -400,6 +409,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         
         self.populated = False
         self.closing = False
+        self._need_initial_center = False  # 标记是否需要初始居中
 
         # Initialize state variables
         self.fit_width_mode = False
@@ -482,26 +492,30 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         end_idx = min(start_idx + batch_size, self._populate_total_batches)
         
         y_offset = 0
-        spacing = 30 if self.show_dividers else 0  # 根据状态设置间距
+        gap = 4 if self.show_dividers else 0  # 图片与分隔符之间的间距
+        divider_h = 12  # 分隔符本身的高度
         total = len(self.image_list)
         
         if start_idx > 0:
             for i in range(start_idx):
                 item = self.items_list[i]
-                divider_height = 30 if self.show_dividers else 0
-                y_offset += divider_height + item.get_height() + spacing
+                if self.show_dividers:
+                    y_offset += gap + divider_h + gap  # 间距 + 分隔符 + 间距
+                y_offset += item.get_height()
         
         for i in range(start_idx, end_idx):
             path = self.image_list[i]
             
             if i > 0:
+                y_offset += gap  # 上一张图片底部到分隔符的间距
                 divider = DividerItem(SCENE_BASE_WIDTH, i + 1, total)
-                divider.setPos(0, y_offset)
-                divider.setVisible(self.show_dividers)  # 根据状态设置可见性
+                divider.setPos(0, y_offset + divider_h / 2)  # 分隔符居中
+                divider.setVisible(self.show_dividers)
                 self.scene.addItem(divider)
                 self.dividers_list.append(divider)
                 if self.show_dividers:
-                    y_offset += 30  # 只有显示分隔符时才添加间距
+                    y_offset += divider_h  # 分隔符高度
+                y_offset += gap  # 分隔符到下一张图片顶部的间距
             
             # Pass labeling_widget to item for color retrieval
             item = VerticalThumbnailItem(path, SCENE_BASE_WIDTH, labeling_widget=self.labeling_widget)
@@ -512,24 +526,35 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             self.items_map[path] = item
             self.items_list.append(item)
             
-            y_offset += item.get_height() + spacing
+            y_offset += item.get_height()
         
         if end_idx == self._populate_total_batches:
             current_y = 0
-            divider_height = 30 if self.show_dividers else 0
             for i, item in enumerate(self.items_list):
-                if i > 0:
-                    current_y += divider_height
-                current_y += item.get_height() + spacing
+                if i > 0 and self.show_dividers:
+                    current_y += gap + divider_h + gap  # 间距 + 分隔符 + 间距
+                current_y += item.get_height()
             
             self.scene.setSceneRect(0, 0, SCENE_BASE_WIDTH, current_y)
-            self.update_view_transform()
             
+            # 标记需要初始居中
+            self._need_initial_center = True
+            
+            # 先居中到当前图片（使用占位符位置）
             if self.current_filename and self.current_filename in self.items_map:
-                item = self.items_map[self.current_filename]
-                self.view.centerOn(item)
-                
-            self.check_visible_items()
+                self._center_on_current()
+            
+            # 优先加载当前图片
+            if self.current_filename and self.current_filename in self.items_map:
+                current_item = self.items_map[self.current_filename]
+                if not current_item.loaded and not current_item.loading:
+                    current_item.loading = True
+                    loader = ImageLoader(current_item.path, SCENE_BASE_WIDTH)
+                    loader.signals.loaded.connect(self.on_image_loaded)
+                    self.thread_pool.start(loader)
+            
+            # 延迟检查可见项（会加载可见区域的图片）
+            QtCore.QTimer.singleShot(150, self.check_visible_items)
         else:
             self._populate_batch = end_idx
             QtCore.QTimer.singleShot(0, self._populate_batch_items)
@@ -557,12 +582,41 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         except RuntimeError:
              pass
 
+    def _center_on_item(self, item):
+        """将指定图片的中心点对齐到视口中心"""
+        item_center_x = item.pos().x() + item.boundingRect().width() / 2
+        item_center_y = item.pos().y() + item.boundingRect().height() / 2
+        center_point = QtCore.QPointF(item_center_x, item_center_y)
+        self.view.centerOn(center_point)
+
+    def _apply_initial_transform(self):
+        """初始化时应用缩放变换，不进行居中操作"""
+        viewport_width = self.view.viewport().width()
+        viewport_height = self.view.viewport().height()
+        if viewport_width < 10:
+            return
+        
+        if self.fit_width_mode:
+            self.view_scale = viewport_width / SCENE_BASE_WIDTH
+        elif self.fit_height_mode:
+            # 使用当前文件计算缩放比例
+            if self.current_filename and self.current_filename in self.items_map:
+                current_item = self.items_map[self.current_filename]
+                target_scale = viewport_height / current_item.get_height()
+                self.view_scale = target_scale
+            else:
+                self.view_scale = 1.0
+        
+        transform = QtGui.QTransform()
+        transform.scale(self.view_scale, self.view_scale)
+        self.view.setTransform(transform)
+
     def jump_to_image(self, filename):
         """Jump to a specific image, refreshing it if necessary."""
         self.current_filename = filename
         if filename in self.items_map:
             view_item = self.items_map[filename]
-            self.view.centerOn(view_item)
+            self._center_on_item(view_item)
             
             # Force reload of this item to update annotations/image
             view_item.loaded = False
@@ -576,25 +630,45 @@ class VerticalViewerDialog(QtWidgets.QDialog):
     def on_thumbnail_clicked(self, item):
         path = item.data(QtCore.Qt.UserRole)
         if path in self.items_map:
+            # 更新 current_filename，这样 relayout_items 会保持这个图片的位置
+            self.current_filename = path
             view_item = self.items_map[path]
-            self.view.centerOn(view_item)
+            self._center_on_item(view_item)
             idx = self.thumbnail_list.row(item)
             self.setWindowTitle(f"垂直滚动看图 - {idx + 1}/{len(self.image_list)}")
 
     def relayout_items(self):
+        # 记录当前图片的旧位置
+        old_current_y = None
+        if self.current_filename and self.current_filename in self.items_map:
+            current_item = self.items_map[self.current_filename]
+            old_current_y = current_item.pos().y()
+        
         y_offset = 0
-        spacing = 30 if self.show_dividers else 0  # 隐藏分隔符时无间距
+        gap = 4 if self.show_dividers else 0  # 图片与分隔符之间的间距
+        divider_height = 12  # 分隔符本身的高度
         divider_idx = 0
         for i, item in enumerate(self.items_list):
             if i > 0 and divider_idx < len(self.dividers_list):
+                y_offset += gap  # 上一张图片底部到分隔符的间距
                 divider = self.dividers_list[divider_idx]
-                divider.setPos(0, y_offset)
+                divider.setPos(0, y_offset + divider_height / 2)  # 分隔符居中
                 if self.show_dividers:
-                    y_offset += 30  # 只有显示分隔符时才添加间距
+                    y_offset += divider_height  # 分隔符高度
+                y_offset += gap  # 分隔符到下一张图片顶部的间距
                 divider_idx += 1
             item.setPos(0, y_offset)
-            y_offset += item.get_height() + spacing
+            y_offset += item.get_height()
         self.scene.setSceneRect(0, 0, SCENE_BASE_WIDTH, y_offset)
+        
+        # 如果当前图片位置变化了，调整滚动位置以保持视图稳定
+        if old_current_y is not None and self.current_filename in self.items_map:
+            current_item = self.items_map[self.current_filename]
+            new_current_y = current_item.pos().y()
+            delta_y = new_current_y - old_current_y
+            if abs(delta_y) > 1:
+                vbar = self.view.verticalScrollBar()
+                vbar.setValue(int(vbar.value() + delta_y * self.view_scale))
 
     def update_view_transform(self):
         viewport_width = self.view.viewport().width()
@@ -605,6 +679,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         if self.fit_width_mode:
             self.view_scale = viewport_width / SCENE_BASE_WIDTH
         elif self.fit_height_mode:
+            # 使用视口中心的图片来计算缩放比例
             center_item = self.get_center_item()
             if center_item:
                 target_scale = viewport_height / center_item.get_height()
@@ -617,7 +692,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.view.setTransform(transform)
         
         if self.fit_height_mode and center_item:
-            self.view.centerOn(center_item)
+            self._center_on_item(center_item)
 
     def get_center_item(self):
         viewport_center_y = self.view.viewport().height() / 2
@@ -649,9 +724,16 @@ class VerticalViewerDialog(QtWidgets.QDialog):
              self.setWindowTitle(f"垂直滚动看图 - {idx + 1}/{len(self.image_list)}")
              
              if self.thumbnails_visible:
-                 self.thumbnail_list.blockSignals(True)
-                 self.thumbnail_list.setCurrentRow(idx)
-                 self.thumbnail_list.scrollToItem(self.thumbnail_list.item(idx))
+                 # 只有当选中项变化时才更新
+                 current_row = self.thumbnail_list.currentRow()
+                 if current_row != idx:
+                     self.thumbnail_list.blockSignals(True)
+                     self.thumbnail_list.setCurrentRow(idx)
+                     # 使用 scrollToItem 让选中项可见
+                     item = self.thumbnail_list.item(idx)
+                     if item:
+                         self.thumbnail_list.scrollToItem(item, QtWidgets.QAbstractItemView.PositionAtCenter)
+                     self.thumbnail_list.blockSignals(False)
                  self.thumbnail_list.blockSignals(False)
 
     def check_visible_items(self):
@@ -698,7 +780,16 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             try:
                 item.set_image(image, ratio)
                 item.set_shapes(shapes, scale_factor)
+                # relayout_items 会自动调整滚动位置以保持当前图片稳定
                 self.relayout_items()
+                
+                # 当前图片加载完成后，应用自适应高度缩放
+                if path == self.current_filename:
+                    if getattr(self, '_need_initial_center', False):
+                        self._need_initial_center = False
+                    if self.fit_height_mode:
+                        self._apply_initial_transform()
+                        self._center_on_current()
             except RuntimeError:
                 pass
 
@@ -787,6 +878,12 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         # 不再覆盖current_filename，由update_image_list设置
         self.populate_scene()
 
+    def _center_on_current(self):
+        """居中到当前文件，将图片中心点对齐到视口中心"""
+        if self.current_filename and self.current_filename in self.items_map:
+            item = self.items_map[self.current_filename]
+            self._center_on_item(item)
+
     def toggle_sync_scroll(self):
         self.sync_scroll_enabled = not self.sync_scroll_enabled
     
@@ -809,7 +906,10 @@ class VerticalViewerDialog(QtWidgets.QDialog):
                  idx = self.items_list.index(center_item)
                  self.thumbnail_list.blockSignals(True)
                  self.thumbnail_list.setCurrentRow(idx)
-                 self.thumbnail_list.scrollToItem(self.thumbnail_list.item(idx))
+                 # 使用 scrollToItem 让选中项居中显示
+                 item = self.thumbnail_list.item(idx)
+                 if item:
+                     self.thumbnail_list.scrollToItem(item, QtWidgets.QAbstractItemView.PositionAtCenter)
                  self.thumbnail_list.blockSignals(False)
 
     def toggle_show_annotations(self):
@@ -907,7 +1007,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
                     self._ensure_item_loaded(next_item)
                     if current_idx + 2 < len(self.items_list):
                         self._ensure_item_loaded(self.items_list[current_idx + 2])
-                    self.view.centerOn(next_item)
+                    self._center_on_item(next_item)
                     self.on_scroll()
 
     def go_to_prev_image(self):
@@ -931,7 +1031,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
                     self._ensure_item_loaded(prev_item)
                     if current_idx - 2 >= 0:
                         self._ensure_item_loaded(self.items_list[current_idx - 2])
-                    self.view.centerOn(prev_item)
+                    self._center_on_item(prev_item)
                     self.on_scroll()
 
     def event(self, event):

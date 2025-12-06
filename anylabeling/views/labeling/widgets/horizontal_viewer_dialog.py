@@ -329,6 +329,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         
         self.populated = False
         self.closing = False
+        self._need_initial_center = False  # 标记是否需要初始居中
         
         self.scroll_timer = QtCore.QTimer()
         self.scroll_timer.setSingleShot(True)
@@ -357,6 +358,9 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             QtCore.QTimer.singleShot(50, self.populate_scene)
             self.populated = True
         QtCore.QTimer.singleShot(100, self.view.setFocus)
+        # 延迟更新视图变换，确保窗口大小已确定
+        QtCore.QTimer.singleShot(200, self.update_view_transform)
+        QtCore.QTimer.singleShot(250, lambda: self._center_on_current())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -444,34 +448,88 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             x_offset += item.get_width() + spacing
             
         self.scene.setSceneRect(0, 0, x_offset, SCENE_BASE_HEIGHT)
-        self.update_view_transform()
         
+        # 标记需要初始居中
+        self._need_initial_center = True
+        
+        # 先居中到当前图片（使用占位符位置）
+        if self.current_filename and self.current_filename in self.items_map:
+            self._center_on_current()
+        
+        # 优先加载当前图片
+        if self.current_filename and self.current_filename in self.items_map:
+            current_item = self.items_map[self.current_filename]
+            if not current_item.loaded and not current_item.loading:
+                self.load_image(current_item)
+        
+        # 延迟检查可见项
+        QtCore.QTimer.singleShot(150, self.check_visible_items)
+        QtCore.QTimer.singleShot(200, self.update_title_progress)
+    
+    def _apply_initial_transform(self):
+        """初始化时应用缩放变换，不进行居中操作"""
+        viewport_height = self.view.viewport().height()
+        viewport_width = self.view.viewport().width()
+        if viewport_height < 10:
+            return
+        
+        if self.fit_height_mode:
+            self.view_scale = viewport_height / SCENE_BASE_HEIGHT
+        elif self.fit_width_mode:
+            # 使用当前文件计算缩放比例
+            if self.current_filename and self.current_filename in self.items_map:
+                current_item = self.items_map[self.current_filename]
+                target_scale = viewport_width / current_item.get_width()
+                self.view_scale = target_scale
+            else:
+                self.view_scale = 1.0
+        
+        transform = QtGui.QTransform()
+        transform.scale(self.view_scale, self.view_scale)
+        self.view.setTransform(transform)
+
+    def _center_on_item(self, item):
+        """将指定图片的中心点对齐到视口中心"""
+        item_center_x = item.pos().x() + item.boundingRect().width() / 2
+        item_center_y = item.pos().y() + item.boundingRect().height() / 2
+        center_point = QtCore.QPointF(item_center_x, item_center_y)
+        self.view.centerOn(center_point)
+
+    def _center_on_current(self):
+        """居中到当前文件，将图片中心点对齐到视口中心"""
         if self.current_filename and self.current_filename in self.items_map:
             item = self.items_map[self.current_filename]
-            self.view.centerOn(item)
-            
-        self.check_visible_items()
-        self.update_title_progress()
+            self._center_on_item(item)
 
     def on_thumbnail_loaded(self, path, image, item):
         if self.closing: return
         try:
              item.setIcon(QtGui.QIcon(QtGui.QPixmap.fromImage(image)))
+             # 缩略图加载后，延迟更新区域高度（避免频繁更新）
+             if self.thumbnails_visible and not hasattr(self, '_thumb_height_timer'):
+                 self._thumb_height_timer = QtCore.QTimer()
+                 self._thumb_height_timer.setSingleShot(True)
+                 self._thumb_height_timer.setInterval(200)
+                 self._thumb_height_timer.timeout.connect(self._update_thumbnail_area_height)
+             if self.thumbnails_visible and hasattr(self, '_thumb_height_timer'):
+                 self._thumb_height_timer.start()
         except RuntimeError:
              pass
 
     def jump_to_image(self, filename):
         if filename in self.items_map:
             view_item = self.items_map[filename]
-            self.view.centerOn(view_item)
+            self._center_on_item(view_item)
             self.current_filename = filename
             self.process_scroll_update()
 
     def on_thumbnail_clicked(self, item):
         path = item.data(QtCore.Qt.UserRole)
         if path in self.items_map:
+            # 更新 current_filename，这样 relayout_items 会保持这个图片的位置
+            self.current_filename = path
             view_item = self.items_map[path]
-            self.view.centerOn(view_item)
+            self._center_on_item(view_item)
             self.process_scroll_update() # Update selection immediately
 
     def show_context_menu(self, pos):
@@ -572,11 +630,8 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.thumbnails_visible = not self.thumbnails_visible
         self.thumbnail_list.setVisible(self.thumbnails_visible)
         if self.thumbnails_visible:
-            # Set initial size for thumbnails if opening
-            # Give it enough space for the 100px icons + text + scrollbar (approx 160px)
-            total_height = self.splitter.height()
-            thumb_height = 160
-            self.splitter.setSizes([total_height - thumb_height, thumb_height])
+            # 动态计算缩略图区域高度
+            self._update_thumbnail_area_height()
             
             # Sync when showing
             self.process_scroll_update()
@@ -588,6 +643,41 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
              QtCore.QTimer.singleShot(150, self.update_view_transform) # Double check
         else:
              QtCore.QTimer.singleShot(50, self.update_view_transform)
+    
+    def _update_thumbnail_area_height(self):
+        """根据当前缩略图的实际高度动态调整缩略图区域高度"""
+        if not self.thumbnails_visible:
+            return
+        
+        # 获取当前缩略图列表中最大的图标高度
+        max_icon_height = 0
+        icon_size = self.thumbnail_list.iconSize()
+        
+        # 遍历所有缩略图项，找出最大高度
+        for i in range(self.thumbnail_list.count()):
+            item = self.thumbnail_list.item(i)
+            if item:
+                icon = item.icon()
+                if not icon.isNull():
+                    # 获取实际图标大小
+                    actual_sizes = icon.availableSizes()
+                    if actual_sizes:
+                        for size in actual_sizes:
+                            if size.height() > max_icon_height:
+                                max_icon_height = size.height()
+        
+        # 如果没有找到有效的图标高度，使用默认值
+        if max_icon_height == 0:
+            max_icon_height = icon_size.height()
+        
+        # 计算总高度：图标高度 + 文字高度(约20px) + 滚动条(12px) + 边距(18px)
+        thumb_height = max_icon_height + 20 + 12 + 18
+        
+        # 设置最小和最大限制
+        thumb_height = max(80, min(thumb_height, 200))
+        
+        total_height = self.splitter.height()
+        self.splitter.setSizes([total_height - thumb_height, thumb_height])
 
     def switch_to_image(self, path):
         self.image_switched.emit(path)
@@ -732,7 +822,15 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             if self.thumbnails_visible:
                 self.thumbnail_list.blockSignals(True)
                 self.thumbnail_list.setCurrentRow(closest_idx)
-                self.thumbnail_list.scrollToItem(self.thumbnail_list.item(closest_idx))
+                # 让选中项居中显示
+                item = self.thumbnail_list.item(closest_idx)
+                if item:
+                    item_rect = self.thumbnail_list.visualItemRect(item)
+                    viewport_width = self.thumbnail_list.viewport().width()
+                    # 计算需要滚动的位置，使选中项居中
+                    scroll_x = item_rect.center().x() - viewport_width // 2
+                    hbar = self.thumbnail_list.horizontalScrollBar()
+                    hbar.setValue(hbar.value() + scroll_x)
                 self.thumbnail_list.blockSignals(False)
 
     def check_visible_items(self):
@@ -792,7 +890,15 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         new_width = item.get_width()
         
         if abs(new_width - old_width) > 1:
+            # relayout_items 会自动调整滚动位置以保持当前图片稳定
             self.request_relayout()
+        
+        # 当前图片加载完成后，应用自适应缩放
+        if path == self.current_filename:
+            if getattr(self, '_need_initial_center', False):
+                self._need_initial_center = False
+            self._apply_initial_transform()
+            self._center_on_current()
 
     def request_relayout(self):
         if not self.layout_timer.isActive():
@@ -800,6 +906,13 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
 
     def relayout_items(self):
         if self.closing: return
+        
+        # 记录当前图片的旧位置
+        old_current_x = None
+        if self.current_filename and self.current_filename in self.items_map:
+            current_item = self.items_map[self.current_filename]
+            old_current_x = current_item.pos().x()
+        
         x_offset = 0
         spacing = 0
         
@@ -808,6 +921,15 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             x_offset += item.boundingRect().width() + spacing
             
         self.scene.setSceneRect(0, 0, x_offset, SCENE_BASE_HEIGHT)
+        
+        # 如果当前图片位置变化了，调整滚动位置以保持视图稳定
+        if old_current_x is not None and self.current_filename in self.items_map:
+            current_item = self.items_map[self.current_filename]
+            new_current_x = current_item.pos().x()
+            delta_x = new_current_x - old_current_x
+            if abs(delta_x) > 1:
+                hbar = self.view.horizontalScrollBar()
+                hbar.setValue(int(hbar.value() + delta_x * self.view_scale))
 
     def _ensure_item_loaded(self, item):
         """确保图片项已加载，如果未加载则立即加载"""
@@ -838,7 +960,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
                     self._ensure_item_loaded(next_item)
                     if current_idx + 2 < len(self.items_list):
                         self._ensure_item_loaded(self.items_list[current_idx + 2])
-                    self.view.centerOn(next_item)
+                    self._center_on_item(next_item)
                     self.process_scroll_update()
 
     def go_to_prev_image(self):
@@ -862,7 +984,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
                     self._ensure_item_loaded(prev_item)
                     if current_idx - 2 >= 0:
                         self._ensure_item_loaded(self.items_list[current_idx - 2])
-                    self.view.centerOn(prev_item)
+                    self._center_on_item(prev_item)
                     self.process_scroll_update()
 
     def event(self, event):
