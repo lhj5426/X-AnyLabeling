@@ -544,6 +544,9 @@ https://github.com/user-attachments/assets/da5900d0-5310-482c-80df-044a1fc0d230
 
 https://github.com/user-attachments/assets/4e001679-2a48-4686-b66f-5638dcaf55d1
 
+108.控制柄 增加 高亮 非高亮时的显示开关
+
+https://github.com/user-attachments/assets/d4d1b25c-2cdb-4fb5-920d-d6124fb35d13
 
 
 
