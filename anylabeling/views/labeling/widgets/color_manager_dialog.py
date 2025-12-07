@@ -258,6 +258,28 @@ class ColorManagerDialog(QDialog):
         self.zoom_at_mouse_percentage_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['canvas', 'zoom_at_mouse_percentage_increase'], value))
         right_form.addRow(self.tr("鼠标缩放倍率(%):"), self.zoom_at_mouse_percentage_spinbox)
 
+        # Path selection line settings (路径线样式设置)
+        self.path_select_line_color_button = self.create_color_button('path_select_line_color', self.config.get('path_select_line_color', [0, 191, 255]))
+        right_form.addRow(self.tr("选择线线条颜色:"), self.path_select_line_color_button)
+
+        self.path_select_number_color_button = self.create_color_button('path_select_number_color', self.config.get('path_select_number_color', [255, 0, 255]))
+        right_form.addRow(self.tr("选择线序号背景色:"), self.path_select_number_color_button)
+
+        self.path_hide_line_color_button = self.create_color_button('path_hide_line_color', self.config.get('path_hide_line_color', [255, 50, 50]))
+        right_form.addRow(self.tr("隐藏线线条颜色:"), self.path_hide_line_color_button)
+
+        self.path_hide_odd_color_button = self.create_color_button('path_hide_odd_color', self.config.get('path_hide_odd_color', [50, 200, 50]))
+        right_form.addRow(self.tr("隐藏线奇数背景色:"), self.path_hide_odd_color_button)
+
+        self.path_hide_even_color_button = self.create_color_button('path_hide_even_color', self.config.get('path_hide_even_color', [255, 50, 50]))
+        right_form.addRow(self.tr("隐藏线偶数背景色:"), self.path_hide_even_color_button)
+
+        self.path_delete_line_color_button = self.create_color_button('path_delete_line_color', self.config.get('path_delete_line_color', [50, 200, 50]))
+        right_form.addRow(self.tr("删除线线条颜色:"), self.path_delete_line_color_button)
+
+        self.path_delete_number_color_button = self.create_color_button('path_delete_number_color', self.config.get('path_delete_number_color', [117, 117, 117]))
+        right_form.addRow(self.tr("删除线序号背景色:"), self.path_delete_number_color_button)
+
         # 将左列添加到水平布局
         columns_layout.addLayout(left_form)
         columns_layout.addSpacing(5)  # 左列和分隔线之间5像素

@@ -2287,7 +2287,7 @@ class Canvas(
         self.repaint()
 
     def update_delete_path_intersections(self):
-        """Update intersected shapes list for Alt+RightButton delete path"""
+        """Update intersected shapes list for Alt+RightButton delete path, ordered by intersection position along path"""
         if not self.delete_path_selection_mode or len(self.delete_path_selection_points) < 2:
             return
 
@@ -2298,24 +2298,43 @@ class Canvas(
             if label.strip()
         }
 
-        # Clear and recalculate all intersections
-        self.delete_path_intersected_shapes = []
+        # Recalculate all intersections and their positions along the path
+        # Store (cumulative_distance_to_intersection, shape) pairs
+        shape_intersections = []
 
-        for shape in self.shapes:
-            if not shape.visible:
-                continue
-            # Skip locked shapes
-            is_locked = shape.label in locked_labels and not getattr(
-                shape, "is_session_unlocked", False
-            )
-            if is_locked:
-                continue
-            # Skip if already recorded
-            if shape in self.delete_path_intersected_shapes:
-                continue
-            # Check if shape intersects with the path
-            if self.shape_intersects_path(shape, self.delete_path_selection_points):
-                self.delete_path_intersected_shapes.append(shape)
+        cumulative_distance = 0.0
+        for seg_idx in range(len(self.delete_path_selection_points) - 1):
+            seg_start = self.delete_path_selection_points[seg_idx]
+            seg_end = self.delete_path_selection_points[seg_idx + 1]
+            seg_length = ((seg_end.x() - seg_start.x()) ** 2 + (seg_end.y() - seg_start.y()) ** 2) ** 0.5
+
+            for shape in self.shapes:
+                if not shape.visible:
+                    continue
+                # Skip locked shapes
+                is_locked = shape.label in locked_labels and not getattr(
+                    shape, "is_session_unlocked", False
+                )
+                if is_locked:
+                    continue
+                # Skip if already recorded
+                if any(s == shape for _, s in shape_intersections):
+                    continue
+
+                # Get intersection point with this segment
+                intersection_t = self.get_shape_intersection_t(shape, seg_start, seg_end)
+                if intersection_t is not None:
+                    # Calculate distance along path to this intersection
+                    dist_to_intersection = cumulative_distance + intersection_t * seg_length
+                    shape_intersections.append((dist_to_intersection, shape))
+
+            cumulative_distance += seg_length
+
+        # Sort by distance along path
+        shape_intersections.sort(key=lambda x: x[0])
+
+        # Update the ordered list
+        self.delete_path_intersected_shapes = [shape for _, shape in shape_intersections]
 
     def complete_delete_path_selection(self):
         """Complete Alt+RightButton delete path selection and delete all intersected shapes"""
@@ -4479,8 +4498,12 @@ class Canvas(
         circle_radius = 6  # Fixed 6px circle radius
         border_width = 2  # Fixed 2px border width
 
-        # Draw the path with a different color
-        pen = QtGui.QPen(QtGui.QColor(0, 191, 255), line_width, Qt.SolidLine)  # Deep sky blue path
+        # Get line color from config (default: deep sky blue)
+        line_color_rgb = self._config.get('path_select_line_color', [0, 191, 255])
+        line_color = QtGui.QColor(*line_color_rgb[:3])
+
+        # Draw the path
+        pen = QtGui.QPen(line_color, line_width, Qt.SolidLine)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
 
@@ -4493,14 +4516,14 @@ class Canvas(
         # Draw start point with a circle (head indicator)
         if len(self.path_selection_points) > 0:
             start_point = to_screen(self.path_selection_points[0])
-            p.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))  # Same blue color
+            p.setBrush(QtGui.QBrush(line_color))
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
             p.drawEllipse(start_point, circle_radius, circle_radius)
 
             # Draw current end point with a circle, same as the start
             if len(self.path_selection_points) > 1:
                 end_point = to_screen(self.path_selection_points[-1])
-                p.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))  # Same blue color
+                p.setBrush(QtGui.QBrush(line_color))
                 p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
                 p.drawEllipse(end_point, circle_radius, circle_radius)
 
@@ -4544,7 +4567,7 @@ class Canvas(
                     radius = ((edge.x() - center.x()) ** 2 + (edge.y() - center.y()) ** 2) ** 0.5
                     p.drawEllipse(center, radius, radius)
 
-                # Draw number at shape center (magenta background, white text)
+                # Draw number at shape center (configurable background color, white text)
                 # idx + 1 represents the order in which shapes were intersected by the path
                 if shape.points:
                     sum_x = sum(pt.x() for pt in shape.points)
@@ -4552,9 +4575,10 @@ class Canvas(
                     center_img = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
                     center_screen = to_screen(center_img)
 
-                    # Draw magenta (#FF00FF) background circle
+                    # Get color from config (default: magenta #FF00FF)
+                    number_color = self._config.get('path_select_number_color', [255, 0, 255])
                     number_radius = 12
-                    p.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 255)))  # Magenta background
+                    p.setBrush(QtGui.QBrush(QtGui.QColor(*number_color[:3])))
                     p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # White border
                     p.drawEllipse(center_screen, number_radius, number_radius)
 
@@ -4597,8 +4621,12 @@ class Canvas(
         circle_radius = 6  # Fixed 6px circle radius
         border_width = 2  # Fixed 2px border width
 
-        # Draw the path with RED color
-        pen = QtGui.QPen(QtGui.QColor(255, 50, 50), line_width, Qt.SolidLine)  # Red path
+        # Get line color from config (default: red)
+        line_color_rgb = self._config.get('path_hide_line_color', [255, 50, 50])
+        line_color = QtGui.QColor(*line_color_rgb[:3])
+
+        # Draw the path
+        pen = QtGui.QPen(line_color, line_width, Qt.SolidLine)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
 
@@ -4608,17 +4636,17 @@ class Canvas(
             end = to_screen(self.ctrl_path_selection_points[i + 1])
             p.drawLine(start, end)
 
-        # Draw start point with a red circle
+        # Draw start point with a circle
         if len(self.ctrl_path_selection_points) > 0:
             start_point = to_screen(self.ctrl_path_selection_points[0])
-            p.setBrush(QtGui.QBrush(QtGui.QColor(255, 50, 50)))  # Red color
+            p.setBrush(QtGui.QBrush(line_color))
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
             p.drawEllipse(start_point, circle_radius, circle_radius)
 
-            # Draw current end point with a red circle
+            # Draw current end point with a circle
             if len(self.ctrl_path_selection_points) > 1:
                 end_point = to_screen(self.ctrl_path_selection_points[-1])
-                p.setBrush(QtGui.QBrush(QtGui.QColor(255, 50, 50)))  # Red color
+                p.setBrush(QtGui.QBrush(line_color))
                 p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
                 p.drawEllipse(end_point, circle_radius, circle_radius)
 
@@ -4630,11 +4658,13 @@ class Canvas(
             position = i + 1  # 1-based position
             is_even = (position % 2 == 0)  # Even positions will be hidden
 
-            # Use different colors: green for odd (keep), red for even (hide)
+            # Use configurable colors: odd (keep) vs even (hide)
             if is_even:
-                highlight_color = QtGui.QColor(255, 50, 50)  # Red for shapes to hide
+                even_color = self._config.get('path_hide_even_color', [255, 50, 50])
+                highlight_color = QtGui.QColor(*even_color[:3])  # Red for shapes to hide
             else:
-                highlight_color = QtGui.QColor(50, 200, 50)  # Green for shapes to keep
+                odd_color = self._config.get('path_hide_odd_color', [50, 200, 50])
+                highlight_color = QtGui.QColor(*odd_color[:3])  # Green for shapes to keep
 
             # Draw shape outline
             pen = QtGui.QPen(highlight_color, 3, Qt.SolidLine)
@@ -4716,8 +4746,12 @@ class Canvas(
         circle_radius = 6  # Fixed 6px circle radius
         border_width = 2  # Fixed 2px border width
 
-        # Draw the path with GREEN color
-        pen = QtGui.QPen(QtGui.QColor(50, 200, 50), line_width, Qt.SolidLine)  # Green path
+        # Get line color from config (default: green)
+        line_color_rgb = self._config.get('path_delete_line_color', [50, 200, 50])
+        line_color = QtGui.QColor(*line_color_rgb[:3])
+
+        # Draw the path
+        pen = QtGui.QPen(line_color, line_width, Qt.SolidLine)
         p.setPen(pen)
         p.setBrush(Qt.NoBrush)
 
@@ -4727,27 +4761,28 @@ class Canvas(
             end = to_screen(self.delete_path_selection_points[i + 1])
             p.drawLine(start, end)
 
-        # Draw start point with a green circle
+        # Draw start point with a circle
         if len(self.delete_path_selection_points) > 0:
             start_point = to_screen(self.delete_path_selection_points[0])
-            p.setBrush(QtGui.QBrush(QtGui.QColor(50, 200, 50)))  # Green color
+            p.setBrush(QtGui.QBrush(line_color))
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
             p.drawEllipse(start_point, circle_radius, circle_radius)
 
-            # Draw current end point with a green circle
+            # Draw current end point with a circle
             if len(self.delete_path_selection_points) > 1:
                 end_point = to_screen(self.delete_path_selection_points[-1])
-                p.setBrush(QtGui.QBrush(QtGui.QColor(50, 200, 50)))  # Green color
+                p.setBrush(QtGui.QBrush(line_color))
                 p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))  # White border
                 p.drawEllipse(end_point, circle_radius, circle_radius)
 
-        # Highlight shapes to be deleted with red outline
-        for shape in self.delete_path_intersected_shapes:
+        # Highlight shapes to be deleted with outline
+        for idx, shape in enumerate(self.delete_path_intersected_shapes):
             if not shape.visible:
                 continue
 
-            # Red highlight for shapes to delete
-            highlight_color = QtGui.QColor(255, 50, 50)
+            # Get delete line color from config (default: gray)
+            delete_color = self._config.get('path_delete_number_color', [117, 117, 117])
+            highlight_color = QtGui.QColor(*delete_color[:3])
 
             # Draw shape outline
             pen = QtGui.QPen(highlight_color, 3, Qt.SolidLine)
@@ -4774,34 +4809,32 @@ class Canvas(
                 radius = ((edge.x() - center.x()) ** 2 + (edge.y() - center.y()) ** 2) ** 0.5
                 p.drawEllipse(center, radius, radius)
 
-            # Draw "删" text at shape center to indicate deletion
+            # Draw number at shape center (coral pink background, white text)
             if shape.points:
                 sum_x = sum(pt.x() for pt in shape.points)
                 sum_y = sum(pt.y() for pt in shape.points)
                 center_img = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
                 center_screen = to_screen(center_img)
 
-                # Draw background circle
+                # Draw background circle (#FF496C)
                 number_radius = 12
                 p.setBrush(QtGui.QBrush(highlight_color))
                 p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
                 p.drawEllipse(center_screen, number_radius, number_radius)
 
-                # Draw "删" text
+                # Draw number text (order of intersection)
                 font = QtGui.QFont()
                 font.setPointSize(10)
                 font.setBold(True)
                 p.setFont(font)
                 p.setPen(QtGui.QColor(255, 255, 255))  # White text
-
-                # Center the text
-                text = "删"
-                fm = QtGui.QFontMetrics(font)
-                text_width = fm.horizontalAdvance(text)
-                text_height = fm.height()
-                text_x = center_screen.x() - text_width / 2
-                text_y = center_screen.y() + text_height / 4
-                p.drawText(QtCore.QPointF(text_x, text_y), text)
+                text_rect = QtCore.QRectF(
+                    center_screen.x() - number_radius,
+                    center_screen.y() - number_radius,
+                    number_radius * 2,
+                    number_radius * 2
+                )
+                p.drawText(text_rect, Qt.AlignCenter, str(idx + 1))
 
         p.restore()
 
@@ -7249,13 +7282,20 @@ class Canvas(
         if not self.path_selection_mode or len(self.path_selection_points) < 2:
             return
         
+        # 保存painter状态，避免影响后续绘制
+        painter.save()
+        
         # 固定像素大小（在图像坐标系中）
         line_width = 3
         circle_radius = 6
         border_width = 2
         
-        # 绘制路径线（深天蓝色）
-        pen = QtGui.QPen(QtGui.QColor(0, 191, 255), line_width, Qt.SolidLine)
+        # 从配置获取线条颜色（默认深天蓝色）
+        line_color_rgb = self._config.get('path_select_line_color', [0, 191, 255])
+        line_color = QtGui.QColor(*line_color_rgb[:3])
+        
+        # 绘制路径线
+        pen = QtGui.QPen(line_color, line_width, Qt.SolidLine)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
         
@@ -7268,18 +7308,18 @@ class Canvas(
         # 绘制起点圆圈
         if len(self.path_selection_points) > 0:
             start_point = self.path_selection_points[0]
-            painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))
+            painter.setBrush(QtGui.QBrush(line_color))
             painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
             painter.drawEllipse(start_point, circle_radius, circle_radius)
             
             # 绘制终点圆圈
             if len(self.path_selection_points) > 1:
                 end_point = self.path_selection_points[-1]
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))
+                painter.setBrush(QtGui.QBrush(line_color))
                 painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
                 painter.drawEllipse(end_point, circle_radius, circle_radius)
         
-        # 绘制被选中形状的数字序号（洋红色背景白字，按穿过顺序）
+        # 绘制被选中形状的数字序号（可配置背景色，按穿过顺序）
         number_radius = 12
         for idx, shape in enumerate(self.path_highlighted_shapes):
             if not shape.visible:
@@ -7295,8 +7335,9 @@ class Canvas(
                 sum_y = sum(pt.y() for pt in shape.points)
                 center = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
                 
-                # 绘制洋红色(#FF00FF)背景圆圈
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 255)))  # 洋红色背景
+                # 从配置获取颜色（默认洋红色）
+                number_color = self._config.get('path_select_number_color', [255, 0, 255])
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(*number_color[:3])))
                 painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # 白色边框
                 painter.drawEllipse(center, number_radius, number_radius)
                 
@@ -7313,6 +7354,9 @@ class Canvas(
                     number_radius * 2
                 )
                 painter.drawText(text_rect, Qt.AlignCenter, str(idx + 1))
+        
+        # 恢复painter状态
+        painter.restore()
 
     def _draw_magnifier_ctrl_path_selection(self, painter, crop_rect):
         """
@@ -7325,13 +7369,20 @@ class Canvas(
         if not self.ctrl_path_selection_mode or len(self.ctrl_path_selection_points) < 2:
             return
         
+        # 保存painter状态，避免影响后续绘制
+        painter.save()
+        
         # 固定像素大小（在图像坐标系中）
         line_width = 3
         circle_radius = 6
         border_width = 2
         
-        # 绘制路径线（红色）
-        pen = QtGui.QPen(QtGui.QColor(255, 50, 50), line_width, Qt.SolidLine)
+        # 从配置获取线条颜色（默认红色）
+        line_color_rgb = self._config.get('path_hide_line_color', [255, 50, 50])
+        line_color = QtGui.QColor(*line_color_rgb[:3])
+        
+        # 绘制路径线
+        pen = QtGui.QPen(line_color, line_width, Qt.SolidLine)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
         
@@ -7344,14 +7395,14 @@ class Canvas(
         # 绘制起点圆圈
         if len(self.ctrl_path_selection_points) > 0:
             start_point = self.ctrl_path_selection_points[0]
-            painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 50, 50)))
+            painter.setBrush(QtGui.QBrush(line_color))
             painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
             painter.drawEllipse(start_point, circle_radius, circle_radius)
             
             # 绘制终点圆圈
             if len(self.ctrl_path_selection_points) > 1:
                 end_point = self.ctrl_path_selection_points[-1]
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 50, 50)))
+                painter.setBrush(QtGui.QBrush(line_color))
                 painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
                 painter.drawEllipse(end_point, circle_radius, circle_radius)
         
@@ -7368,11 +7419,13 @@ class Canvas(
             position = i + 1  # 1-based position
             is_even = (position % 2 == 0)  # 偶数位置将被隐藏
             
-            # 使用不同颜色：绿色表示保留（奇数），红色表示隐藏（偶数）
+            # 使用可配置颜色：奇数保留，偶数隐藏
             if is_even:
-                highlight_color = QtGui.QColor(255, 50, 50)  # 红色 - 将被隐藏
+                even_color = self._config.get('path_hide_even_color', [255, 50, 50])
+                highlight_color = QtGui.QColor(*even_color[:3])  # 将被隐藏
             else:
-                highlight_color = QtGui.QColor(50, 200, 50)  # 绿色 - 将保留
+                odd_color = self._config.get('path_hide_odd_color', [50, 200, 50])
+                highlight_color = QtGui.QColor(*odd_color[:3])  # 将保留
             
             # 计算形状中心
             if shape.points:
@@ -7399,6 +7452,9 @@ class Canvas(
                 text_x = center.x() - text_width / 2
                 text_y = center.y() + text_height / 4
                 painter.drawText(QtCore.QPointF(text_x, text_y), text)
+        
+        # 恢复painter状态
+        painter.restore()
 
     def _draw_magnifier_delete_path_selection(self, painter, crop_rect):
         """
@@ -7411,13 +7467,20 @@ class Canvas(
         if not self.delete_path_selection_mode or len(self.delete_path_selection_points) < 2:
             return
         
+        # 保存painter状态，避免影响后续绘制
+        painter.save()
+        
         # 固定像素大小（在图像坐标系中）
         line_width = 3
         circle_radius = 6
         border_width = 2
         
-        # 绘制路径线（绿色）
-        pen = QtGui.QPen(QtGui.QColor(50, 200, 50), line_width, Qt.SolidLine)
+        # 从配置获取线条颜色（默认绿色）
+        line_color_rgb = self._config.get('path_delete_line_color', [50, 200, 50])
+        line_color = QtGui.QColor(*line_color_rgb[:3])
+        
+        # 绘制路径线
+        pen = QtGui.QPen(line_color, line_width, Qt.SolidLine)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
         
@@ -7430,22 +7493,24 @@ class Canvas(
         # 绘制起点圆圈
         if len(self.delete_path_selection_points) > 0:
             start_point = self.delete_path_selection_points[0]
-            painter.setBrush(QtGui.QBrush(QtGui.QColor(50, 200, 50)))
+            painter.setBrush(QtGui.QBrush(line_color))
             painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
             painter.drawEllipse(start_point, circle_radius, circle_radius)
             
             # 绘制终点圆圈
             if len(self.delete_path_selection_points) > 1:
                 end_point = self.delete_path_selection_points[-1]
-                painter.setBrush(QtGui.QBrush(QtGui.QColor(50, 200, 50)))
+                painter.setBrush(QtGui.QBrush(line_color))
                 painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
                 painter.drawEllipse(end_point, circle_radius, circle_radius)
         
-        # 绘制被选中形状的删除标识（与crop_rect相交的形状）
+        # 绘制被选中形状的数字序号（珊瑚粉色背景白字，按穿过顺序）
         number_radius = 12
-        highlight_color = QtGui.QColor(255, 50, 50)  # 红色 - 将被删除
+        # 从配置获取删除线颜色（默认灰色）
+        delete_color = self._config.get('path_delete_number_color', [117, 117, 117])
+        highlight_color = QtGui.QColor(*delete_color[:3])
         
-        for shape in self.delete_path_intersected_shapes:
+        for idx, shape in enumerate(self.delete_path_intersected_shapes):
             if not shape.visible:
                 continue
             
@@ -7459,25 +7524,27 @@ class Canvas(
                 sum_y = sum(pt.y() for pt in shape.points)
                 center = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
                 
-                # 绘制删除标识背景圆圈
+                # 绘制删除标识背景圆圈 (#FF496C)
                 painter.setBrush(QtGui.QBrush(highlight_color))
                 painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
                 painter.drawEllipse(center, number_radius, number_radius)
                 
-                # 绘制"删"字
+                # 绘制数字序号（按穿过顺序）
                 font = QtGui.QFont()
                 font.setPointSize(10)
                 font.setBold(True)
                 painter.setFont(font)
-                painter.setPen(QtGui.QColor(255, 255, 255))
-                
-                text = "删"
-                fm = QtGui.QFontMetrics(font)
-                text_width = fm.horizontalAdvance(text)
-                text_height = fm.height()
-                text_x = center.x() - text_width / 2
-                text_y = center.y() + text_height / 4
-                painter.drawText(QtCore.QPointF(text_x, text_y), text)
+                painter.setPen(QtGui.QColor(255, 255, 255))  # 白色文字
+                text_rect = QtCore.QRectF(
+                    center.x() - number_radius,
+                    center.y() - number_radius,
+                    number_radius * 2,
+                    number_radius * 2
+                )
+                painter.drawText(text_rect, Qt.AlignCenter, str(idx + 1))
+        
+        # 恢复painter状态
+        painter.restore()
 
     def draw_magnifier(self, p):
         """
