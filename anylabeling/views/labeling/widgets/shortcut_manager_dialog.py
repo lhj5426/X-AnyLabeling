@@ -165,6 +165,7 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
                 ("smart_guides_tool", self.tr("辅助线工具")),
                 ("shortcut_manager_tool", self.tr("快捷键管理器")),
                 ("wheel_settings_tool", self.tr("鼠标滚轮设置")),
+                ("toggle_ghost_paste", self.tr("切换虚影粘贴模式")),
             ],
             self.tr("其他操作"): [
                 ("loop_thru_labels", self.tr("循环标签")),

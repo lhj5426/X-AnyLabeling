@@ -994,10 +994,10 @@ class Canvas(
         except AttributeError:
             return
 
-        # Handle paste preview mode
+        # Handle paste preview mode - update preview position but don't block other mouse events
         if self.paste_preview_mode:
             self.update_paste_preview_position(pos)
-            return
+            # Don't return here - allow normal mouse operations (canvas pan, shape selection, etc.)
 
         # Handle Alt+drag selection box mode
         if self.selection_box_mode:
@@ -1998,16 +1998,12 @@ class Canvas(
         return inside
 
     def update_path_highlights(self):
-        """Update highlighted shapes based on current path selection, ordered by intersection position along path"""
+        """Update highlighted shapes based on current path selection, ordered by intersection position along path.
+        Note: This function does NOT skip locked shapes, as SHIFT+left click path selection
+        is used to select shapes including unlocking locked ones.
+        """
         if not self.path_selection_points or len(self.path_selection_points) < 2:
             return
-
-        # Get locked labels
-        locked_labels = {
-            label.strip()
-            for label in self._config.get("locked_labels", "").split(",")
-            if label.strip()
-        }
 
         # Recalculate all intersections and their positions along the path
         # Store (cumulative_distance_to_intersection, shape) pairs
@@ -2021,12 +2017,6 @@ class Canvas(
 
             for shape in self.shapes:
                 if not shape.visible:
-                    continue
-                # Skip locked shapes
-                is_locked = shape.label in locked_labels and not getattr(
-                    shape, "is_session_unlocked", False
-                )
-                if is_locked:
                     continue
                 # Skip if already recorded
                 if any(s == shape for _, s in shape_intersections):

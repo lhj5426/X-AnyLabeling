@@ -65,6 +65,11 @@ class Shape:
     point_size = 4  # 控制多边形等形状的圆形控制点大小
     square_size = 4  # 控制矩形的方形控制块大小
     scale = 1.5
+    # Control handle display settings
+    handle_highlight_point = True  # 高亮时显示点
+    handle_highlight_square = True  # 高亮时显示块
+    handle_normal_point = False  # 非高亮时显示点
+    handle_normal_square = False  # 非高亮时显示块
     # Base line width
     line_width = 2.0
     # Additional configurable line widths for different interaction states
@@ -281,6 +286,20 @@ class Shape:
             "linestrip",
         ]
 
+    def should_draw_point(self):
+        """判断是否应该绘制圆形控制点（顶点）"""
+        if Shape.highlighting_enabled:
+            return Shape.handle_highlight_point
+        else:
+            return Shape.handle_normal_point
+    
+    def should_draw_square(self):
+        """判断是否应该绘制方形控制块（边中点）"""
+        if Shape.highlighting_enabled:
+            return Shape.handle_highlight_square
+        else:
+            return Shape.handle_normal_square
+
     def close(self):
         """Close the shape"""
         if self.shape_type in ["rotation", "rotation3", "rectangle3"] and len(self.points) == 4:
@@ -490,10 +509,10 @@ class Shape:
                     line_path.moveTo(self.points[0])
                     for i, p in enumerate(self.points):
                         line_path.lineTo(p)
-                        if self.selected:
+                        if self.should_draw_point():
                             self.draw_vertex(vrtx_path, i)
                     # Draw edge midpoints for 8-point adjustment
-                    if self.selected:
+                    if self.should_draw_square():
                         midpoints = self.get_edge_midpoints()
                         for i, midpoint in enumerate(midpoints):
                             self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
@@ -506,7 +525,7 @@ class Shape:
                     line_path.moveTo(self.points[0])
                     for i, p in enumerate(self.points):
                         line_path.lineTo(p)
-                        if self.selected:
+                        if self.should_draw_point():
                             self.draw_vertex(vrtx_path, i)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
@@ -517,10 +536,10 @@ class Shape:
                     line_path.moveTo(self.points[0])
                     for i, p in enumerate(self.points):
                         line_path.lineTo(p)
-                        if self.selected:
+                        if self.should_draw_point():
                             self.draw_vertex(vrtx_path, i)
                     # Draw edge midpoints for 8-point adjustment
-                    if self.selected:
+                    if self.should_draw_square():
                         midpoints = self.get_edge_midpoints()
                         for i, midpoint in enumerate(midpoints):
                             self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
@@ -533,7 +552,7 @@ class Shape:
                     line_path.moveTo(self.points[0])
                     for i, p in enumerate(self.points):
                         line_path.lineTo(p)
-                        if self.selected:
+                        if self.should_draw_point():
                             self.draw_vertex(vrtx_path, i)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
@@ -544,10 +563,10 @@ class Shape:
                     line_path.moveTo(self.points[0])
                     for i, p in enumerate(self.points):
                         line_path.lineTo(p)
-                        if self.selected:
+                        if self.should_draw_point():
                             self.draw_vertex(vrtx_path, i)
                     # Draw edge midpoints for 8-point adjustment
-                    if self.selected:
+                    if self.should_draw_square():
                         midpoints = self.get_edge_midpoints()
                         for i, midpoint in enumerate(midpoints):
                             self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
@@ -558,14 +577,14 @@ class Shape:
                 if len(self.points) == 2:
                     rectangle = self.get_circle_rect_from_line(self.points)
                     line_path.addEllipse(rectangle)
-                if self.selected:
+                if self.should_draw_point():
                     for i in range(len(self.points)):
                         self.draw_vertex(vrtx_path, i)
             elif self.shape_type == "linestrip":
                 line_path.moveTo(self.points[0])
                 for i, p in enumerate(self.points):
                     line_path.lineTo(p)
-                    if self.selected:
+                    if self.should_draw_point():
                         self.draw_vertex(vrtx_path, i)
             elif self.shape_type == "point":
                 assert len(self.points) == 1
@@ -575,11 +594,12 @@ class Shape:
                 # Uncommenting the following line will draw 2 paths
                 # for the 1st vertex, and make it non-filled, which
                 # may be desirable.
-                self.draw_vertex(vrtx_path, 0)
+                if self.should_draw_point():
+                    self.draw_vertex(vrtx_path, 0)
 
                 for i, p in enumerate(self.points):
                     line_path.lineTo(p)
-                    if self.selected:
+                    if self.should_draw_point():
                         self.draw_vertex(vrtx_path, i)
                 if self.is_closed():
                     line_path.lineTo(self.points[0])
@@ -605,6 +625,20 @@ class Shape:
             painter.drawPath(vrtx_path)
             if self._vertex_fill_color is not None:
                 painter.fillPath(vrtx_path, self._vertex_fill_color)
+
+    def should_draw_point(self):
+        """判断是否应该绘制圆形控制点"""
+        if self.selected:
+            return Shape.handle_highlight_point
+        else:
+            return Shape.handle_normal_point
+
+    def should_draw_square(self):
+        """判断是否应该绘制方形控制块"""
+        if self.selected:
+            return Shape.handle_highlight_square
+        else:
+            return Shape.handle_normal_square
 
     def draw_vertex(self, path, i, show_difficult=False):
         """Draw a vertex"""

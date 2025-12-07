@@ -475,6 +475,9 @@ class AlignmentDialog(QtWidgets.QDialog):
         """Append a message to the log widget with a timestamp."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_widget.append(f"[{timestamp}] {message}")
+        # 自动滚动到底部
+        scrollbar = self.log_widget.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
     def get_angle_target_labels(self):
         """获取统一角度专用的目标标签列表"""

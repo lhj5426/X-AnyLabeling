@@ -393,6 +393,12 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.select_line_width = self._config["shape"].get("select_line_width")
         Shape.canvas_select_line_width = self._config["shape"].get("canvas_select_line_width")
         Shape.canvas_hover_line_width = self._config["shape"].get("canvas_hover_line_width")
+        
+        # Control handle display settings
+        Shape.handle_highlight_point = self._config.get("handle_highlight_point", True)
+        Shape.handle_highlight_square = self._config.get("handle_highlight_square", True)
+        Shape.handle_normal_point = self._config.get("handle_normal_point", False)
+        Shape.handle_normal_square = self._config.get("handle_normal_square", False)
 
         # Whether we need to save or not.
         self.dirty = False
@@ -459,19 +465,19 @@ class LabelingWidget(QtWidgets.QWidget):
         shape_control_layout.setContentsMargins(2, 2, 2, 2)
         shape_control_layout.setSpacing(2)
         
-        btn_select_all_shapes = QtWidgets.QPushButton(self.tr("全选"))
+        self.btn_select_all_shapes = QtWidgets.QPushButton(self.tr("全选"))
         def select_all_objects():
             for item in self.label_list:
                 item.setCheckState(Qt.Checked)
-        btn_select_all_shapes.clicked.connect(select_all_objects)
+        self.btn_select_all_shapes.clicked.connect(select_all_objects)
 
-        btn_invert_selection_shapes = QtWidgets.QPushButton(self.tr("反选"))
+        self.btn_invert_selection_shapes = QtWidgets.QPushButton(self.tr("反选"))
         def invert_all_objects():
             for item in self.label_list:
                 item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
-        btn_invert_selection_shapes.clicked.connect(invert_all_objects)
+        self.btn_invert_selection_shapes.clicked.connect(invert_all_objects)
 
-        btn_deselect_all_shapes = QtWidgets.QPushButton(self.tr("取消"))
+        self.btn_deselect_all_shapes = QtWidgets.QPushButton(self.tr("取消"))
         def deselect_all_objects():
             # 遍历label_list中的所有item并取消勾选
             for item in self.label_list:
@@ -482,12 +488,12 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.canvas.set_shape_visible(shape, False)
             self.canvas.update()
             self.update_navigator_shapes()
-        btn_deselect_all_shapes.clicked.connect(deselect_all_objects)
+        self.btn_deselect_all_shapes.clicked.connect(deselect_all_objects)
         
         # 高亮按钮
         self._highlight_on = False
-        btn_highlight = QtWidgets.QPushButton(self.tr("高亮"))
-        btn_highlight.setCheckable(True)
+        self.btn_highlight = QtWidgets.QPushButton(self.tr("高亮"))
+        self.btn_highlight.setCheckable(True)
         def toggle_highlight():
             all_shapes = [item.shape() for item in self.label_list]
             if not all_shapes:
@@ -660,23 +666,23 @@ class LabelingWidget(QtWidgets.QWidget):
             is_any_shape_selected = any(s.selected for s in unlocked_shapes)
             Shape.highlighting_enabled = is_any_shape_selected
             self._highlight_on = is_any_shape_selected
-            btn_highlight.setChecked(is_any_shape_selected)
+            self.btn_highlight.setChecked(is_any_shape_selected)
             
             self.canvas.update()
 
-        btn_highlight.clicked.connect(toggle_highlight)
+        self.btn_highlight.clicked.connect(toggle_highlight)
 
         # Set shortcuts from config
         shortcuts = self._config.get("shortcuts", {})
-        btn_select_all_shapes.setShortcut(shortcuts.get("select_all_shapes", ""))
-        btn_invert_selection_shapes.setShortcut(shortcuts.get("invert_selection_shapes", ""))
-        btn_deselect_all_shapes.setShortcut(shortcuts.get("deselect_all_shapes", ""))
-        btn_highlight.setShortcut(shortcuts.get("toggle_highlight", ""))
+        self.btn_select_all_shapes.setShortcut(shortcuts.get("select_all_shapes", ""))
+        self.btn_invert_selection_shapes.setShortcut(shortcuts.get("invert_selection_shapes", ""))
+        self.btn_deselect_all_shapes.setShortcut(shortcuts.get("deselect_all_shapes", ""))
+        self.btn_highlight.setShortcut(shortcuts.get("toggle_highlight", ""))
 
-        shape_control_layout.addWidget(btn_select_all_shapes)
-        shape_control_layout.addWidget(btn_invert_selection_shapes)
-        shape_control_layout.addWidget(btn_deselect_all_shapes)
-        shape_control_layout.addWidget(btn_highlight)
+        shape_control_layout.addWidget(self.btn_select_all_shapes)
+        shape_control_layout.addWidget(self.btn_invert_selection_shapes)
+        shape_control_layout.addWidget(self.btn_deselect_all_shapes)
+        shape_control_layout.addWidget(self.btn_highlight)
         shape_control_layout.addStretch()
         shape_control_widget.setLayout(shape_control_layout)
         
@@ -1593,6 +1599,14 @@ class LabelingWidget(QtWidgets.QWidget):
             shortcuts.get("highlight_settings_tool"),
             icon="color",
             tip=self.tr("配置高亮显示行为和标签"),
+        )
+
+        toggle_ghost_paste = action(
+            self.tr("切换虚影粘贴模式"),
+            self.toggle_ghost_paste_mode,
+            shortcuts.get("toggle_ghost_paste", "B"),
+            icon="edit",
+            tip=self.tr("开启/关闭虚影粘贴模式"),
         )
 
         open_chatbot = action(
@@ -2582,6 +2596,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 rectangle_scale_tool,
                 page_text_tool,
                 highlight_settings_tool,
+                toggle_ghost_paste,
                 None,
                 # === 管理器工具 ===
                 label_manager,
@@ -5034,6 +5049,14 @@ class LabelingWidget(QtWidgets.QWidget):
         
         self.canvas.update()
 
+    def apply_handle_display_settings(self):
+        """应用控制柄显示设置，实时生效"""
+        Shape.handle_highlight_point = self._config.get("handle_highlight_point", True)
+        Shape.handle_highlight_square = self._config.get("handle_highlight_square", True)
+        Shape.handle_normal_point = self._config.get("handle_normal_point", False)
+        Shape.handle_normal_square = self._config.get("handle_normal_square", False)
+        self.canvas.update()
+
     def on_page_text_description_changed(self, shape_index, new_description):
         """页文本工具中 description 改变时的处理"""
         # 更新右侧的 shape_text_edit（如果当前选中的是这个 shape）
@@ -5303,6 +5326,44 @@ class LabelingWidget(QtWidgets.QWidget):
         """切换标签切换快捷键管理器窗口"""
         # 这个对话框是模态的，每次都创建新的
         self.open_label_toggle_shortcut_manager()
+
+    def toggle_ghost_paste_mode(self):
+        """切换虚影粘贴模式"""
+        # 获取当前状态
+        current_state = self._config.get('smart_guides_paste_preview_enabled', True)
+        new_state = not current_state
+        
+        # 更新配置
+        self._config['smart_guides_paste_preview_enabled'] = new_state
+        save_config(self._config)
+        
+        # 更新canvas的设置
+        self.canvas.smart_guides_paste_preview_enabled = new_state
+        
+        # 如果关闭虚影粘贴模式，清除当前的虚影预览
+        if not new_state:
+            self.canvas.disable_paste_preview()
+        
+        # 如果辅助线对话框存在，同步更新复选框状态
+        if hasattr(self, 'smart_guides_dialog') and self.smart_guides_dialog is not None:
+            self.smart_guides_dialog.paste_preview_checkbox.blockSignals(True)
+            self.smart_guides_dialog.paste_preview_checkbox.setChecked(new_state)
+            self.smart_guides_dialog.paste_preview_checkbox.blockSignals(False)
+        
+        # 显示悬浮提示（带Emoji）
+        if new_state:
+            popup = Popup(
+                self.tr("✅ 虚影粘贴模式已开启"),
+                self,
+                msec=1500,
+            )
+        else:
+            popup = Popup(
+                self.tr("❌ 虚影粘贴模式已关闭"),
+                self,
+                msec=1500,
+            )
+        popup.show_popup(self, popup_height=36, position="center")
 
     def toggle_label_manager(self):
         """切换标签管理器窗口"""
@@ -5930,6 +5991,7 @@ class LabelingWidget(QtWidgets.QWidget):
             "undo": self.actions.undo,
             "undo_last_point": self.actions.undo_last_point,
             "remove_selected_point": self.actions.remove_point,
+            "add_point_to_edge": getattr(self.actions, 'add_point_to_edge', None),
             "group_selected_shapes": getattr(self.actions, 'group_selected_shapes', None),
             "ungroup_selected_shapes": getattr(self.actions, 'ungroup_selected_shapes', None),
             "union_selected_shapes": getattr(self.actions, 'union_selection', None),
@@ -5956,74 +6018,86 @@ class LabelingWidget(QtWidgets.QWidget):
             "toggle_visibility_shapes": self.actions.visibility_shapes_mode,
             "toggle_keep_prev_mode": self.actions.keep_prev_mode,
             "toggle_auto_use_last_label": self.actions.auto_use_last_label_mode,
-            # Tool functions (these are not stored in self.actions, need to find them)
-            "auto_label": None,  # Will be handled separately
-            "expand_margins": None,  # Will be handled separately
-            "alignment_tool": None,  # Will be handled separately
-            "segmentation_tool": None,  # Will be handled separately
-            "object_manager": None,  # Will be handled separately
-            "edit_group_id": None,  # Will be handled separately
+            "toggle_magnifier": getattr(self.actions, 'toggle_magnifier', None),
+            "toggle_magnifier_auto_detect": getattr(self.actions, 'toggle_magnifier_auto_detect', None),
+            # Tool functions
             "edit_digit_shortcut": self.actions.digit_shortcut_manager,
-            "keymap_dialog": None,  # Will be handled separately
-            # Other operations
-            "loop_thru_labels": None,  # Will be handled separately
+        }
+
+        # Map action text patterns to shortcut keys for dynamic lookup
+        action_text_to_key = {
+            ("Auto Labeling", "自动标注"): "auto_label",
+            ("标注框边距扩展工具",): "expand_margins",
+            ("矩形对齐工具",): "alignment_tool",
+            ("矩形分割工具",): "segmentation_tool",
+            ("标签页管理器",): "object_manager",
+            ("Group ID Manager", "群组编号管理器"): "edit_group_id",
+            ("旋转标签快捷键管理器",): "keymap_dialog",
+            ("Loop through labels", "循环标签"): "loop_thru_labels",
+            ("切换虚影粘贴模式",): "toggle_ghost_paste",
+            ("标签排序工具",): "tag_sort_tool",
+            ("旋转框角度修正工具",): "angle_correction_tool",
+            ("区域合并工具",): "merge_tool",
+            ("双色标签工具",): "dual_color_tool",
+            ("掩膜生成",): "mask_generator_tool",
+            ("红绿灯窗口",): "traffic_light_tool",
+            ("矩形缩放工具",): "rectangle_scale_tool",
+            ("页文本工具",): "page_text_tool",
+            ("高亮设置",): "highlight_settings_tool",
+            ("标签管理器",): "label_manager",
+            ("标签切换快捷键管理器",): "label_toggle_shortcut_manager",
+            ("颜色管理工具",): "color_manager_tool",
+            ("辅助线工具",): "smart_guides_tool",
+            ("快捷键管理器",): "shortcut_manager_tool",
+            ("鼠标滚轮设置",): "wheel_settings_tool",
+            ("切换放大镜", "Toggle Magnifier"): "toggle_magnifier",
+            ("切换自动探测放大镜",): "toggle_magnifier_auto_detect",
+            ("在边上添加点", "Add Point to Edge"): "add_point_to_edge",
         }
 
         # Find actions that are not in self.actions by searching through all actions
-        # These actions are created but not stored in self.actions
         for action_obj in self.findChildren(QtWidgets.QAction):
             action_text = action_obj.text().replace("&", "")
-            # Map action text to shortcut key
-            if "Auto Labeling" in action_text or "自动标注" in action_text:
-                shortcut_action_map["auto_label"] = action_obj
-            elif "标注框边距扩展工具" in action_text:
-                shortcut_action_map["expand_margins"] = action_obj
-            elif "矩形对齐工具" in action_text:
-                shortcut_action_map["alignment_tool"] = action_obj
-            elif "矩形分割工具" in action_text:
-                shortcut_action_map["segmentation_tool"] = action_obj
-            elif "标签页管理器" in action_text:
-                shortcut_action_map["object_manager"] = action_obj
-            elif "Group ID Manager" in action_text or "群组编号管理器" in action_text:
-                shortcut_action_map["edit_group_id"] = action_obj
-            elif "旋转标签快捷键管理器" in action_text:
-                shortcut_action_map["keymap_dialog"] = action_obj
-            elif "Loop through labels" in action_text or "循环标签" in action_text:
-                shortcut_action_map["loop_thru_labels"] = action_obj
+            for patterns, key in action_text_to_key.items():
+                if any(pattern in action_text for pattern in patterns):
+                    shortcut_action_map[key] = action_obj
+                    break
 
         # Update shortcuts for all mapped actions
         for key, action in shortcut_action_map.items():
-            if action and key in shortcuts:
-                shortcut_value = shortcuts[key]
-                # Handle both string and list formats
+            if action is None:
+                continue
+            # Get shortcut value, use empty string if not in config
+            shortcut_value = shortcuts.get(key, "")
+            # Handle both string and list formats
+            if isinstance(shortcut_value, list):
+                shortcut_str = shortcut_value[0] if shortcut_value else ""
+            else:
+                shortcut_str = shortcut_value if shortcut_value else ""
+
+            # Update the action's shortcut (including clearing it if empty)
+            action.setShortcut(QtGui.QKeySequence(shortcut_str))
+
+        # Update button shortcuts (these are QPushButton, not QAction)
+        button_shortcut_map = {
+            'btn_select_all_shapes': 'select_all_shapes',
+            'btn_invert_selection_shapes': 'invert_selection_shapes',
+            'btn_deselect_all_shapes': 'deselect_all_shapes',
+            'btn_highlight': 'toggle_highlight',
+            'btn_select_all': 'select_all_labels',
+            'btn_invert_selection': 'invert_selection_labels',
+            'btn_deselect_all': 'deselect_all_labels',
+            'btn_overlap': 'toggle_overlap',
+        }
+        for btn_name, shortcut_key in button_shortcut_map.items():
+            if hasattr(self, btn_name):
+                btn = getattr(self, btn_name)
+                shortcut_value = shortcuts.get(shortcut_key, "")
                 if isinstance(shortcut_value, list):
                     shortcut_str = shortcut_value[0] if shortcut_value else ""
                 else:
-                    shortcut_str = shortcut_value
-
-                # Update the action's shortcut
-                if shortcut_str:
-                    action.setShortcut(QtGui.QKeySequence(shortcut_str))
-                else:
-                    action.setShortcut(QtGui.QKeySequence())
-
-        # Update button shortcuts
-        if hasattr(self, 'btn_select_all_shapes'):
-            self.btn_select_all_shapes.setShortcut(shortcuts.get("select_all_shapes", ""))
-        if hasattr(self, 'btn_invert_selection_shapes'):
-            self.btn_invert_selection_shapes.setShortcut(shortcuts.get("invert_selection_shapes", ""))
-        if hasattr(self, 'btn_deselect_all_shapes'):
-            self.btn_deselect_all_shapes.setShortcut(shortcuts.get("deselect_all_shapes", ""))
-        if hasattr(self, 'btn_highlight'):
-            self.btn_highlight.setShortcut(shortcuts.get("toggle_highlight", ""))
-        if hasattr(self, 'btn_select_all'):
-            self.btn_select_all.setShortcut(shortcuts.get("select_all_labels", ""))
-        if hasattr(self, 'btn_invert_selection'):
-            self.btn_invert_selection.setShortcut(shortcuts.get("invert_selection_labels", ""))
-        if hasattr(self, 'btn_deselect_all'):
-            self.btn_deselect_all.setShortcut(shortcuts.get("deselect_all_labels", ""))
-        if hasattr(self, 'btn_overlap'):
-            self.btn_overlap.setShortcut(shortcuts.get("toggle_overlap", ""))
+                    shortcut_str = shortcut_value if shortcut_value else ""
+                btn.setShortcut(shortcut_str)
 
         # Update segmentation dialog shortcut if it exists
         if self.segmentation_dialog is not None:

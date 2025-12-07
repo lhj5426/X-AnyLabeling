@@ -76,6 +76,32 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.default_highlight_layout.addWidget(self.default_highlight_checkbox)
         self.default_highlight_group.setLayout(self.default_highlight_layout)
 
+        # Control Handle Display Settings (控制柄显示设置)
+        self.handle_group = QtWidgets.QGroupBox("控制柄显示设置")
+        self.handle_layout = QtWidgets.QVBoxLayout()
+        
+        # 高亮时显示设置
+        self.handle_highlight_label = QtWidgets.QLabel("高亮时:")
+        self.handle_highlight_point_checkbox = QtWidgets.QCheckBox("显示点 (圆形)")
+        self.handle_highlight_square_checkbox = QtWidgets.QCheckBox("显示块 (方形)")
+        self.handle_highlight_point_checkbox.setChecked(True)
+        self.handle_highlight_square_checkbox.setChecked(True)
+        
+        # 非高亮时显示设置
+        self.handle_normal_label = QtWidgets.QLabel("非高亮时:")
+        self.handle_normal_point_checkbox = QtWidgets.QCheckBox("显示点 (圆形)")
+        self.handle_normal_square_checkbox = QtWidgets.QCheckBox("显示块 (方形)")
+        self.handle_normal_point_checkbox.setChecked(False)
+        self.handle_normal_square_checkbox.setChecked(False)
+        
+        self.handle_layout.addWidget(self.handle_highlight_label)
+        self.handle_layout.addWidget(self.handle_highlight_point_checkbox)
+        self.handle_layout.addWidget(self.handle_highlight_square_checkbox)
+        self.handle_layout.addWidget(self.handle_normal_label)
+        self.handle_layout.addWidget(self.handle_normal_point_checkbox)
+        self.handle_layout.addWidget(self.handle_normal_square_checkbox)
+        self.handle_group.setLayout(self.handle_layout)
+
         self.layout.addWidget(self.positive_group)
         self.layout.addWidget(self.negative_group)
         self.layout.addWidget(self.lock_group)
@@ -83,6 +109,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.layout.addWidget(self.no_highlight_group)
         self.layout.addWidget(self.mixed_mode_group)
         self.layout.addWidget(self.default_highlight_group)
+        self.layout.addWidget(self.handle_group)
 
         # 添加最小化按钮，移除帮助按钮
         self.setWindowFlags(
@@ -102,6 +129,12 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
         self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.default_highlight_checkbox.stateChanged.connect(self._on_default_highlight_changed)
+        
+        # Connect handle display settings
+        self.handle_highlight_point_checkbox.stateChanged.connect(self._on_handle_setting_changed)
+        self.handle_highlight_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
+        self.handle_normal_point_checkbox.stateChanged.connect(self._on_handle_setting_changed)
+        self.handle_normal_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
 
         self.load_settings()
 
@@ -118,6 +151,10 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.no_highlight_input.textChanged.disconnect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.default_highlight_checkbox.stateChanged.disconnect(self._on_default_highlight_changed)
+            self.handle_highlight_point_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
+            self.handle_highlight_square_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
+            self.handle_normal_point_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
+            self.handle_normal_square_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
 
             positive_labels = self._config.get("highlight_positive", "")
             negative_labels = self._config.get("highlight_negative", "")
@@ -137,6 +174,12 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.no_highlight_input.setText(no_highlight_labels)
             self.mixed_mode_checkbox.setChecked(mixed_mode_enabled)
             self.default_highlight_checkbox.setChecked(default_highlight_enabled)
+            
+            # Load handle display settings
+            self.handle_highlight_point_checkbox.setChecked(self._config.get("handle_highlight_point", True))
+            self.handle_highlight_square_checkbox.setChecked(self._config.get("handle_highlight_square", True))
+            self.handle_normal_point_checkbox.setChecked(self._config.get("handle_normal_point", False))
+            self.handle_normal_square_checkbox.setChecked(self._config.get("handle_normal_square", False))
 
             # Reconnect signals
             self.positive_input.textChanged.connect(self._realtime_save_settings)
@@ -148,6 +191,10 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.default_highlight_checkbox.stateChanged.connect(self._on_default_highlight_changed)
+            self.handle_highlight_point_checkbox.stateChanged.connect(self._on_handle_setting_changed)
+            self.handle_highlight_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
+            self.handle_normal_point_checkbox.stateChanged.connect(self._on_handle_setting_changed)
+            self.handle_normal_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
 
     def _realtime_save_settings(self):
         """Saves the current settings from the line edits to the config file in real-time."""
@@ -172,6 +219,19 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             # Apply the change immediately to all shapes in the parent (label_widget)
             if self.parent() and hasattr(self.parent(), 'apply_default_highlight_setting'):
                 self.parent().apply_default_highlight_setting(is_enabled)
+
+    def _on_handle_setting_changed(self, state):
+        """Handle control handle display settings change with real-time effect."""
+        if self._config:
+            self._config["handle_highlight_point"] = self.handle_highlight_point_checkbox.isChecked()
+            self._config["handle_highlight_square"] = self.handle_highlight_square_checkbox.isChecked()
+            self._config["handle_normal_point"] = self.handle_normal_point_checkbox.isChecked()
+            self._config["handle_normal_square"] = self.handle_normal_square_checkbox.isChecked()
+            save_config(self._config)
+            
+            # Apply the change immediately to Shape class
+            if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
+                self.parent().apply_handle_display_settings()
 
     def showEvent(self, event):
         """Override showEvent to reload settings every time the dialog is shown."""

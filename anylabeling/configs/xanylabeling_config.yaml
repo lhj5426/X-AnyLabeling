@@ -242,6 +242,7 @@ shortcuts:
   smart_guides_tool: Ctrl+Alt+G
   shortcut_manager_tool: Ctrl+Alt+K
   wheel_settings_tool: Ctrl+Alt+W
+  toggle_ghost_paste: B
 
 # Auto labeling
 custom_models: []
