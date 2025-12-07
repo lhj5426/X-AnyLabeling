@@ -3529,34 +3529,66 @@ class LabelingWidget(QtWidgets.QWidget):
             union_shape.points[3].setX(min_x)
             union_shape.points[3].setY(max_y)
         elif len(rotation_shapes) > 0:
-            # 处理旋转矩形合并
+            # 处理旋转矩形合并 - 使用最小面积外接矩形(MABR)算法
+            import math
+            from services.merger import get_mabr_from_points
+
             all_points = []
             for rot_shape in rotation_shapes:
                 all_points.extend(rot_shape['points'])
 
-            # 找到包围所有点的最小外接矩形
-            min_x = min([p[0] for p in all_points])
-            min_y = min([p[1] for p in all_points])
-            max_x = max([p[0] for p in all_points])
-            max_y = max([p[1] for p in all_points])
+            # 检查所有旋转矩形是否有相同的角度
+            first_angle = rotation_shapes[0]['direction']
+            all_same_direction = all(
+                abs(rot_shape['direction'] - first_angle) < 1e-6 
+                for rot_shape in rotation_shapes
+            )
+
+            # 使用MABR算法计算最小外接旋转矩形
+            center_x, center_y, width, height, mabr_angle = get_mabr_from_points(all_points)
+
+            # 如果所有矩形角度相同，保持原角度；否则使用MABR计算的最优角度
+            if all_same_direction:
+                final_angle = first_angle
+                # 当保持原角度时，需要重新计算包围盒
+                # 将所有点旋转到水平坐标系，计算AABB，再旋转回去
+                cos_neg = math.cos(-final_angle)
+                sin_neg = math.sin(-final_angle)
+                
+                # 将点旋转到水平坐标系
+                rotated_points = []
+                for p in all_points:
+                    rx = p[0] * cos_neg - p[1] * sin_neg
+                    ry = p[0] * sin_neg + p[1] * cos_neg
+                    rotated_points.append((rx, ry))
+                
+                # 计算旋转后的AABB
+                min_rx = min(p[0] for p in rotated_points)
+                max_rx = max(p[0] for p in rotated_points)
+                min_ry = min(p[1] for p in rotated_points)
+                max_ry = max(p[1] for p in rotated_points)
+                
+                # 计算中心和尺寸
+                center_rx = (min_rx + max_rx) / 2
+                center_ry = (min_ry + max_ry) / 2
+                width = max_rx - min_rx
+                height = max_ry - min_ry
+                
+                # 将中心旋转回原坐标系
+                cos_pos = math.cos(final_angle)
+                sin_pos = math.sin(final_angle)
+                center_x = center_rx * cos_pos - center_ry * sin_pos
+                center_y = center_rx * sin_pos + center_ry * cos_pos
+            else:
+                final_angle = mabr_angle
 
             # 保持为旋转矩形类型
             union_shape.shape_type = "rotation"
-
-            # 获取第一个旋转矩形的角度
-            first_angle = rotation_shapes[0]['direction']
-            union_shape.direction = first_angle
-
-            # 根据角度计算旋转矩形的四个点
-            center_x = (min_x + max_x) / 2
-            center_y = (min_y + max_y) / 2
-            width = max_x - min_x
-            height = max_y - min_y
+            union_shape.direction = final_angle
 
             # 计算旋转矩形的四个角点
-            import math
-            cos_angle = math.cos(first_angle)
-            sin_angle = math.sin(first_angle)
+            cos_angle = math.cos(final_angle)
+            sin_angle = math.sin(final_angle)
             half_w = width / 2
             half_h = height / 2
 
@@ -3570,7 +3602,6 @@ class LabelingWidget(QtWidgets.QWidget):
 
             # 旋转并设置到union_shape的points
             for i, (dx, dy) in enumerate(corners):
-                # 旋转变换
                 rotated_x = dx * cos_angle - dy * sin_angle + center_x
                 rotated_y = dx * sin_angle + dy * cos_angle + center_y
                 union_shape.points[i].setX(rotated_x)

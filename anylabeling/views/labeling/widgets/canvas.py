@@ -244,7 +244,7 @@ class Canvas(
         # Shift+drag path selection state
         self.path_selection_mode = False
         self.path_selection_points = []
-        self.path_highlighted_shapes = set()  # Shapes highlighted during path selection
+        self.path_highlighted_shapes = []  # Shapes highlighted during path selection (ordered by intersection)
 
         # Ctrl+drag path selection state (hide even-numbered shapes)
         self.ctrl_path_selection_mode = False
@@ -1565,7 +1565,7 @@ class Canvas(
             not self.drawing()):
             self.path_selection_mode = True
             self.path_selection_points = [pos]
-            self.path_highlighted_shapes = set()
+            self.path_highlighted_shapes = []
             return
 
         # Shift+RightButton drag path selection mode (hide even-numbered shapes)
@@ -1998,21 +1998,54 @@ class Canvas(
         return inside
 
     def update_path_highlights(self):
-        """Update highlighted shapes based on current path selection"""
+        """Update highlighted shapes based on current path selection, ordered by intersection position along path"""
         if not self.path_selection_points or len(self.path_selection_points) < 2:
             return
 
-        # Check each shape to see if the path intersects it
-        for shape in self.shapes:
-            if not shape.visible:
-                continue
+        # Get locked labels
+        locked_labels = {
+            label.strip()
+            for label in self._config.get("locked_labels", "").split(",")
+            if label.strip()
+        }
 
-            # Check if the latest path segment intersects this shape
-            latest_start = self.path_selection_points[-2]
-            latest_end = self.path_selection_points[-1]
+        # Recalculate all intersections and their positions along the path
+        # Store (cumulative_distance_to_intersection, shape) pairs
+        shape_intersections = []
 
-            if self.path_intersects_shape(latest_start, latest_end, shape):
-                self.path_highlighted_shapes.add(shape)
+        cumulative_distance = 0.0
+        for seg_idx in range(len(self.path_selection_points) - 1):
+            seg_start = self.path_selection_points[seg_idx]
+            seg_end = self.path_selection_points[seg_idx + 1]
+            seg_length = ((seg_end.x() - seg_start.x()) ** 2 + (seg_end.y() - seg_start.y()) ** 2) ** 0.5
+
+            for shape in self.shapes:
+                if not shape.visible:
+                    continue
+                # Skip locked shapes
+                is_locked = shape.label in locked_labels and not getattr(
+                    shape, "is_session_unlocked", False
+                )
+                if is_locked:
+                    continue
+                # Skip if already recorded
+                if any(s == shape for _, s in shape_intersections):
+                    continue
+
+                # Get intersection point with this segment
+                intersection_t = self.get_shape_intersection_t(shape, seg_start, seg_end)
+                if intersection_t is not None:
+                    # Calculate distance along path to this intersection
+                    dist_to_intersection = cumulative_distance + intersection_t * seg_length
+                    shape_intersections.append((dist_to_intersection, shape))
+
+            cumulative_distance += seg_length
+
+        # Sort by distance along path
+        shape_intersections.sort(key=lambda x: x[0])
+
+        # Update the ordered list
+        self.path_highlighted_shapes = [shape for _, shape in shape_intersections]
 
     def path_intersects_shape(self, start_point, end_point, shape):
         """Check if a path segment intersects with a shape"""
@@ -2298,22 +2331,6 @@ class Canvas(
         self.delete_path_selection_points = []
         self.delete_path_intersected_shapes = []
         self.repaint()
-
-    def update_path_highlights(self):
-        """Update highlighted shapes based on current path"""
-        if not self.path_selection_mode or len(self.path_selection_points) < 2:
-            return
-
-        # Clear previous highlights
-        self.path_highlighted_shapes.clear()
-
-        # Check each shape for intersection with the path
-        for shape in self.shapes:
-            if not shape.visible:
-                continue
-
-            if self.shape_intersects_path(shape, self.path_selection_points):
-                self.path_highlighted_shapes.add(shape)
 
     def shape_intersects_path(self, shape, path_points):
         """Check if a shape intersects with the given path"""
@@ -4489,7 +4506,7 @@ class Canvas(
 
         # Highlight shapes that intersect with the path - use hover effect settings
         # Still in screen coordinates (resetTransform), so convert shape points
-        for shape in self.path_highlighted_shapes:
+        for idx, shape in enumerate(self.path_highlighted_shapes):
             if shape.visible:
                 # Use the same hover line color and width from Shape class configuration
                 hover_color = Shape.canvas_hover_line_color
@@ -4526,6 +4543,34 @@ class Canvas(
                     edge = to_screen(shape.points[1])
                     radius = ((edge.x() - center.x()) ** 2 + (edge.y() - center.y()) ** 2) ** 0.5
                     p.drawEllipse(center, radius, radius)
+
+                # Draw number at shape center (magenta background, white text)
+                # idx + 1 represents the order in which shapes were intersected by the path
+                if shape.points:
+                    sum_x = sum(pt.x() for pt in shape.points)
+                    sum_y = sum(pt.y() for pt in shape.points)
+                    center_img = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
+                    center_screen = to_screen(center_img)
+
+                    # Draw magenta (#FF00FF) background circle
+                    number_radius = 12
+                    p.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 255)))  # Magenta background
+                    p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # White border
+                    p.drawEllipse(center_screen, number_radius, number_radius)
+
+                    # Draw number text (order of intersection)
+                    font = QtGui.QFont()
+                    font.setPointSize(10)
+                    font.setBold(True)
+                    p.setFont(font)
+                    p.setPen(QtGui.QColor(255, 255, 255))  # White text
+                    text_rect = QtCore.QRectF(
+                        center_screen.x() - number_radius,
+                        center_screen.y() - number_radius,
+                        number_radius * 2,
+                        number_radius * 2
+                    )
+                    p.drawText(text_rect, Qt.AlignCenter, str(idx + 1))
 
         p.restore()
 
@@ -7233,6 +7278,41 @@ class Canvas(
                 painter.setBrush(QtGui.QBrush(QtGui.QColor(0, 191, 255)))
                 painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), border_width))
                 painter.drawEllipse(end_point, circle_radius, circle_radius)
+        
+        # 绘制被选中形状的数字序号（洋红色背景白字，按穿过顺序）
+        number_radius = 12
+        for idx, shape in enumerate(self.path_highlighted_shapes):
+            if not shape.visible:
+                continue
+            
+            # 检查形状是否与裁剪区域相交
+            if not shape.bounding_rect().intersects(crop_rect):
+                continue
+            
+            # 计算形状中心点
+            if shape.points:
+                sum_x = sum(pt.x() for pt in shape.points)
+                sum_y = sum(pt.y() for pt in shape.points)
+                center = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
+                
+                # 绘制洋红色(#FF00FF)背景圆圈
+                painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 0, 255)))  # 洋红色背景
+                painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # 白色边框
+                painter.drawEllipse(center, number_radius, number_radius)
+                
+                # 绘制数字序号（按穿过顺序）
+                font = QtGui.QFont()
+                font.setPointSize(10)
+                font.setBold(True)
+                painter.setFont(font)
+                painter.setPen(QtGui.QColor(255, 255, 255))  # 白色文字
+                text_rect = QtCore.QRectF(
+                    center.x() - number_radius,
+                    center.y() - number_radius,
+                    number_radius * 2,
+                    number_radius * 2
+                )
+                painter.drawText(text_rect, Qt.AlignCenter, str(idx + 1))
 
     def _draw_magnifier_ctrl_path_selection(self, painter, crop_rect):
         """
