@@ -548,8 +548,13 @@ https://github.com/user-attachments/assets/4e001679-2a48-4686-b66f-5638dcaf55d1
 
 https://github.com/user-attachments/assets/d4d1b25c-2cdb-4fb5-920d-d6124fb35d13
 
+109.增加标签同步工具 增加全局上对齐 左对齐
 
+https://github.com/user-attachments/assets/9c53f355-3b2c-4cd1-b564-e8251ce0b909
 
+110.保存子图 增加图片格式 选择 
+
+https://github.com/user-attachments/assets/fbf64e7e-fa73-416b-b89b-4c8e2f873811
 
 
 
