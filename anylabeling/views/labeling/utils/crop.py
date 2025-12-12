@@ -190,7 +190,7 @@ def process_single_image(args):
 
     Args:
         args: Tuple containing
-        (image_file, label_dir_path, save_path, min_width, min_height, label_start_indices)
+        (image_file, label_dir_path, save_path, min_width, min_height, label_start_indices, image_format, jpeg_quality, png_compression)
     """
     (
         image_file,
@@ -199,7 +199,18 @@ def process_single_image(args):
         min_width,
         min_height,
         label_start_indices,
+        image_format,
+        jpeg_quality,
+        png_compression,
     ) = args
+    
+    # 默认格式和参数
+    if not image_format:
+        image_format = "jpg"
+    if not jpeg_quality:
+        jpeg_quality = 95
+    if png_compression is None:
+        png_compression = 3
     try:
         image_name = osp.basename(image_file)
         label_file = osp.join(
@@ -375,12 +386,25 @@ def process_single_image(args):
             dst_path = Path(save_path) / label
             dst_path.mkdir(parents=True, exist_ok=True)
 
-            dst_file = (
-                dst_path / f"{orig_filename}_{current_index}-{shape_type}.jpg"
-            )
+            # 使用原始文件名，如果有多个相同标签则添加序号
+            if current_index == 1:
+                dst_file = dst_path / f"{orig_filename}.{image_format}"
+                # 如果文件已存在，说明有重复，需要重命名
+                if dst_file.exists():
+                    dst_file = dst_path / f"{orig_filename}_{current_index}.{image_format}"
+            else:
+                dst_file = dst_path / f"{orig_filename}_{current_index}.{image_format}"
 
             try:
-                is_success, buf = cv2.imencode(".jpg", cropped_image)
+                # 根据格式设置编码参数
+                if image_format in ["jpg", "jpeg"]:
+                    encode_params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
+                elif image_format == "png":
+                    encode_params = [cv2.IMWRITE_PNG_COMPRESSION, png_compression]
+                else:
+                    encode_params = []
+                
+                is_success, buf = cv2.imencode(f".{image_format}", cropped_image, encode_params)
                 if is_success and buf is not None:
                     with open(str(dst_file), "wb") as f:
                         f.write(buf.tobytes())
@@ -400,7 +424,7 @@ def save_crop(self):
 
     if not self.filename:
         popup = Popup(
-            self.tr("Please load an image folder before proceeding!"),
+            self.tr("请先加载图片文件夹！"),
             self,
             msec=1000,
             icon=new_icon_path("warning", "svg"),
@@ -409,7 +433,7 @@ def save_crop(self):
         return
 
     dialog = QDialog(self)
-    dialog.setWindowTitle(self.tr("Cropped Image Options"))
+    dialog.setWindowTitle(self.tr("裁剪图片选项"))
     dialog.setMinimumWidth(500)
     dialog.setStyleSheet(get_export_option_style())
 
@@ -418,7 +442,7 @@ def save_crop(self):
     layout.setSpacing(16)
 
     path_layout = QVBoxLayout()
-    path_label = QLabel(self.tr("Save Path"))
+    path_label = QLabel(self.tr("保存路径"))
     path_layout.addWidget(path_label)
 
     path_input_layout = QHBoxLayout()
@@ -428,19 +452,19 @@ def save_crop(self):
     path_edit.setText(
         osp.realpath(osp.join(osp.dirname(self.filename), "..", "crops"))
     )
-    path_edit.setPlaceholderText(self.tr("Select Save Directory"))
+    path_edit.setPlaceholderText(self.tr("选择保存目录"))
 
     def browse_export_path():
         path = QFileDialog.getExistingDirectory(
             self,
-            self.tr("Select Save Directory"),
+            self.tr("选择保存目录"),
             path_edit.text(),
             QFileDialog.DontUseNativeDialog,
         )
         if path:
             path_edit.setText(path)
 
-    path_button = QPushButton(self.tr("Browse"))
+    path_button = QPushButton(self.tr("浏览"))
     path_button.clicked.connect(browse_export_path)
     path_button.setStyleSheet(get_cancel_btn_style())
 
@@ -450,7 +474,7 @@ def save_crop(self):
     layout.addLayout(path_layout)
 
     min_width_layout = QHBoxLayout()
-    min_width_label = QLabel(self.tr("Minimum width:"))
+    min_width_label = QLabel(self.tr("最小宽度:"))
     min_width_spin = QSpinBox()
     min_width_spin.setRange(0, 10000)
     min_width_spin.setValue(0)
@@ -466,7 +490,7 @@ def save_crop(self):
     layout.addLayout(min_width_layout)
 
     min_height_layout = QHBoxLayout()
-    min_height_label = QLabel(self.tr("Minimum height:"))
+    min_height_label = QLabel(self.tr("最小高度:"))
     min_height_spin = QSpinBox()
     min_height_spin.setRange(0, 10000)
     min_height_spin.setValue(0)
@@ -481,15 +505,91 @@ def save_crop(self):
     min_height_layout.addWidget(min_height_spin)
     layout.addLayout(min_height_layout)
 
+    # 图片格式选择
+    format_layout = QHBoxLayout()
+    format_label = QLabel(self.tr("图片格式:"))
+    from PyQt5.QtWidgets import QComboBox, QSlider
+    format_combo = QComboBox()
+    format_combo.addItems(["jpg", "jpeg", "png"])
+    format_combo.setMinimumWidth(100)
+    format_layout.addWidget(format_label)
+    format_layout.addWidget(format_combo)
+    format_layout.addStretch()
+    layout.addLayout(format_layout)
+
+    # JPEG质量选择（仅jpg/jpeg时显示）
+    quality_layout = QHBoxLayout()
+    quality_label = QLabel(self.tr("JPEG质量:"))
+    quality_slider = QSlider(Qt.Horizontal)
+    quality_slider.setRange(1, 100)
+    quality_slider.setValue(95)
+    quality_slider.setMinimumWidth(150)
+    quality_value_label = QLabel("95")
+    quality_value_label.setMinimumWidth(30)
+    quality_slider.valueChanged.connect(lambda v: quality_value_label.setText(str(v)))
+    quality_layout.addWidget(quality_label)
+    quality_layout.addWidget(quality_slider)
+    quality_layout.addWidget(quality_value_label)
+    quality_layout.addStretch()
+    layout.addLayout(quality_layout)
+
+    # PNG压缩级别选择（仅png时显示）
+    png_layout = QHBoxLayout()
+    png_label = QLabel(self.tr("PNG压缩级别:"))
+    png_slider = QSlider(Qt.Horizontal)
+    png_slider.setRange(0, 9)
+    png_slider.setValue(3)
+    png_slider.setMinimumWidth(150)
+    png_value_label = QLabel("3")
+    png_value_label.setMinimumWidth(30)
+    png_slider.valueChanged.connect(lambda v: png_value_label.setText(str(v)))
+    png_layout.addWidget(png_label)
+    png_layout.addWidget(png_slider)
+    png_layout.addWidget(png_value_label)
+    png_layout.addStretch()
+    layout.addLayout(png_layout)
+
+    # 根据格式选择自动更新默认文件夹名和参数选项显示
+    def update_folder_name_by_format(format_text):
+        current_path = path_edit.text()
+        if current_path:
+            parent_dir = osp.dirname(current_path)
+            # 根据格式设置文件夹名
+            if format_text == "jpg":
+                new_folder = "cropsjpg"
+            elif format_text == "jpeg":
+                new_folder = "cropsjpeg"
+            elif format_text == "png":
+                new_folder = "cropspng"
+            else:
+                new_folder = "crops"
+            path_edit.setText(osp.join(parent_dir, new_folder))
+        
+        # 显示/隐藏JPEG质量选项
+        is_jpeg = format_text in ["jpg", "jpeg"]
+        quality_label.setVisible(is_jpeg)
+        quality_slider.setVisible(is_jpeg)
+        quality_value_label.setVisible(is_jpeg)
+        
+        # 显示/隐藏PNG压缩选项
+        is_png = format_text == "png"
+        png_label.setVisible(is_png)
+        png_slider.setVisible(is_png)
+        png_value_label.setVisible(is_png)
+
+    format_combo.currentTextChanged.connect(update_folder_name_by_format)
+    # 初始化时也更新一次
+    update_folder_name_by_format(format_combo.currentText())
+
     button_layout = QHBoxLayout()
     button_layout.setContentsMargins(0, 16, 0, 0)
     button_layout.setSpacing(8)
 
-    cancel_button = QPushButton(self.tr("Cancel"))
+    cancel_button = QPushButton(self.tr("取消"))
     cancel_button.clicked.connect(dialog.reject)
     cancel_button.setStyleSheet(get_cancel_btn_style())
 
-    ok_button = QPushButton(self.tr("OK"))
+    ok_button = QPushButton(self.tr("确定"))
     ok_button.clicked.connect(dialog.accept)
     ok_button.setStyleSheet(get_ok_btn_style())
 
@@ -509,18 +609,18 @@ def save_crop(self):
     if osp.exists(save_path):
         msg_box = QMessageBox(self)
         msg_box.setIcon(QMessageBox.Warning)
-        msg_box.setWindowTitle(self.tr("Output Directory Exists!"))
-        msg_box.setText(self.tr("Directory already exists. Choose an action:"))
+        msg_box.setWindowTitle(self.tr("输出目录已存在！"))
+        msg_box.setText(self.tr("目录已存在，请选择操作："))
         msg_box.setInformativeText(
             self.tr(
-                "• Overwrite - Overwrite existing directory\n"
-                "• Cancel - Abort export"
+                "• 覆盖 - 覆盖现有目录\n"
+                "• 取消 - 取消导出"
             )
         )
 
-        msg_box.addButton(self.tr("Overwrite"), QMessageBox.YesRole)
+        msg_box.addButton(self.tr("覆盖"), QMessageBox.YesRole)
         cancel_button = msg_box.addButton(
-            self.tr("Cancel"), QMessageBox.RejectRole
+            self.tr("取消"), QMessageBox.RejectRole
         )
         msg_box.setStyleSheet(get_msg_box_style())
         msg_box.exec_()
@@ -540,14 +640,14 @@ def save_crop(self):
     label_dir_path = self.output_dir or osp.dirname(self.filename)
 
     progress_dialog = QProgressDialog(
-        self.tr("Processing..."),
-        self.tr("Cancel"),
+        self.tr("正在处理..."),
+        self.tr("取消"),
         0,
         len(image_file_list),
         self,
     )
     progress_dialog.setWindowModality(Qt.WindowModal)
-    progress_dialog.setWindowTitle(self.tr("Progress"))
+    progress_dialog.setWindowTitle(self.tr("进度"))
     progress_dialog.setMinimumWidth(400)
     progress_dialog.setMinimumHeight(150)
     progress_dialog.setStyleSheet(
@@ -589,6 +689,9 @@ def save_crop(self):
                 min_width_spin.value(),
                 min_height_spin.value(),
                 current_indices.copy(),
+                format_combo.currentText(),
+                quality_slider.value(),
+                png_slider.value(),
             )
             for image_file in image_file_list
         ]
@@ -628,9 +731,9 @@ def save_crop(self):
         worker.start()
 
     except Exception as e:
-        logger.error(f"Error occurred while exporting cropped images: {e}")
+        logger.error(f"导出裁剪图片时发生错误: {e}")
         popup = Popup(
-            self.tr(f"Error occurred while exporting cropped images!"),
+            self.tr(f"导出裁剪图片时发生错误！"),
             self,
             msec=3000,
             icon=new_icon_path("error", "svg"),

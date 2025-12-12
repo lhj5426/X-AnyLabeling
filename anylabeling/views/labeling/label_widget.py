@@ -88,6 +88,7 @@ from .widgets import (
     PageTextDialog,
     HighlightSettingsDialog,
 )
+from .widgets.label_sync_dialog import LabelSyncDialog
 from .widgets.rectangle_scale_dialog import RectangleScaleDialog
 from .widgets.horizontal_viewer_dialog import HorizontalViewerDialog
 from .widgets.vertical_viewer_dialog import VerticalViewerDialog
@@ -1593,6 +1594,14 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("查看和编辑当前页面所有标签的文本内容"),
         )
 
+        label_sync_tool = action(
+            self.tr("标签同步工具"),
+            self.toggle_label_sync_dialog,
+            shortcuts.get("label_sync_tool"),
+            icon="edit",
+            tip=self.tr("将当前页面的标签同步到其他页面"),
+        )
+
         highlight_settings_tool = action(
             self.tr("高亮设置"),
             self.toggle_highlight_settings_dialog,
@@ -2366,6 +2375,32 @@ class LabelingWidget(QtWidgets.QWidget):
             digit_shortcut_9=digit_shortcut_9,
             digit_shortcut_manager=digit_shortcut_manager,
             label_toggle_shortcut_manager=label_toggle_shortcut_manager,
+            label_sync_tool=label_sync_tool,
+            alignment_tool=alignment_tool,
+            # 工具功能 actions
+            overview=overview,
+            tag_sort_tool=tag_sort_tool,
+            angle_correction_tool=angle_correction_tool,
+            segmentation_tool=segmentation_tool,
+            wheel_settings_tool=wheel_settings_tool,
+            merge_tool=merge_shapes,
+            dual_color_tool=dual_color_label_tool,
+            mask_generator_tool=mask_generator_tool,
+            traffic_light_tool=traffic_light_tool,
+            keymap_tool=keymap_tool,
+            color_manager_tool=color_manager_tool,
+            smart_guides_tool=smart_guides_tool,
+            shortcut_manager_tool=shortcut_manager_tool,
+            rectangle_scale_tool=rectangle_scale_tool,
+            page_text_tool=page_text_tool,
+            highlight_settings_tool=highlight_settings_tool,
+            toggle_ghost_paste=toggle_ghost_paste,
+            label_manager=label_manager,
+            object_manager=object_manager,
+            edit_group_id=gid_manager,
+            expand_margins=expand_margins,
+            loop_thru_labels=loop_thru_labels,
+            auto_label=toggle_auto_labeling_widget,
             upload_image_flags_file=upload_image_flags_file,
             upload_label_flags_file=upload_label_flags_file,
             upload_shape_attrs_file=upload_shape_attrs_file,
@@ -2595,6 +2630,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 traffic_light_tool,
                 rectangle_scale_tool,
                 page_text_tool,
+                label_sync_tool,
                 highlight_settings_tool,
                 toggle_ghost_paste,
                 None,
@@ -3021,6 +3057,7 @@ class LabelingWidget(QtWidgets.QWidget):
         QtCore.QTimer.singleShot(100, self.restore_navigator_state)
 
         self.shape_list_changed.connect(self._update_object_manager)
+        self.shape_list_changed.connect(self._update_label_sync_dialog)
 
     def restore_navigator_state(self) -> None:
         """
@@ -5072,10 +5109,148 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def open_shortcut_manager_dialog(self):
         """Open the shortcut manager dialog."""
-        if not hasattr(self, 'shortcut_manager_dialog') or not self.shortcut_manager_dialog.isVisible():
+        if not hasattr(self, 'shortcut_manager_dialog') or self.shortcut_manager_dialog is None:
             self.shortcut_manager_dialog = ShortcutManagerDialog(self, self._config)
-            self.shortcut_manager_dialog.shortcuts_saved.connect(self.reload_all_shortcuts)
+            self.shortcut_manager_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+            # 连接信号 - 保存后刷新快捷键
+            self.shortcut_manager_dialog.shortcuts_saved.connect(self._reload_shortcuts)
+        
+        if self.shortcut_manager_dialog.isVisible():
+            self.shortcut_manager_dialog.raise_()
+            self.shortcut_manager_dialog.activateWindow()
+        else:
+            # 更新config引用
+            self.shortcut_manager_dialog._config = self._config
+            self.shortcut_manager_dialog.shortcuts = self._config.get("shortcuts", {})
+            self.shortcut_manager_dialog.load_shortcuts()
             self.shortcut_manager_dialog.show()
+
+    def _reload_shortcuts(self):
+        """快捷键保存后刷新所有action的快捷键"""
+        shortcuts = self._config.get("shortcuts", {})
+        
+        # action名称到快捷键key的映射
+        action_to_shortcut_key = {
+            # 文件操作
+            "open": "open",
+            "close": "close",
+            "save": "save",
+            "save_as": "save_as",
+            "delete_file": "delete_file",
+            "delete_image_file": "delete_image_file",
+            "open_next_image": "open_next",
+            "open_prev_image": "open_prev",
+            "open_next_unchecked_image": "open_next_unchecked",
+            "open_prev_unchecked_image": "open_prev_unchecked",
+            # 绘制工具
+            "create_mode": "create_polygon",
+            "create_rectangle_mode": "create_rectangle",
+            "create_rotation_mode": "create_rotation",
+            "create_rotation3_mode": "create_rotation3",
+            "create_rectangle3_mode": "create_rectangle3",
+            "create_circle_mode": "create_circle",
+            "create_line_mode": "create_line",
+            "create_point_mode": "create_point",
+            "create_line_strip_mode": "create_linestrip",
+            # 编辑操作
+            "edit": "edit_label",
+            "edit_mode": "edit_polygon",
+            "copy": "copy_polygon",
+            "paste": "paste_polygon",
+            "cancel_paste_preview": "cancel_paste_preview",
+            "delete": "delete_polygon",
+            "undo": "undo",
+            "undo_last_point": "undo_last_point",
+            "remove_point": "remove_selected_point",
+            # 显示控制
+            "show_labels": "show_labels",
+            "show_texts": "show_texts",
+            "show_linking": "show_linking",
+            "show_attributes": "show_attributes",
+            "show_order": "show_order",
+            "show_wh": "show_wh",
+            "visibility_shapes_mode": "toggle_visibility_shapes",
+            "hide_selected_polygons": "hide_selected_polygons",
+            "show_hidden_polygons": "show_hidden_polygons",
+            "toggle_cross_line": "toggle_crosshair",
+            "show_degrees": "toggle_degrees",
+            "toggle_magnifier": "toggle_magnifier",
+            "toggle_magnifier_auto_detect": "toggle_magnifier_auto_detect",
+            # 视图控制
+            "fit_window": "fit_window",
+            "fit_width": "fit_width",
+            "zoom_in": "zoom_in",
+            "zoom_out": "zoom_out",
+            "zoom_org": "zoom_to_original",
+            # 工具功能
+            "label_sync_tool": "label_sync_tool",
+            "page_text_tool": "page_text_tool",
+            "highlight_settings_tool": "highlight_settings_tool",
+            "rectangle_scale_tool": "rectangle_scale_tool",
+            "expand_margins": "expand_margins",
+            "tag_sort_tool": "tag_sort_tool",
+            "angle_correction_tool": "angle_correction_tool",
+            "alignment_tool": "alignment_tool",
+            "segmentation_tool": "segmentation_tool",
+            "merge_tool": "merge_tool",
+            "dual_color_tool": "dual_color_tool",
+            "mask_generator_tool": "mask_generator_tool",
+            "traffic_light_tool": "traffic_light_tool",
+            "label_manager": "label_manager",
+            "object_manager": "object_manager",
+            "edit_group_id": "edit_group_id",
+            "digit_shortcut_manager": "edit_digit_shortcut",
+            "label_toggle_shortcut_manager": "label_toggle_shortcut_manager",
+            "keymap_tool": "keymap_dialog",
+            "color_manager_tool": "color_manager_tool",
+            "smart_guides_tool": "smart_guides_tool",
+            "shortcut_manager_tool": "shortcut_manager_tool",
+            "wheel_settings_tool": "wheel_settings_tool",
+            "toggle_ghost_paste": "toggle_ghost_paste",
+            # 其他
+            "loop_thru_labels": "loop_thru_labels",
+            "keep_prev_mode": "toggle_keep_prev_mode",
+            "auto_use_last_label_mode": "toggle_auto_use_last_label",
+            "group_selected_shapes": "group_selected_shapes",
+            "ungroup_selected_shapes": "ungroup_selected_shapes",
+            "union_selection": "union_selected_shapes",
+            "select_all_shapes_canvas": "select_all_shapes",
+            "show_navigator": "show_navigator",
+            "overview": "show_overview",
+            "toggle_highlight": "toggle_highlight",
+            "toggle_overlap": "toggle_overlap",
+            "auto_label": "auto_label",
+            "run_all_images": "auto_run",
+        }
+        
+        # 遍历映射，更新每个action的快捷键
+        for action_name, shortcut_key in action_to_shortcut_key.items():
+            action = getattr(self.actions, action_name, None)
+            if action and isinstance(action, QtWidgets.QAction):
+                new_shortcut = shortcuts.get(shortcut_key, "")
+                if new_shortcut:
+                    if isinstance(new_shortcut, list):
+                        action.setShortcuts(new_shortcut)
+                    else:
+                        action.setShortcut(new_shortcut)
+                else:
+                    action.setShortcut("")
+        
+        # 更新按钮快捷键（这些不是action，是直接设置在按钮上的）
+        button_shortcuts = {
+            "btn_select_all_shapes": "select_all_shapes",
+            "btn_invert_selection_shapes": "invert_selection_shapes",
+            "btn_deselect_all_shapes": "deselect_all_shapes",
+            "btn_highlight": "toggle_highlight",
+            "btn_select_all": "select_all_labels",
+            "btn_invert_selection": "invert_selection_labels",
+            "btn_deselect_all": "deselect_all_labels",
+            "btn_overlap": "toggle_overlap",
+        }
+        for btn_name, shortcut_key in button_shortcuts.items():
+            btn = getattr(self, btn_name, None)
+            if btn and hasattr(btn, 'setShortcut'):
+                btn.setShortcut(shortcuts.get(shortcut_key, ""))
 
     def open_segmentation_dialog(self):
         """Open the segmentation tool dialog (for menu action)."""
@@ -5317,6 +5492,387 @@ class LabelingWidget(QtWidgets.QWidget):
     def toggle_page_text_dialog(self):
         """切换页文本工具窗口"""
         self._toggle_dialog('page_text_dialog', self.open_page_text_dialog)
+
+    def toggle_label_sync_dialog(self):
+        """切换标签同步工具窗口"""
+        # 检查是否有图像列表（仅在打开时检查）
+        dialog = getattr(self, 'label_sync_dialog', None)
+        if dialog is None or not dialog.isVisible():
+            if not self.image_list:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    self.tr("警告"),
+                    self.tr("请先加载图像文件夹！")
+                )
+                return
+            if not self.canvas.shapes:
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    self.tr("警告"),
+                    self.tr("当前页面没有标签可以同步！")
+                )
+                return
+        self._toggle_dialog('label_sync_dialog', self.open_label_sync_dialog)
+
+    def open_label_sync_dialog(self):
+        """打开标签同步对话框（非阻塞式）"""
+        # 创建或复用对话框（非阻塞式）
+        if not hasattr(self, 'label_sync_dialog') or self.label_sync_dialog is None:
+            self.label_sync_dialog = LabelSyncDialog(parent=self)
+            self.label_sync_dialog.sync_requested.connect(self.on_label_sync_requested)
+            # 连接选择同步信号（和标签页管理器一样）
+            self.label_sync_dialog.selection_changed.connect(
+                self.on_label_sync_selection_changed
+            )
+            self.canvas.selection_changed.connect(
+                self.label_sync_dialog.sync_selection
+            )
+            # 连接对齐信号
+            self.label_sync_dialog.align_requested.connect(
+                self.on_label_sync_align_requested
+            )
+        
+        # 获取画布上已选择的shapes
+        selected_shapes_on_canvas = list(self.canvas.selected_shapes) if self.canvas.selected_shapes else None
+        
+        # 更新对话框数据（强制更新，因为对话框还没显示）
+        self._update_label_sync_dialog(initial_selection=selected_shapes_on_canvas, force_update=True)
+        
+        # 显示对话框（非阻塞）
+        if self.label_sync_dialog.isVisible():
+            self.label_sync_dialog.raise_()
+            self.label_sync_dialog.activateWindow()
+        else:
+            self.label_sync_dialog.show()
+
+    def _update_label_sync_dialog(self, initial_selection=None, force_update=False):
+        """
+        更新标签同步对话框的数据（通过shape_list_changed信号调用）
+        
+        Args:
+            initial_selection: 初始选中的shapes列表（仅在首次打开时使用）
+            force_update: 强制更新（首次打开时使用）
+        """
+        if not hasattr(self, 'label_sync_dialog') or self.label_sync_dialog is None:
+            return
+        if not self.label_sync_dialog.isVisible() and not force_update:
+            return
+        
+        # 获取当前页面索引
+        current_index = self.file_list_widget.currentRow()
+        total_pages = len(self.image_list) if self.image_list else 1
+        
+        # 更新对话框数据
+        self.label_sync_dialog.update_items(
+            items=[item for item in self.label_list],
+            total_pages=total_pages,
+            current_page=current_index,
+            initial_selection=initial_selection
+        )
+
+    def on_label_sync_selection_changed(self, selected_shapes):
+        """处理标签同步对话框的选择变化，同步到画布"""
+        self.canvas.select_shapes(selected_shapes)
+
+    def on_label_sync_align_requested(self, reference_shape, align_type, start_page, end_page, skip_current, target_labels=None):
+        """处理标签同步对齐请求"""
+        current_page = self.file_list_widget.currentRow()
+        if target_labels is None:
+            target_labels = [reference_shape.label]
+        self.align_shapes_to_pages(
+            reference_shape=reference_shape,
+            align_type=align_type,
+            start_page=start_page,
+            end_page=end_page,
+            skip_current=skip_current,
+            current_page=current_page,
+            target_labels=target_labels
+        )
+
+    def align_shapes_to_pages(self, reference_shape, align_type, start_page, end_page, 
+                              skip_current, current_page, target_labels=None):
+        """
+        将所有页面的标签对齐到参照标签
+        
+        Args:
+            reference_shape: 参照标签
+            align_type: 对齐类型 "top" 或 "left"
+            start_page: 起始页面索引
+            end_page: 结束页面索引
+            skip_current: 是否跳过当前页面
+            current_page: 当前页面索引
+            target_labels: 要对齐的标签列表，None则对齐所有标签
+        """
+        import PIL.Image
+        
+        # 获取参照标签的边界
+        ref_points = reference_shape.points
+        if align_type == "top":
+            # 上对齐：获取最小Y值
+            ref_value = min(p.y() for p in ref_points)
+        else:
+            # 左对齐：获取最小X值
+            ref_value = min(p.x() for p in ref_points)
+
+        # 创建进度对话框
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在对齐标签..."),
+            self.tr("取消"),
+            0,
+            end_page - start_page + 1,
+            self
+        )
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setWindowTitle(self.tr("同步对齐"))
+        progress.setMinimumDuration(0)
+
+        success_count = 0
+        error_count = 0
+        skipped_count = 0
+
+        for i, page_index in enumerate(range(start_page, end_page + 1)):
+            progress.setValue(i)
+            progress.setLabelText(
+                self.tr(f"正在处理第 {page_index + 1} 页... ({i + 1}/{end_page - start_page + 1})")
+            )
+
+            if progress.wasCanceled():
+                break
+
+            if skip_current and page_index == current_page:
+                skipped_count += 1
+                continue
+
+            if page_index >= len(self.image_list):
+                error_count += 1
+                continue
+
+            image_path = self.image_list[page_index]
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(
+                    self.output_dir,
+                    osp.splitext(osp.basename(image_path))[0] + ".json"
+                )
+
+            try:
+                if not osp.exists(label_file_path):
+                    skipped_count += 1
+                    continue
+
+                # 加载标签文件
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                modified = False
+                for shape_data in data.get('shapes', []):
+                    # 标签过滤
+                    shape_label = shape_data.get('label', '')
+                    if target_labels and shape_label not in target_labels:
+                        continue
+                    
+                    points = shape_data.get('points', [])
+                    if not points:
+                        continue
+
+                    if align_type == "top":
+                        # 上对齐：计算当前最小Y，然后平移
+                        current_min_y = min(p[1] for p in points)
+                        offset = ref_value - current_min_y
+                        if abs(offset) > 0.01:
+                            shape_data['points'] = [[p[0], p[1] + offset] for p in points]
+                            modified = True
+                    else:
+                        # 左对齐：计算当前最小X，然后平移
+                        current_min_x = min(p[0] for p in points)
+                        offset = ref_value - current_min_x
+                        if abs(offset) > 0.01:
+                            shape_data['points'] = [[p[0] + offset, p[1]] for p in points]
+                            modified = True
+
+                if modified:
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    success_count += 1
+                else:
+                    skipped_count += 1
+
+            except Exception as e:
+                logger.error(f"对齐标签到页面 {page_index + 1} 失败: {str(e)}")
+                error_count += 1
+
+        progress.setValue(end_page - start_page + 1)
+
+        result_message = self.tr(
+            f"同步对齐完成！\n\n"
+            f"成功：{success_count} 个页面\n"
+            f"失败：{error_count} 个页面\n"
+            f"跳过：{skipped_count} 个页面"
+        )
+
+        QtWidgets.QMessageBox.information(
+            self,
+            self.tr("对齐完成"),
+            result_message
+        )
+
+        # 重新加载当前页面
+        if start_page <= current_page <= end_page and not skip_current:
+            self.load_file(self.filename)
+
+    def on_label_sync_requested(self, selected_shapes, start_page, end_page, skip_current, is_merge_mode):
+        """处理标签同步请求"""
+        current_page = self.file_list_widget.currentRow()
+        self.sync_shapes_to_pages(
+            shapes_to_sync=selected_shapes,
+            start_page=start_page,
+            end_page=end_page,
+            skip_current=skip_current,
+            is_merge_mode=is_merge_mode,
+            current_page=current_page
+        )
+
+    def sync_shapes_to_pages(self, shapes_to_sync, start_page, end_page, 
+                            skip_current, is_merge_mode, current_page):
+        """
+        将选中的shapes同步到指定页面范围
+        
+        Args:
+            shapes_to_sync: 要同步的shapes列表
+            start_page: 起始页面索引（从0开始）
+            end_page: 结束页面索引（从0开始）
+            skip_current: 是否跳过当前页面
+            is_merge_mode: True为合并模式，False为替换模式
+            current_page: 当前页面索引
+        """
+        import PIL.Image
+        
+        if not shapes_to_sync:
+            QtWidgets.QMessageBox.warning(
+                self,
+                self.tr("警告"),
+                self.tr("没有找到要同步的标签！")
+            )
+            return
+
+        # 创建进度对话框
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在同步标签..."),
+            self.tr("取消"),
+            0,
+            end_page - start_page + 1,
+            self
+        )
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setWindowTitle(self.tr("标签同步"))
+        progress.setMinimumDuration(0)
+
+        success_count = 0
+        error_count = 0
+        skipped_count = 0
+
+        for i, page_index in enumerate(range(start_page, end_page + 1)):
+            # 更新进度
+            progress.setValue(i)
+            progress.setLabelText(
+                self.tr(f"正在处理第 {page_index + 1} 页... ({i + 1}/{end_page - start_page + 1})")
+            )
+
+            # 检查是否取消
+            if progress.wasCanceled():
+                break
+
+            # 跳过当前页面
+            if skip_current and page_index == current_page:
+                skipped_count += 1
+                continue
+
+            # 获取目标图像路径
+            if page_index >= len(self.image_list):
+                error_count += 1
+                continue
+
+            image_path = self.image_list[page_index]
+            
+            # 获取对应的标签文件路径
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(
+                    self.output_dir,
+                    osp.splitext(osp.basename(image_path))[0] + ".json"
+                )
+
+            try:
+                # 加载目标页面的标签文件
+                target_label_file = LabelFile()
+                existing_shapes = []
+                
+                if osp.exists(label_file_path):
+                    target_label_file.load(label_file_path)
+                    existing_shapes = target_label_file.shapes
+                else:
+                    # 如果文件不存在，需要从图像获取基本信息
+                    target_label_file.image_path = osp.basename(image_path)
+                    target_label_file.image_data = None
+
+                # 根据模式处理shapes
+                # 获取要同步的标签名称列表
+                sync_labels = list(set([s.label for s in shapes_to_sync]))
+                
+                if is_merge_mode:
+                    # 合并模式：保留原有标签，添加新标签
+                    # 先移除目标文件中与要同步标签同名的shapes
+                    filtered_shapes = [
+                        s for s in existing_shapes 
+                        if s.label not in sync_labels
+                    ]
+                    # 添加要同步的shapes
+                    new_shapes = filtered_shapes + shapes_to_sync
+                else:
+                    # 替换模式：只保留要同步的标签
+                    new_shapes = shapes_to_sync
+
+                # 转换shapes为字典格式
+                shapes_data = [shape.to_dict() for shape in new_shapes]
+
+                # 保存标签文件
+                img = PIL.Image.open(image_path)
+                target_label_file.save(
+                    filename=label_file_path,
+                    shapes=shapes_data,
+                    image_path=osp.basename(image_path),
+                    image_height=img.height,
+                    image_width=img.width,
+                    image_data=None,
+                    other_data=getattr(target_label_file, 'other_data', {}),
+                    flags=getattr(target_label_file, 'flags', {})
+                )
+
+                success_count += 1
+
+            except Exception as e:
+                logger.error(f"同步标签到页面 {page_index + 1} 失败: {str(e)}")
+                error_count += 1
+
+        progress.setValue(end_page - start_page + 1)
+
+        # 显示结果
+        result_message = self.tr(
+            f"标签同步完成！\n\n"
+            f"成功：{success_count} 个页面\n"
+            f"失败：{error_count} 个页面\n"
+            f"跳过：{skipped_count} 个页面"
+        )
+
+        QtWidgets.QMessageBox.information(
+            self,
+            self.tr("同步完成"),
+            result_message
+        )
+
+        # 如果当前页面在同步范围内，重新加载
+        if start_page <= current_page <= end_page:
+            self.load_file(self.filename)
 
     def toggle_highlight_settings_dialog(self):
         """切换高亮设置窗口"""

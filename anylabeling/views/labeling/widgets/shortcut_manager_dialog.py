@@ -154,6 +154,7 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
                 ("traffic_light_tool", self.tr("红绿灯窗口")),
                 ("rectangle_scale_tool", self.tr("矩形缩放工具")),
                 ("page_text_tool", self.tr("页文本工具")),
+                ("label_sync_tool", self.tr("标签同步工具")),
                 ("highlight_settings_tool", self.tr("高亮设置")),
                 ("label_manager", self.tr("标签管理器")),
                 ("object_manager", self.tr("标签页管理器")),

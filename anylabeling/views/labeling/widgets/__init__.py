@@ -45,6 +45,7 @@ from .rectangle3_width_dialog import Rectangle3WidthDialog
 from .rectangle_scale_dialog import RectangleScaleDialog
 from .page_text_dialog import PageTextDialog
 from .highlight_settings_dialog import HighlightSettingsDialog
+from .label_sync_dialog import LabelSyncDialog
 
 
 __all__ = [
@@ -95,4 +96,5 @@ __all__ = [
     "PageTextDialog",
     "HighlightSettingsDialog",
     "WheelSettingsDialog",
+    "LabelSyncDialog",
 ]
