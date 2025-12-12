@@ -139,6 +139,9 @@ class LabelSyncDialog(QtWidgets.QDialog):
         self.align_label_edit = QtWidgets.QLineEdit()
         self.align_label_edit.setPlaceholderText(self.tr("留空=仅参照标签，逗号分隔多个"))
         self.align_label_edit.setToolTip(self.tr("输入要对齐的标签名（逗号分隔），留空则只对齐与参照标签相同的标签"))
+        # 从配置读取上次的值
+        self.align_label_edit.setText(self.config.get("label_sync_align_labels", ""))
+        self.align_label_edit.textChanged.connect(self._save_align_labels)
         filter_layout.addWidget(self.align_label_edit)
         align_layout.addLayout(filter_layout)
         
@@ -356,3 +359,8 @@ class LabelSyncDialog(QtWidgets.QDialog):
                 reference_shape, align_type, start_page, end_page,
                 self.should_skip_current_page(), target_labels
             )
+
+    def _save_align_labels(self, text):
+        """保存指定标签到配置"""
+        if self.config is not None:
+            self.config["label_sync_align_labels"] = text
