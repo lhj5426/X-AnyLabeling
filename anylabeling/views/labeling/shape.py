@@ -699,9 +699,11 @@ class Shape:
         if virtual_index == self._highlight_index:
             size, _ = self._highlight_settings[self._highlight_mode]
             d *= size
+            # 只有当前高亮的边中点才设置高亮颜色
             self._vertex_fill_color = self.hvertex_fill_color
-        else:
-            self._vertex_fill_color = self.vertex_fill_color
+        # 注意：不在else分支中重置_vertex_fill_color
+        # 因为draw_vertex已经根据_highlight_index设置了正确的颜色
+        # 如果在这里重置，会导致只有最后一个绘制的边中点颜色正确
 
         # Draw edge midpoints as squares to distinguish from corner vertices (circles)
         path.addRect(point.x() - d / 2, point.y() - d / 2, d, d)
