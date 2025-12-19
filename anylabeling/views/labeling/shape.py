@@ -70,6 +70,11 @@ class Shape:
     handle_highlight_square = True  # 高亮时显示块
     handle_normal_point = False  # 非高亮时显示点
     handle_normal_square = False  # 非高亮时显示块
+    handle_detect_chaotic = True  # 检测混沌状态（高亮下被点击过的图形用非高亮设置）
+    # Locked shape handle display settings
+    locked_show_point = False  # 锁定后显示点
+    locked_show_square = False  # 锁定后显示块
+    locked_labels = set()  # 锁定的标签集合
     # Base line width
     line_width = 2.0
     # Additional configurable line widths for different interaction states
@@ -122,6 +127,10 @@ class Shape:
         self._border_color = None
         self._border_width = None  # 高亮时的边框宽度
         self._border_width_selected = None  # 点击后（取消高亮）的边框宽度
+        
+        # 标签独立控制柄颜色（None表示使用默认值）
+        self._handle_vertex_color = None  # 选中时顶点填充色（点和块统一）
+        self._handle_hvertex_color = None  # 拖拽时顶点填充色（点和块统一）
 
         # Rotation setting
         self.direction = direction
@@ -286,16 +295,48 @@ class Shape:
             "linestrip",
         ]
 
+    def is_label_locked(self):
+        """检查当前 shape 的标签是否在锁定列表中"""
+        if not self.label or not Shape.locked_labels:
+            return False
+        return self.label.strip() in Shape.locked_labels
+
     def should_draw_point(self):
         """判断是否应该绘制圆形控制点（顶点）"""
-        if Shape.highlighting_enabled:
+        # 检查是否是锁定的标签
+        if self.is_label_locked():
+            # 不勾选：完全不显示；勾选：跟随高亮/非高亮设置
+            if not Shape.locked_show_point:
+                return False
+            # 勾选了，跟随下面的高亮/非高亮设置
+        # 判断是否处于高亮状态
+        if Shape.handle_detect_chaotic:
+            # 检测混沌状态：全局高亮开启 且 当前图形有填充（未被点击过）
+            is_highlighted = Shape.highlighting_enabled and self.fill
+        else:
+            # 不检测混沌状态：只看全局高亮开关
+            is_highlighted = Shape.highlighting_enabled
+        if is_highlighted:
             return Shape.handle_highlight_point
         else:
             return Shape.handle_normal_point
     
     def should_draw_square(self):
         """判断是否应该绘制方形控制块（边中点）"""
-        if Shape.highlighting_enabled:
+        # 检查是否是锁定的标签
+        if self.is_label_locked():
+            # 不勾选：完全不显示；勾选：跟随高亮/非高亮设置
+            if not Shape.locked_show_square:
+                return False
+            # 勾选了，跟随下面的高亮/非高亮设置
+        # 判断是否处于高亮状态
+        if Shape.handle_detect_chaotic:
+            # 检测混沌状态：全局高亮开启 且 当前图形有填充（未被点击过）
+            is_highlighted = Shape.highlighting_enabled and self.fill
+        else:
+            # 不检测混沌状态：只看全局高亮开关
+            is_highlighted = Shape.highlighting_enabled
+        if is_highlighted:
             return Shape.handle_highlight_square
         else:
             return Shape.handle_normal_square
@@ -505,6 +546,27 @@ class Shape:
                 if len(self.points) == 2:
                     rectangle = self.get_rect_from_line(*self.points)
                     line_path.addRect(rectangle)
+                    # 2点矩形也需要检查是否绘制控制柄
+                    if self.should_draw_point():
+                        for i in range(2):
+                            self.draw_vertex(vrtx_path, i)
+                    if self.should_draw_square():
+                        # 计算4个角点用于绘制边中点
+                        x1, y1 = self.points[0].x(), self.points[0].y()
+                        x2, y2 = self.points[1].x(), self.points[1].y()
+                        corners = [
+                            QtCore.QPointF(x1, y1),
+                            QtCore.QPointF(x2, y1),
+                            QtCore.QPointF(x2, y2),
+                            QtCore.QPointF(x1, y2),
+                        ]
+                        midpoints = []
+                        for j in range(4):
+                            p1 = corners[j]
+                            p2 = corners[(j + 1) % 4]
+                            midpoints.append(QtCore.QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2))
+                        for j, midpoint in enumerate(midpoints):
+                            self.draw_edge_midpoint(vrtx_path, midpoint, j + 4)
                 if len(self.points) == 4:
                     line_path.moveTo(self.points[0])
                     for i, p in enumerate(self.points):
@@ -626,20 +688,6 @@ class Shape:
             if self._vertex_fill_color is not None:
                 painter.fillPath(vrtx_path, self._vertex_fill_color)
 
-    def should_draw_point(self):
-        """判断是否应该绘制圆形控制点"""
-        if self.selected:
-            return Shape.handle_highlight_point
-        else:
-            return Shape.handle_normal_point
-
-    def should_draw_square(self):
-        """判断是否应该绘制方形控制块"""
-        if self.selected:
-            return Shape.handle_highlight_square
-        else:
-            return Shape.handle_normal_square
-
     def draw_vertex(self, path, i, show_difficult=False):
         """Draw a vertex"""
         d = self.point_size / self.scale
@@ -648,12 +696,21 @@ class Shape:
         if i == self._highlight_index:
             size, shape = self._highlight_settings[self._highlight_mode]
             d *= size
+        # 判断是否有顶点正在被拖拽（高亮）
+        # 注意：所有顶点共用一个 path，最后统一填充，所以只要有任何顶点被高亮，所有顶点都用拖拽颜色
         if self._highlight_index is not None:
-            self._vertex_fill_color = self.hvertex_fill_color
+            # 拖拽时：优先使用标签独立的拖拽时颜色
+            if self._handle_hvertex_color is not None:
+                self._vertex_fill_color = self._handle_hvertex_color
+            else:
+                self._vertex_fill_color = self.hvertex_fill_color
         else:
+            # 选中时：优先使用标签独立的选中时颜色
+            if self._handle_vertex_color is not None:
+                self._vertex_fill_color = self._handle_vertex_color
             # For point shapes, use the line color, which is set by the label.
             # For other shapes, use the default vertex color.
-            if self.shape_type == "point":
+            elif self.shape_type == "point":
                 self._vertex_fill_color = self.line_color
             else:
                 self._vertex_fill_color = self.vertex_fill_color
@@ -699,11 +756,21 @@ class Shape:
         if virtual_index == self._highlight_index:
             size, _ = self._highlight_settings[self._highlight_mode]
             d *= size
-            # 只有当前高亮的边中点才设置高亮颜色
-            self._vertex_fill_color = self.hvertex_fill_color
-        # 注意：不在else分支中重置_vertex_fill_color
-        # 因为draw_vertex已经根据_highlight_index设置了正确的颜色
-        # 如果在这里重置，会导致只有最后一个绘制的边中点颜色正确
+        
+        # 判断是否有顶点正在被拖拽（高亮）
+        # 注意：所有顶点共用一个 path，最后统一填充，所以只要有任何顶点被高亮，所有顶点都用拖拽颜色
+        if self._highlight_index is not None:
+            # 拖拽时：优先使用标签独立的拖拽时颜色
+            if self._handle_hvertex_color is not None:
+                self._vertex_fill_color = self._handle_hvertex_color
+            else:
+                self._vertex_fill_color = self.hvertex_fill_color
+        else:
+            # 选中时：优先使用标签独立的选中时颜色
+            if self._handle_vertex_color is not None:
+                self._vertex_fill_color = self._handle_vertex_color
+            else:
+                self._vertex_fill_color = self.vertex_fill_color
 
         # Draw edge midpoints as squares to distinguish from corner vertices (circles)
         path.addRect(point.x() - d / 2, point.y() - d / 2, d, d)

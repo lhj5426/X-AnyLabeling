@@ -57,9 +57,9 @@ class UniqueLabelQListWidget(EscapableQListWidget):
     # 边框颜色设置信号
     change_label_border_color = pyqtSignal(str)  # 修改单个标签边框颜色
     batch_change_label_border_color = pyqtSignal(list)  # 批量修改标签边框颜色
-    # 边框颜色设置信号
-    change_label_border_color = pyqtSignal(str)  # 修改单个标签边框颜色
-    batch_change_label_border_color = pyqtSignal(list)  # 批量修改标签边框颜色
+    # 控制柄颜色设置信号
+    change_label_handle_color = pyqtSignal(str)  # 修改单个标签控制柄颜色
+    batch_change_label_handle_color = pyqtSignal(list)  # 批量修改标签控制柄颜色
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -258,6 +258,10 @@ class UniqueLabelQListWidget(EscapableQListWidget):
                 utils.new_icon('color'),
                 self.tr(f"批量修改边框颜色 ({len(selected_labels)}个)")
             )
+            change_handle_color_action = menu.addAction(
+                utils.new_icon('color'),
+                self.tr(f"批量修改控制柄颜色 ({len(selected_labels)}个)")
+            )
             change_alpha_action = menu.addAction(
                 utils.new_icon('color'),
                 self.tr(f"批量修改透明度 ({len(selected_labels)}个)")
@@ -280,6 +284,10 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             change_border_color_action = menu.addAction(
                 utils.new_icon('color'),
                 self.tr("修改边框颜色")
+            )
+            change_handle_color_action = menu.addAction(
+                utils.new_icon('color'),
+                self.tr("修改控制柄颜色")
             )
             change_alpha_action = menu.addAction(
                 utils.new_icon('color'),
@@ -318,6 +326,13 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             else:
                 # 单个操作
                 self.change_label_border_color.emit(selected_labels[0])
+        elif action == change_handle_color_action:
+            if is_multi_select:
+                # 批量操作：发送批量信号
+                self.batch_change_label_handle_color.emit(selected_labels)
+            else:
+                # 单个操作
+                self.change_label_handle_color.emit(selected_labels[0])
         elif action == change_alpha_action:
             if is_multi_select:
                 # 批量操作：发送批量信号

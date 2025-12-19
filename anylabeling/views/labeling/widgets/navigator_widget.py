@@ -101,6 +101,12 @@ class NavigatorWidget(QWidget):
         self.navigator_hover_line_color = QColor(255, 255, 0, 255)
         self.show_viewport_cross = False  # 是否显示视口框对角线
         
+        # 鼠标位置指示器（图像坐标）
+        self.canvas_mouse_pos = None  # QPointF in image coordinates
+        self.mouse_indicator_color = QColor(255, 0, 0, 255)  # 红色
+        self.mouse_indicator_size = 4  # 指示器大小（圆点半径）
+        self.show_mouse_indicator = True  # 是否显示鼠标位置指示器
+        
     def set_colors(
         self,
         select_line_color: QColor = None,
@@ -122,6 +128,30 @@ class NavigatorWidget(QWidget):
     def set_viewport_cross(self, show: bool):
         """设置是否显示视口框对角线"""
         self.show_viewport_cross = show
+        self.update()
+
+    def set_canvas_mouse_pos(self, pos):
+        """设置画布上的鼠标位置（图像坐标）
+        
+        Args:
+            pos: QPointF 图像坐标系中的鼠标位置，或 None 清除指示器
+        """
+        self.canvas_mouse_pos = pos
+        self.update()
+
+    def set_mouse_indicator_visible(self, visible: bool):
+        """设置是否显示鼠标位置指示器"""
+        self.show_mouse_indicator = visible
+        self.update()
+
+    def set_mouse_indicator_color(self, color: QColor):
+        """设置鼠标位置指示器颜色"""
+        self.mouse_indicator_color = color
+        self.update()
+
+    def set_mouse_indicator_size(self, size: int):
+        """设置鼠标位置指示器大小（圆点半径）"""
+        self.mouse_indicator_size = size
         self.update()
 
     def set_image(self, image_data: Any) -> None:
@@ -358,6 +388,45 @@ class NavigatorWidget(QWidget):
                         self.viewport_rect.topRight(),
                         self.viewport_rect.bottomLeft()
                     )
+            
+            # Draw mouse position indicator (red dot)
+            self._draw_mouse_indicator(painter)
+                
+    def _draw_mouse_indicator(self, painter):
+        """绘制鼠标位置指示器（红色圆点）"""
+        if not self.show_mouse_indicator or self.canvas_mouse_pos is None:
+            return
+        
+        if not self.original_image or self.original_image.isNull():
+            return
+        
+        if self.image_rect.isEmpty():
+            return
+        
+        # Get original image size
+        original_width = self.original_image.width()
+        original_height = self.original_image.height()
+        
+        if original_width <= 0 or original_height <= 0:
+            return
+        
+        # Convert image coordinates to thumbnail coordinates
+        thumb_x = self.image_rect.x() + (self.canvas_mouse_pos.x() / original_width) * self.image_rect.width()
+        thumb_y = self.image_rect.y() + (self.canvas_mouse_pos.y() / original_height) * self.image_rect.height()
+        
+        # Check if the point is within the thumbnail area
+        if not self.image_rect.contains(int(thumb_x), int(thumb_y)):
+            return
+        
+        # Draw red filled circle
+        painter.setPen(QPen(self.mouse_indicator_color, 1))
+        painter.setBrush(QBrush(self.mouse_indicator_color))
+        painter.drawEllipse(
+            int(thumb_x - self.mouse_indicator_size),
+            int(thumb_y - self.mouse_indicator_size),
+            self.mouse_indicator_size * 2,
+            self.mouse_indicator_size * 2
+        )
                 
     def _draw_shapes_overlay(self, painter):
         """Draw shapes overlay on thumbnail"""

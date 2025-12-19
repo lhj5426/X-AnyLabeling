@@ -64,6 +64,9 @@ shape:
   navigator_viewport_color: [255, 0, 0, 255]
   navigator_viewport_width: 2.0
   navigator_viewport_cross: false
+  navigator_mouse_indicator_color: [255, 0, 0, 255]
+  navigator_mouse_indicator_size: 4
+  navigator_mouse_indicator_enabled: true
   select_fill_color: [0, 255, 0, 155]
   shape_fill_alpha_idle: 50
   shape_fill_alpha_highlight: 180

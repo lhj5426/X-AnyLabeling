@@ -173,6 +173,20 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         
         layout.addWidget(detect_group)
         
+        # 导航器鼠标指示器设置
+        navigator_group = QtWidgets.QGroupBox("导航器鼠标指示器")
+        navigator_layout = QtWidgets.QGridLayout(navigator_group)
+        
+        self.navigator_mouse_indicator_check = QtWidgets.QCheckBox("显示鼠标位置指示器")
+        self.navigator_mouse_indicator_check.setToolTip("在导航器缩略图上显示当前鼠标在画布上的位置")
+        navigator_layout.addWidget(self.navigator_mouse_indicator_check, 0, 0, 1, 2)
+        
+        navigator_hint = QtWidgets.QLabel("提示: 指示器颜色和大小在颜色管理器中设置")
+        navigator_hint.setStyleSheet("color: gray; font-size: 11px;")
+        navigator_layout.addWidget(navigator_hint, 1, 0, 1, 2)
+        
+        layout.addWidget(navigator_group)
+        
         # 按钮 - 只有关闭按钮
         button_layout = QtWidgets.QHBoxLayout()
         button_layout.addStretch()
@@ -202,6 +216,8 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         self.detect_sensitivity_spin.valueChanged.connect(self.apply_settings)
         self.vertex_only_check.stateChanged.connect(self.apply_settings)
         self.vertex_range_spin.valueChanged.connect(self.apply_settings)
+        # 导航器鼠标指示器
+        self.navigator_mouse_indicator_check.stateChanged.connect(self.apply_settings)
     
     def apply_settings(self):
         """实时应用设置到canvas"""
@@ -226,9 +242,23 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         self.canvas.magnifier_detect_vertex_only = settings['magnifier_detect_vertex_only']
         self.canvas.magnifier_detect_vertex_range = settings['magnifier_detect_vertex_range']
         
+        # 应用导航器鼠标指示器设置
+        label_widget = self.parent()
+        if hasattr(label_widget, 'navigator_dialog') and label_widget.navigator_dialog:
+            label_widget.navigator_dialog.navigator.set_mouse_indicator_visible(
+                settings['navigator_mouse_indicator_enabled']
+            )
+            # 更新 shape 配置
+            if 'shape' not in self.config:
+                self.config['shape'] = {}
+            self.config['shape']['navigator_mouse_indicator_enabled'] = settings['navigator_mouse_indicator_enabled']
+        
         # 保存到config
         if self.config is not None:
             self.config.update(settings)
+            # 保存配置到文件
+            from anylabeling.config import save_config
+            save_config(self.config)
         
         # 刷新canvas
         self.canvas.update()
@@ -268,6 +298,11 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
         self.detect_sensitivity_spin.setValue(self.config.get('magnifier_detect_sensitivity', 60))
         self.vertex_only_check.setChecked(self.config.get('magnifier_detect_vertex_only', False))
         self.vertex_range_spin.setValue(self.config.get('magnifier_detect_vertex_range', 30))
+        
+        # 导航器鼠标指示器
+        self.navigator_mouse_indicator_check.setChecked(
+            self.config.get('shape', {}).get('navigator_mouse_indicator_enabled', True)
+        )
         
     def update_color_button(self, btn, color):
         """更新颜色按钮的背景色"""
@@ -311,4 +346,5 @@ class MagnifierSettingsDialog(QtWidgets.QDialog):
             'magnifier_detect_sensitivity': self.detect_sensitivity_spin.value(),
             'magnifier_detect_vertex_only': self.vertex_only_check.isChecked(),
             'magnifier_detect_vertex_range': self.vertex_range_spin.value(),
+            'navigator_mouse_indicator_enabled': self.navigator_mouse_indicator_check.isChecked(),
         }

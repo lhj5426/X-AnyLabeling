@@ -38,10 +38,16 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_highlight_checkbox.setToolTip("启用后，锁定的标签也能参与高亮/反向高亮功能")
         self.lock_hide_info_checkbox = QtWidgets.QCheckBox("锁定后不显示宽高和角度")
         self.lock_hide_info_checkbox.setToolTip("启用后，锁定的标签不显示宽高和旋转角度信息")
+        self.lock_show_point_checkbox = QtWidgets.QCheckBox("锁定后显示点 (圆形)")
+        self.lock_show_point_checkbox.setToolTip("启用后，锁定的标签显示顶点圆形控制柄")
+        self.lock_show_square_checkbox = QtWidgets.QCheckBox("锁定后显示块 (方形)")
+        self.lock_show_square_checkbox.setToolTip("启用后，锁定的标签显示方形控制柄")
         self.lock_layout.addWidget(self.lock_label)
         self.lock_layout.addWidget(self.lock_input)
         self.lock_layout.addWidget(self.lock_highlight_checkbox)
         self.lock_layout.addWidget(self.lock_hide_info_checkbox)
+        self.lock_layout.addWidget(self.lock_show_point_checkbox)
+        self.lock_layout.addWidget(self.lock_show_square_checkbox)
         self.lock_group.setLayout(self.lock_layout)
 
         # Label Pin to Top
@@ -94,12 +100,18 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.handle_normal_point_checkbox.setChecked(False)
         self.handle_normal_square_checkbox.setChecked(False)
         
+        # 混沌状态检测开关
+        self.handle_detect_chaotic_checkbox = QtWidgets.QCheckBox("检测点击高亮后的非高亮状态")
+        self.handle_detect_chaotic_checkbox.setToolTip("勾选后，高亮状态下被点击过的图形会使用非高亮时的设置")
+        self.handle_detect_chaotic_checkbox.setChecked(True)
+        
         self.handle_layout.addWidget(self.handle_highlight_label)
         self.handle_layout.addWidget(self.handle_highlight_point_checkbox)
         self.handle_layout.addWidget(self.handle_highlight_square_checkbox)
         self.handle_layout.addWidget(self.handle_normal_label)
         self.handle_layout.addWidget(self.handle_normal_point_checkbox)
         self.handle_layout.addWidget(self.handle_normal_square_checkbox)
+        self.handle_layout.addWidget(self.handle_detect_chaotic_checkbox)
         self.handle_group.setLayout(self.handle_layout)
 
         self.layout.addWidget(self.positive_group)
@@ -125,6 +137,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_input.textChanged.connect(self._realtime_save_settings)
         self.lock_highlight_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.lock_hide_info_checkbox.stateChanged.connect(self._realtime_save_settings)
+        self.lock_show_point_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
+        self.lock_show_square_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
         self.pin_input.textChanged.connect(self._realtime_save_settings)
         self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
         self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
@@ -135,6 +149,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.handle_highlight_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
         self.handle_normal_point_checkbox.stateChanged.connect(self._on_handle_setting_changed)
         self.handle_normal_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
+        self.handle_detect_chaotic_checkbox.stateChanged.connect(self._on_handle_setting_changed)
 
         self.load_settings()
 
@@ -147,6 +162,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.lock_input.textChanged.disconnect(self._realtime_save_settings)
             self.lock_highlight_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.lock_hide_info_checkbox.stateChanged.disconnect(self._realtime_save_settings)
+            self.lock_show_point_checkbox.stateChanged.disconnect(self._on_lock_handle_setting_changed)
+            self.lock_show_square_checkbox.stateChanged.disconnect(self._on_lock_handle_setting_changed)
             self.pin_input.textChanged.disconnect(self._realtime_save_settings)
             self.no_highlight_input.textChanged.disconnect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.disconnect(self._realtime_save_settings)
@@ -155,12 +172,15 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.handle_highlight_square_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
             self.handle_normal_point_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
             self.handle_normal_square_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
+            self.handle_detect_chaotic_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
 
             positive_labels = self._config.get("highlight_positive", "")
             negative_labels = self._config.get("highlight_negative", "")
             locked_labels = self._config.get("locked_labels", "")
             lock_can_highlight = self._config.get("locked_can_highlight", False)
             lock_hide_info = self._config.get("locked_hide_info", False)
+            lock_show_point = self._config.get("locked_show_point", False)
+            lock_show_square = self._config.get("locked_show_square", False)
             pin_labels = self._config.get("pin_labels", "")
             no_highlight_labels = self._config.get("no_highlight_labels", "")
             mixed_mode_enabled = self._config.get("highlight_mixed_mode", False)
@@ -170,6 +190,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.lock_input.setText(locked_labels)
             self.lock_highlight_checkbox.setChecked(lock_can_highlight)
             self.lock_hide_info_checkbox.setChecked(lock_hide_info)
+            self.lock_show_point_checkbox.setChecked(lock_show_point)
+            self.lock_show_square_checkbox.setChecked(lock_show_square)
             self.pin_input.setText(pin_labels)
             self.no_highlight_input.setText(no_highlight_labels)
             self.mixed_mode_checkbox.setChecked(mixed_mode_enabled)
@@ -180,6 +202,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.handle_highlight_square_checkbox.setChecked(self._config.get("handle_highlight_square", True))
             self.handle_normal_point_checkbox.setChecked(self._config.get("handle_normal_point", False))
             self.handle_normal_square_checkbox.setChecked(self._config.get("handle_normal_square", False))
+            self.handle_detect_chaotic_checkbox.setChecked(self._config.get("handle_detect_chaotic", True))
 
             # Reconnect signals
             self.positive_input.textChanged.connect(self._realtime_save_settings)
@@ -187,6 +210,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.lock_input.textChanged.connect(self._realtime_save_settings)
             self.lock_highlight_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.lock_hide_info_checkbox.stateChanged.connect(self._realtime_save_settings)
+            self.lock_show_point_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
+            self.lock_show_square_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
             self.pin_input.textChanged.connect(self._realtime_save_settings)
             self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
@@ -195,6 +220,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.handle_highlight_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
             self.handle_normal_point_checkbox.stateChanged.connect(self._on_handle_setting_changed)
             self.handle_normal_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
+            self.handle_detect_chaotic_checkbox.stateChanged.connect(self._on_handle_setting_changed)
 
     def _realtime_save_settings(self):
         """Saves the current settings from the line edits to the config file in real-time."""
@@ -208,6 +234,10 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["no_highlight_labels"] = self.no_highlight_input.text()
             self._config["highlight_mixed_mode"] = self.mixed_mode_checkbox.isChecked()
             save_config(self._config)
+            
+            # 更新 Shape.locked_labels 以便控制柄显示逻辑能正确判断
+            if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
+                self.parent().apply_handle_display_settings()
 
     def _on_default_highlight_changed(self, state):
         """Handle default highlight checkbox state change with real-time effect."""
@@ -227,9 +257,21 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["handle_highlight_square"] = self.handle_highlight_square_checkbox.isChecked()
             self._config["handle_normal_point"] = self.handle_normal_point_checkbox.isChecked()
             self._config["handle_normal_square"] = self.handle_normal_square_checkbox.isChecked()
+            self._config["handle_detect_chaotic"] = self.handle_detect_chaotic_checkbox.isChecked()
             save_config(self._config)
             
             # Apply the change immediately to Shape class
+            if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
+                self.parent().apply_handle_display_settings()
+
+    def _on_lock_handle_setting_changed(self, state):
+        """Handle locked shape handle display settings change with real-time effect."""
+        if self._config:
+            self._config["locked_show_point"] = self.lock_show_point_checkbox.isChecked()
+            self._config["locked_show_square"] = self.lock_show_square_checkbox.isChecked()
+            save_config(self._config)
+            
+            # Apply the change immediately
             if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
                 self.parent().apply_handle_display_settings()
 

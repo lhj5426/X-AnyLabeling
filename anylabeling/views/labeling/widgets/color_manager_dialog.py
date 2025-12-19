@@ -104,6 +104,16 @@ class ColorManagerDialog(QDialog):
         self.navigator_viewport_cross_checkbox.stateChanged.connect(lambda state: self._on_setting_changed(['shape', 'navigator_viewport_cross'], state == Qt.Checked))
         left_form.addRow(self.tr("导航器视口框对角线:"), self.navigator_viewport_cross_checkbox)
 
+        self.navigator_mouse_indicator_color_button = self.create_color_button(['shape', 'navigator_mouse_indicator_color'], self.config['shape'].get('navigator_mouse_indicator_color', [255, 0, 0, 255]))
+        left_form.addRow(self.tr("导航器鼠标指示器颜色:"), self.navigator_mouse_indicator_color_button)
+
+        self.navigator_mouse_indicator_size_spinbox = QSpinBox()
+        self.navigator_mouse_indicator_size_spinbox.setFixedWidth(SPINBOX_WIDTH)
+        self.navigator_mouse_indicator_size_spinbox.setRange(1, 20)
+        self.navigator_mouse_indicator_size_spinbox.setValue(self.config['shape'].get('navigator_mouse_indicator_size', 4))
+        self.navigator_mouse_indicator_size_spinbox.valueChanged.connect(lambda value: self._on_setting_changed(['shape', 'navigator_mouse_indicator_size'], value))
+        left_form.addRow(self.tr("导航器鼠标指示器大小:"), self.navigator_mouse_indicator_size_spinbox)
+
         self.overlap_color_button = self.create_color_button(['shape', 'overlap_color'], self.config['shape']['overlap_color'])
         left_form.addRow(self.tr("重叠颜色:"), self.overlap_color_button)
 

@@ -400,6 +400,12 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.handle_highlight_square = self._config.get("handle_highlight_square", True)
         Shape.handle_normal_point = self._config.get("handle_normal_point", False)
         Shape.handle_normal_square = self._config.get("handle_normal_square", False)
+        Shape.handle_detect_chaotic = self._config.get("handle_detect_chaotic", True)
+        # Locked shape handle display settings
+        Shape.locked_show_point = self._config.get("locked_show_point", False)
+        Shape.locked_show_square = self._config.get("locked_show_square", False)
+        locked_labels_str = self._config.get("locked_labels", "")
+        Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
 
         # Whether we need to save or not.
         self.dirty = False
@@ -470,6 +476,10 @@ class LabelingWidget(QtWidgets.QWidget):
         def select_all_objects():
             for item in self.label_list:
                 item.setCheckState(Qt.Checked)
+            # 同步更新 visibility_shapes_mode action 的状态
+            if self.canvas.shapes:
+                self._config["show_shapes"] = True
+                self.actions.visibility_shapes_mode.setChecked(True)
         self.btn_select_all_shapes.clicked.connect(select_all_objects)
 
         self.btn_invert_selection_shapes = QtWidgets.QPushButton(self.tr("反选"))
@@ -483,10 +493,17 @@ class LabelingWidget(QtWidgets.QWidget):
             # 遍历label_list中的所有item并取消勾选
             for item in self.label_list:
                 item.setCheckState(Qt.Unchecked)
+            # 同时取消标签列表的勾选
+            for i in range(self.unique_label_list.count()):
+                item = self.unique_label_list.item(i)
+                item.setCheckState(Qt.Unchecked)
             # 确保canvas.shapes中的所有图形都被隐藏
             for shape in self.canvas.shapes:
                 shape.visible = False
                 self.canvas.set_shape_visible(shape, False)
+            # 同步更新 visibility_shapes_mode action 的状态
+            self._config["show_shapes"] = False
+            self.actions.visibility_shapes_mode.setChecked(False)
             self.canvas.update()
             self.update_navigator_shapes()
         self.btn_deselect_all_shapes.clicked.connect(deselect_all_objects)
@@ -743,6 +760,13 @@ class LabelingWidget(QtWidgets.QWidget):
         self.unique_label_list.batch_change_label_border_color.connect(
             self.batch_change_label_border_color
         )
+        # 连接控制柄颜色设置信号
+        self.unique_label_list.change_label_handle_color.connect(
+            self.change_label_handle_color
+        )
+        self.unique_label_list.batch_change_label_handle_color.connect(
+            self.batch_change_label_handle_color
+        )
         # 创建标签控制按钮
         self.create_label_control_buttons()
 
@@ -838,6 +862,13 @@ class LabelingWidget(QtWidgets.QWidget):
         self.navigator_dialog.navigator.set_viewport_cross(
             self._config["shape"].get("navigator_viewport_cross", False)
         )
+        # Configure mouse indicator
+        mouse_indicator_color = self._config["shape"].get("navigator_mouse_indicator_color", [255, 0, 0, 255])
+        self.navigator_dialog.navigator.mouse_indicator_color = QtGui.QColor(*mouse_indicator_color)
+        self.navigator_dialog.navigator.mouse_indicator_size = self._config["shape"].get("navigator_mouse_indicator_size", 4)
+        self.navigator_dialog.navigator.set_mouse_indicator_visible(
+            self._config["shape"].get("navigator_mouse_indicator_enabled", True)
+        )
         self.navigator_dialog.navigator.navigation_requested.connect(
             self.on_navigator_request
         )
@@ -901,6 +932,8 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.drawing_cancelled.connect(self.on_drawing_cancelled)
         self.canvas.hide_shapes_requested.connect(self.hide_shapes_by_path)
         self.canvas.delete_shapes_requested.connect(self.delete_shapes_by_path)
+        # Connect mouse position signal to navigator for real-time position indicator
+        self.canvas.mouse_pos_changed.connect(self._on_canvas_mouse_pos_changed)
         # [Feature] support for automatically switching to editing mode
         # when the cursor moves over an object
         self.canvas.h_shape_is_hovered = self._config.get(
@@ -5092,6 +5125,13 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.handle_highlight_square = self._config.get("handle_highlight_square", True)
         Shape.handle_normal_point = self._config.get("handle_normal_point", False)
         Shape.handle_normal_square = self._config.get("handle_normal_square", False)
+        Shape.handle_detect_chaotic = self._config.get("handle_detect_chaotic", True)
+        # 锁定标签的控制柄显示设置
+        Shape.locked_show_point = self._config.get("locked_show_point", False)
+        Shape.locked_show_square = self._config.get("locked_show_square", False)
+        # 更新锁定标签集合
+        locked_labels_str = self._config.get("locked_labels", "")
+        Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
         self.canvas.update()
 
     def on_page_text_description_changed(self, shape_index, new_description):
@@ -6696,6 +6736,9 @@ class LabelingWidget(QtWidgets.QWidget):
                     viewport_color=color,
                 )
                 self.navigator_dialog.navigator.update()
+            elif key == ['shape', 'navigator_mouse_indicator_color']:
+                self.navigator_dialog.navigator.mouse_indicator_color = color
+                self.navigator_dialog.navigator.update()
             elif key == ['shape', 'overlap_color']:
                 self.canvas.overlap_color = color
             elif key == ['shape', 'overlap_color_alpha']:
@@ -6815,6 +6858,11 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.navigator_dialog.navigator.update()
             elif key == ['shape', 'navigator_viewport_cross']:
                 self.navigator_dialog.navigator.set_viewport_cross(value)
+            elif key == ['shape', 'navigator_mouse_indicator_size']:
+                self.navigator_dialog.navigator.mouse_indicator_size = value
+                self.navigator_dialog.navigator.update()
+            elif key == ['shape', 'navigator_mouse_indicator_enabled']:
+                self.navigator_dialog.navigator.set_mouse_indicator_visible(value)
             elif key == 'paste_preview_line_width':
                 # 虚影线条粗细
                 self.canvas.paste_preview_line_width = value
@@ -7783,6 +7831,15 @@ class LabelingWidget(QtWidgets.QWidget):
         selected_shapes = self.canvas.selected_shapes
         self.navigator_dialog.update_title_with_selection(selected_shapes)
 
+    def _on_canvas_mouse_pos_changed(self, pos):
+        """Handle canvas mouse position change for navigator indicator.
+        
+        Args:
+            pos: QPointF in image coordinates, or None when mouse leaves canvas
+        """
+        if hasattr(self, 'navigator_dialog') and self.navigator_dialog:
+            self.navigator_dialog.navigator.set_canvas_mouse_pos(pos)
+
     def add_label(self, shape, update_last_label=True, is_new_shape=False):
         global_order = len(self.label_list) + 1
 
@@ -7863,6 +7920,10 @@ class LabelingWidget(QtWidgets.QWidget):
             for i in range(self.unique_label_list.count()):
                 item = self.unique_label_list.item(i)
                 item.setCheckState(Qt.Checked)
+            # 同步更新 visibility_shapes_mode action 的状态
+            if self.canvas.shapes:
+                self._config["show_shapes"] = True
+                self.actions.visibility_shapes_mode.setChecked(True)
         self.btn_select_all.clicked.connect(select_all_labels)
 
         # 反选按钮
@@ -7899,6 +7960,9 @@ class LabelingWidget(QtWidgets.QWidget):
             for shape in self.canvas.shapes:
                 shape.visible = False
                 self.canvas.set_shape_visible(shape, False)
+            # 同步更新 visibility_shapes_mode action 的状态
+            self._config["show_shapes"] = False
+            self.actions.visibility_shapes_mode.setChecked(False)
             self.canvas.update()
             self.update_navigator_shapes()
         self.btn_deselect_all.clicked.connect(deselect_all_labels)
@@ -8014,6 +8078,10 @@ class LabelingWidget(QtWidgets.QWidget):
         # 更新独立边框宽度（点击后）
         border_width_selected = self._get_border_width_selected_by_label(shape.label)
         shape._border_width_selected = border_width_selected
+        
+        # 更新独立控制柄颜色
+        shape._handle_vertex_color = self._get_handle_vertex_color_by_label(shape.label)
+        shape._handle_hvertex_color = self._get_handle_hvertex_color_by_label(shape.label)
 
     def _get_rgb_by_label(self, label, skip_label_info=False):
         if label in self.label_info and not skip_label_info:
@@ -8061,6 +8129,26 @@ class LabelingWidget(QtWidgets.QWidget):
             and label in self._config["label_border_widths_selected"]
         ):
             return self._config["label_border_widths_selected"][label]
+        return None
+
+    def _get_handle_vertex_color_by_label(self, label):
+        """获取标签的独立选中时顶点填充色，如果没有设置则返回None"""
+        if (
+            self._config.get("label_handle_vertex_colors")
+            and label in self._config["label_handle_vertex_colors"]
+        ):
+            rgb = self._config["label_handle_vertex_colors"][label]
+            return QtGui.QColor(*rgb)
+        return None
+
+    def _get_handle_hvertex_color_by_label(self, label):
+        """获取标签的独立拖拽时顶点填充色，如果没有设置则返回None"""
+        if (
+            self._config.get("label_handle_hvertex_colors")
+            and label in self._config["label_handle_hvertex_colors"]
+        ):
+            rgb = self._config["label_handle_hvertex_colors"][label]
+            return QtGui.QColor(*rgb)
         return None
 
     def remove_labels(self, shapes):
@@ -9000,6 +9088,215 @@ class LabelingWidget(QtWidgets.QWidget):
         dialog.finished.connect(on_finished)
 
         # 使用非模态方式显示
+        dialog.show()
+
+    def change_label_handle_color(self, label):
+        """修改单个标签的控制柄颜色"""
+        self._change_label_handle_settings([label])
+
+    def batch_change_label_handle_color(self, labels):
+        """批量修改标签控制柄颜色"""
+        if not labels:
+            return
+        self._change_label_handle_settings(labels)
+
+    def _change_label_handle_settings(self, labels):
+        """修改标签控制柄颜色的内部实现（支持实时预览）"""
+        from PyQt5.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+            QPushButton, QGroupBox
+        )
+        from PyQt5.QtGui import QColor
+        from views.labeling.shape import Shape
+
+        if not labels:
+            return
+
+        # 保存原始设置用于取消时恢复
+        original_settings = {}
+        for shape in self.canvas.shapes:
+            if shape.label in labels:
+                original_settings[id(shape)] = {
+                    'vertex_color': shape._handle_vertex_color,
+                    'hvertex_color': shape._handle_hvertex_color,
+                }
+
+        # 获取第一个标签的当前设置作为默认值
+        first_shape = None
+        for shape in self.canvas.shapes:
+            if shape.label in labels:
+                first_shape = shape
+                break
+
+        # 默认颜色（从配置文件获取全局设置）
+        vertex_rgb = self._config.get("shape", {}).get("vertex_fill_color", [0, 255, 0])
+        hvertex_rgb = self._config.get("shape", {}).get("hvertex_fill_color", [255, 255, 255])
+        default_vertex_color = QColor(*vertex_rgb[:3]) if vertex_rgb else QColor(0, 255, 0)
+        default_hvertex_color = QColor(*hvertex_rgb[:3]) if hvertex_rgb else QColor(255, 255, 255)
+
+        if first_shape and first_shape._handle_vertex_color:
+            current_vertex_color = first_shape._handle_vertex_color
+        else:
+            current_vertex_color = default_vertex_color
+
+        if first_shape and first_shape._handle_hvertex_color:
+            current_hvertex_color = first_shape._handle_hvertex_color
+        else:
+            current_hvertex_color = default_hvertex_color
+
+        # 创建非模态对话框
+        dialog = QDialog(self)
+        dialog.setWindowFlags(
+            Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint
+        )
+        if len(labels) == 1:
+            dialog.setWindowTitle(self.tr(f"控制柄颜色设置 - {labels[0]}"))
+        else:
+            dialog.setWindowTitle(self.tr(f"控制柄颜色设置 ({len(labels)}个标签)"))
+        dialog.setMinimumWidth(300)
+
+        layout = QVBoxLayout(dialog)
+
+        # 选中时顶点填充色设置组
+        vertex_group = QGroupBox(self.tr("选中时顶点填充色"))
+        vertex_layout = QHBoxLayout(vertex_group)
+
+        vertex_color_preview = QLabel()
+        vertex_color_preview.setFixedSize(60, 30)
+        vertex_color_preview.setStyleSheet(f"background-color: {current_vertex_color.name()}; border: 1px solid black;")
+        vertex_layout.addWidget(vertex_color_preview)
+
+        vertex_color_btn = QPushButton(self.tr("选择颜色"))
+        selected_vertex_color = [current_vertex_color]
+
+        def update_preview():
+            """实时更新画布预览"""
+            for shape in self.canvas.shapes:
+                if shape.label in labels:
+                    shape._handle_vertex_color = selected_vertex_color[0]
+                    shape._handle_hvertex_color = selected_hvertex_color[0]
+            self.canvas.update()
+
+        def on_vertex_color_click():
+            from PyQt5.QtWidgets import QColorDialog
+            color = QColorDialog.getColor(selected_vertex_color[0], dialog, self.tr("选择选中时顶点填充色"))
+            if color.isValid():
+                selected_vertex_color[0] = color
+                vertex_color_preview.setStyleSheet(f"background-color: {color.name()}; border: 1px solid black;")
+                update_preview()
+
+        vertex_color_btn.clicked.connect(on_vertex_color_click)
+        vertex_layout.addWidget(vertex_color_btn)
+        vertex_layout.addStretch()
+        layout.addWidget(vertex_group)
+
+        # 拖拽时顶点填充色设置组
+        hvertex_group = QGroupBox(self.tr("拖拽时顶点填充色"))
+        hvertex_layout = QHBoxLayout(hvertex_group)
+
+        hvertex_color_preview = QLabel()
+        hvertex_color_preview.setFixedSize(60, 30)
+        hvertex_color_preview.setStyleSheet(f"background-color: {current_hvertex_color.name()}; border: 1px solid black;")
+        hvertex_layout.addWidget(hvertex_color_preview)
+
+        hvertex_color_btn = QPushButton(self.tr("选择颜色"))
+        selected_hvertex_color = [current_hvertex_color]
+
+        def on_hvertex_color_click():
+            from PyQt5.QtWidgets import QColorDialog
+            color = QColorDialog.getColor(selected_hvertex_color[0], dialog, self.tr("选择拖拽时顶点填充色"))
+            if color.isValid():
+                selected_hvertex_color[0] = color
+                hvertex_color_preview.setStyleSheet(f"background-color: {color.name()}; border: 1px solid black;")
+                update_preview()
+
+        hvertex_color_btn.clicked.connect(on_hvertex_color_click)
+        hvertex_layout.addWidget(hvertex_color_btn)
+        hvertex_layout.addStretch()
+        layout.addWidget(hvertex_group)
+
+        # 按钮
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton(self.tr("确定"))
+        cancel_btn = QPushButton(self.tr("取消"))
+        reset_btn = QPushButton(self.tr("重置为默认"))
+        btn_layout.addWidget(reset_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        accepted = [False]
+
+        def on_reset():
+            """重置为默认颜色"""
+            selected_vertex_color[0] = None
+            selected_hvertex_color[0] = None
+            vertex_color_preview.setStyleSheet(f"background-color: {default_vertex_color.name()}; border: 1px solid black;")
+            hvertex_color_preview.setStyleSheet(f"background-color: {default_hvertex_color.name()}; border: 1px solid black;")
+            for shape in self.canvas.shapes:
+                if shape.label in labels:
+                    shape._handle_vertex_color = None
+                    shape._handle_hvertex_color = None
+            self.canvas.update()
+
+        def on_accept():
+            """确定按钮点击"""
+            accepted[0] = True
+            new_vertex_color = selected_vertex_color[0]
+            new_hvertex_color = selected_hvertex_color[0]
+
+            # 更新配置
+            if "label_handle_vertex_colors" not in self._config or self._config["label_handle_vertex_colors"] is None:
+                self._config["label_handle_vertex_colors"] = {}
+            if "label_handle_hvertex_colors" not in self._config or self._config["label_handle_hvertex_colors"] is None:
+                self._config["label_handle_hvertex_colors"] = {}
+
+            for label in labels:
+                if new_vertex_color:
+                    self._config["label_handle_vertex_colors"][label] = (
+                        new_vertex_color.red(), new_vertex_color.green(), new_vertex_color.blue()
+                    )
+                elif label in self._config["label_handle_vertex_colors"]:
+                    del self._config["label_handle_vertex_colors"][label]
+
+                if new_hvertex_color:
+                    self._config["label_handle_hvertex_colors"][label] = (
+                        new_hvertex_color.red(), new_hvertex_color.green(), new_hvertex_color.blue()
+                    )
+                elif label in self._config["label_handle_hvertex_colors"]:
+                    del self._config["label_handle_hvertex_colors"][label]
+
+            # 保存配置到文件
+            from anylabeling.config import save_config
+            save_config(self._config)
+            
+            self.canvas.update()
+            self.set_dirty()
+            dialog.accept()
+
+        def on_reject():
+            """取消按钮点击或关闭窗口"""
+            if accepted[0]:
+                return
+            # 恢复原始设置
+            for shape in self.canvas.shapes:
+                if shape.label in labels and id(shape) in original_settings:
+                    orig = original_settings[id(shape)]
+                    shape._handle_vertex_color = orig['vertex_color']
+                    shape._handle_hvertex_color = orig['hvertex_color']
+            self.canvas.update()
+
+        def on_finished(result):
+            """对话框关闭时处理"""
+            if result == QDialog.Rejected:
+                on_reject()
+
+        reset_btn.clicked.connect(on_reset)
+        ok_btn.clicked.connect(on_accept)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.finished.connect(on_finished)
+
         dialog.show()
 
     def change_label_alpha(self, label):
@@ -10742,12 +11039,33 @@ class LabelingWidget(QtWidgets.QWidget):
         return osp.dirname(str(self.filename)) if self.filename else "."
 
     def toggle_visibility_shapes(self, value):
+        # 智能判断：基于可见图形比例决定操作
+        # 如果大部分图形被隐藏（可见比例 <= 10%），则显示全部
+        # 否则隐藏全部
+        total_shapes = len(self.canvas.shapes)
+        if total_shapes == 0:
+            return
+        
+        visible_count = sum(1 for shape in self.canvas.shapes if shape.visible)
+        visible_ratio = visible_count / total_shapes
+        
+        # 可见比例 <= 10% 时显示全部，否则隐藏全部
+        should_show = visible_ratio <= 0.1
+        
         for index, item in enumerate(self.label_list):
-            item.setCheckState(Qt.Checked if value else Qt.Unchecked)
+            item.setCheckState(Qt.Checked if should_show else Qt.Unchecked)
             shape = self.label_list[index].shape()
-            shape.visible = True if value else False
-            self.canvas.set_shape_visible(shape, value)
-        self._config["show_shapes"] = value
+            shape.visible = should_show
+            self.canvas.set_shape_visible(shape, should_show)
+        
+        # 同步更新 unique_label_list 的勾选状态
+        for i in range(self.unique_label_list.count()):
+            item = self.unique_label_list.item(i)
+            item.setCheckState(Qt.Checked if should_show else Qt.Unchecked)
+        
+        self._config["show_shapes"] = should_show
+        # 同步更新 action 的 checked 状态
+        self.actions.visibility_shapes_mode.setChecked(should_show)
         # 更新导航器显示
         self.update_navigator_shapes()
 

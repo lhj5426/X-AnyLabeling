@@ -100,6 +100,7 @@ class Canvas(
     segmentation_mode_exit_requested = QtCore.pyqtSignal()  # Request to exit segmentation mode
     hide_shapes_requested = QtCore.pyqtSignal(list)  # Request to hide shapes (Shift+RightButton path selection)
     delete_shapes_requested = QtCore.pyqtSignal(list)  # Request to delete shapes (Alt+RightButton path selection)
+    mouse_pos_changed = QtCore.pyqtSignal(object)  # 鼠标位置变化信号（图像坐标），用于导航器显示
 
     CREATE, EDIT = 0, 1
 
@@ -985,6 +986,12 @@ class Canvas(
         return distance >= AUTO_DECODE_MOVE_THRESHOLD
 
     # QT Overload
+    def leaveEvent(self, ev):
+        """Handle mouse leaving the canvas - clear navigator mouse indicator"""
+        self.mouse_pos_changed.emit(None)
+        super().leaveEvent(ev)
+
+    # QT Overload
     def mouseMoveEvent(self, ev):  # noqa: C901
         """Update line with last point and current coordinates"""
         if self.is_loading:
@@ -993,6 +1000,9 @@ class Canvas(
             pos = self.transform_pos(ev.localPos())
         except AttributeError:
             return
+
+        # 发射鼠标位置信号（用于导航器显示）
+        self.mouse_pos_changed.emit(pos)
 
         # Handle paste preview mode - update preview position but don't block other mouse events
         if self.paste_preview_mode:
