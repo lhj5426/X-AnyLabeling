@@ -556,5 +556,20 @@ https://github.com/user-attachments/assets/9c53f355-3b2c-4cd1-b564-e8251ce0b909
 
 https://github.com/user-attachments/assets/fbf64e7e-fa73-416b-b89b-4c8e2f873811
 
+111.高亮与锁定增加 锁定标签是否显示点和块控制柄
+
+https://github.com/user-attachments/assets/91d0c4ab-2f3c-4508-971b-c8063f610765
+
+112.非高亮状态显示点和块增加 高亮状态下鼠标点击后的第二种 非高亮状态的显示设置
+
+https://github.com/user-attachments/assets/bc598058-3094-470f-9b78-7ba61940bb22
+
+113.标签右键菜单增加点和快的独立颜色设置
+
+https://github.com/user-attachments/assets/1c4b3e5b-90a1-4b1b-9fa5-be25504cf3ef
+
+114.放大镜设置 增加 导航器鼠标指示器 颜色管理器增加 导航器鼠标指示器的大小和颜色设置
+
+https://github.com/user-attachments/assets/7dec363f-a6a3-42c9-a00c-45889fdd2a75
 
 
