@@ -32,16 +32,69 @@ from anylabeling.views.labeling.logger import logger
 
 # 全局OCR模型（单例，只加载一次）
 _ocr_model = None
+_ocr_model_path = None  # 当前加载的OCR模型路径
 
-def get_ocr_model():
+# OCR路径历史记录文件
+OCR_PATH_HISTORY_FILE = osp.join(osp.expanduser("~"), ".ocr_path_history.json")
+
+
+def load_ocr_path_history():
+    """加载OCR路径历史记录"""
+    import json
+    try:
+        if osp.exists(OCR_PATH_HISTORY_FILE):
+            with open(OCR_PATH_HISTORY_FILE, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+                return [p for p in history if osp.exists(p)]
+    except Exception as e:
+        logger.warning(f"Failed to load OCR path history: {e}")
+    return []
+
+
+def save_ocr_path_history(ocr_path):
+    """保存OCR路径到历史记录"""
+    import json
+    try:
+        history = load_ocr_path_history()
+        # 移除重复项，添加到最前面
+        if ocr_path in history:
+            history.remove(ocr_path)
+        history.insert(0, ocr_path)
+        # 只保留最近10个
+        history = history[:10]
+        with open(OCR_PATH_HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save OCR path history: {e}")
+
+
+def get_ocr_model(ocr_path=None):
     """获取OCR模型单例"""
-    global _ocr_model
+    global _ocr_model, _ocr_model_path
+    
+    # 如果指定了新路径且与当前不同，重新加载
+    if ocr_path and ocr_path != _ocr_model_path:
+        _ocr_model = None
+        _ocr_model_path = None
+    
     if _ocr_model is None:
         try:
             import sys
-            ocr_path = osp.join(osp.dirname(osp.dirname(osp.dirname(osp.dirname(__file__)))), "OnnxOCR-main")
-            if ocr_path not in sys.path:
-                sys.path.insert(0, ocr_path)
+            
+            # 确定OCR路径
+            if ocr_path:
+                final_ocr_path = ocr_path
+            else:
+                # 默认路径：项目目录下的 OnnxOCR-main
+                final_ocr_path = osp.join(osp.dirname(osp.dirname(osp.dirname(osp.dirname(__file__)))), "OnnxOCR-main")
+            
+            if not osp.exists(final_ocr_path):
+                logger.error(f"OCR path not found: {final_ocr_path}")
+                return None
+            
+            if final_ocr_path not in sys.path:
+                sys.path.insert(0, final_ocr_path)
+            
             from onnxocr.onnx_paddleocr import ONNXPaddleOcr
             
             # 检查GPU可用性
@@ -53,10 +106,15 @@ def get_ocr_model():
                 use_gpu = False
             
             _ocr_model = ONNXPaddleOcr(use_angle_cls=True, use_gpu=use_gpu)
-            logger.info(f"OCR model loaded (singleton), GPU: {use_gpu}")
+            _ocr_model_path = final_ocr_path
+            logger.info(f"OCR model loaded from: {final_ocr_path}, GPU: {use_gpu}")
+            
+            # 保存到历史记录
+            save_ocr_path_history(final_ocr_path)
         except Exception as e:
             logger.error(f"Failed to load OCR model: {e}")
             _ocr_model = None
+            _ocr_model_path = None
     return _ocr_model
 
 
@@ -1080,6 +1138,30 @@ class FrameExtractionDialog(QDialog):
         ocr_layout.addWidget(self.ocr_similarity_label)
         ocr_layout.addWidget(self.ocr_similarity_spin)
         
+        # OCR路径选择行
+        ocr_path_layout = QHBoxLayout()
+        self.ocr_path_label = QLabel("OCR路径:")
+        self.ocr_path_btn = QPushButton("选择路径")
+        self.ocr_path_btn.setToolTip("选择 OnnxOCR-main 文件夹路径")
+        self.ocr_path_btn.setEnabled(True)
+        self.ocr_path_btn.clicked.connect(self.select_ocr_path)
+        
+        # OCR路径历史记录下拉框
+        self.ocr_path_combo = QComboBox()
+        self.ocr_path_combo.setMinimumWidth(200)
+        self.ocr_path_combo.setMaximumWidth(350)
+        self.ocr_path_combo.setEnabled(True)
+        self.ocr_path_combo.addItem("-- 历史路径 --")
+        self.load_ocr_path_history()
+        self.ocr_path_combo.currentIndexChanged.connect(self.on_ocr_path_history_selected)
+        
+        self.ocr_path = None  # 存储OCR路径
+        
+        ocr_path_layout.addWidget(self.ocr_path_label)
+        ocr_path_layout.addWidget(self.ocr_path_btn)
+        ocr_path_layout.addWidget(self.ocr_path_combo)
+        ocr_path_layout.addStretch()
+        
         # 调试模式
         self.debug_checkbox = QCheckBox("调试模式 (生成YOLO检测图和场景检测图)")
         self.debug_checkbox.setChecked(False)
@@ -1111,6 +1193,7 @@ class FrameExtractionDialog(QDialog):
         subtitle_layout.addLayout(yolo_layout)
         subtitle_layout.addLayout(yolo_filter_layout)
         subtitle_layout.addLayout(ocr_layout)
+        subtitle_layout.addLayout(ocr_path_layout)
         subtitle_layout.addWidget(self.detect_hint_label)
         subtitle_layout.addWidget(self.fast_mode_checkbox)
         subtitle_layout.addWidget(self.debug_checkbox)
@@ -1163,6 +1246,8 @@ class FrameExtractionDialog(QDialog):
         self.ocr_similarity_spin.setEnabled(is_ocr)
         self.ocr_filter_btn.setEnabled(is_ocr)
         self.ocr_prefer_longer_checkbox.setEnabled(is_ocr)
+        self.ocr_path_btn.setEnabled(is_ocr)
+        self.ocr_path_combo.setEnabled(is_ocr)
     
     def on_extract_group_toggled(self, checked):
         """图片提取区域启用/禁用（与硬字幕提取互斥）"""
@@ -1215,10 +1300,14 @@ class FrameExtractionDialog(QDialog):
             self.ocr_similarity_spin.setEnabled(True)
             self.ocr_filter_btn.setEnabled(True)
             self.ocr_prefer_longer_checkbox.setEnabled(True)
+            self.ocr_path_btn.setEnabled(True)
+            self.ocr_path_combo.setEnabled(True)
         else:
             self.ocr_similarity_spin.setEnabled(False)
             self.ocr_filter_btn.setEnabled(False)
             self.ocr_prefer_longer_checkbox.setEnabled(False)
+            self.ocr_path_btn.setEnabled(False)
+            self.ocr_path_combo.setEnabled(False)
         # 其他
         self.fast_mode_checkbox.setEnabled(checked)
         self.debug_checkbox.setEnabled(checked)
@@ -1229,6 +1318,45 @@ class FrameExtractionDialog(QDialog):
         dialog = OcrFilterDialog(self, self.ocr_filter_rules)
         if dialog.exec_() == QDialog.Accepted:
             self.ocr_filter_rules = dialog.get_rules()
+    
+    def load_ocr_path_history(self):
+        """加载OCR路径历史记录"""
+        history = load_ocr_path_history()
+        for path in history:
+            self.ocr_path_combo.addItem(osp.basename(path), path)
+        # 如果有历史记录，自动使用第一个（但不改变下拉框显示文字）
+        if history:
+            self.ocr_path = history[0]
+    
+    def select_ocr_path(self):
+        """选择OCR路径"""
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "选择 OnnxOCR-main 文件夹",
+            "",
+        )
+        if folder_path:
+            self.ocr_path = folder_path
+            # 更新下拉框显示
+            folder_name = osp.basename(folder_path)
+            self.ocr_path_combo.setItemText(0, folder_name)
+            self.ocr_path_combo.setCurrentIndex(0)
+            # 保存到历史记录
+            save_ocr_path_history(folder_path)
+            # 刷新下拉框历史
+            while self.ocr_path_combo.count() > 1:
+                self.ocr_path_combo.removeItem(1)
+            self.load_ocr_path_history()
+    
+    def on_ocr_path_history_selected(self, index):
+        """从历史记录选择OCR路径"""
+        if index <= 0:
+            return
+        ocr_path = self.ocr_path_combo.itemData(index)
+        if ocr_path and osp.exists(ocr_path):
+            self.ocr_path = ocr_path
+            self.ocr_path_combo.setItemText(0, osp.basename(ocr_path))
+            self.ocr_path_combo.setCurrentIndex(0)
     
     def load_model_history(self):
         """加载模型历史记录"""
@@ -1396,6 +1524,7 @@ class FrameExtractionDialog(QDialog):
             self.extract_group.isChecked(),  # 图片提取启用
             subtitle_enabled,  # 硬字幕提取启用
             self.timestamp_naming_checkbox.isChecked(),  # 时间轴命名
+            self.ocr_path,  # OCR路径
         )
 
 
@@ -1487,7 +1616,7 @@ def extract_frames_from_video(self, input_file, out_dir):
             # video_capture is released in the outer finally block
             return None
 
-        interval, prefix, seq_len, use_timestamp, use_scene_detect, scene_threshold, detect_interval, detection_region, use_yolo, yolo_model_path, yolo_conf, yolo_classes, debug_mode, fast_mode, use_ocr, ocr_similarity, ocr_filter_list, ocr_prefer_longer, extract_enabled, subtitle_enabled, extract_timestamp_naming = dialog.get_values()
+        interval, prefix, seq_len, use_timestamp, use_scene_detect, scene_threshold, detect_interval, detection_region, use_yolo, yolo_model_path, yolo_conf, yolo_classes, debug_mode, fast_mode, use_ocr, ocr_similarity, ocr_filter_list, ocr_prefer_longer, extract_enabled, subtitle_enabled, extract_timestamp_naming, ocr_path = dialog.get_values()
         
         # 检查是否至少启用了一个功能
         if not extract_enabled and not subtitle_enabled:
@@ -1513,8 +1642,17 @@ def extract_frames_from_video(self, input_file, out_dir):
                 return None
             try:
                 from ultralytics import YOLO
+                import torch
+                
+                # 检测GPU可用性并设置设备
+                if torch.cuda.is_available():
+                    device = 'cuda:0'
+                else:
+                    device = 'cpu'
+                
                 yolo_model = YOLO(yolo_model_path)
-                logger.info(f"YOLO model loaded: {yolo_model_path}")
+                yolo_model.to(device)
+                logger.info(f"YOLO model loaded: {yolo_model_path}, Device: {device}")
                 
                 # 如果指定了类别过滤，获取类别ID
                 if yolo_classes:
@@ -1558,10 +1696,10 @@ def extract_frames_from_video(self, input_file, out_dir):
         # 获取OCR模型（如果启用了OCR去重）
         ocr_model = None
         if use_ocr:
-            ocr_model = get_ocr_model()
+            ocr_model = get_ocr_model(ocr_path)
             if ocr_model is None:
                 popup = Popup(
-                    "加载OCR模型失败\n请确保 OnnxOCR-main 文件夹存在",
+                    "加载OCR模型失败\n请选择正确的 OnnxOCR-main 文件夹路径",
                     self,
                     icon=new_icon_path("warning", "svg"),
                 )
