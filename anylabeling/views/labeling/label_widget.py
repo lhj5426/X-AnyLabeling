@@ -10661,10 +10661,14 @@ class LabelingWidget(QtWidgets.QWidget):
             f".{fmt.data().decode().lower()}"
             for fmt in QtGui.QImageReader.supportedImageFormats()
         ]
+        video_extensions = ('.asf', '.avi', '.m4v', '.mkv', '.mov', '.mp4', '.mpeg', '.mpg', '.ts', '.wmv')
         if event.mimeData().hasUrls():
             items = [i.toLocalFile() for i in event.mimeData().urls()]
-            if any(i.lower().endswith(tuple(extensions)) for i in items):
+            # 接受文件夹、图片文件或视频文件的拖放
+            if any(osp.isdir(i) or i.lower().endswith(tuple(extensions)) or i.lower().endswith(video_extensions) for i in items):
                 event.accept()
+            else:
+                event.ignore()
         else:
             event.ignore()
 
@@ -10674,7 +10678,38 @@ class LabelingWidget(QtWidgets.QWidget):
             event.ignore()
             return
         items = [i.toLocalFile() for i in event.mimeData().urls()]
-        self.import_dropped_image_files(items)
+        
+        # 检查是否有文件夹被拖放
+        folders = [i for i in items if osp.isdir(i)]
+        if folders:
+            # 如果拖放了文件夹，打开第一个文件夹
+            recursive = self._config.get("load_subfolders", False)
+            self.import_image_folder(folders[0], recursive=recursive)
+            return
+        
+        # 检查是否有视频文件被拖放
+        video_extensions = ('.asf', '.avi', '.m4v', '.mkv', '.mov', '.mp4', '.mpeg', '.mpg', '.ts', '.wmv')
+        video_files = [i for i in items if i.lower().endswith(video_extensions)]
+        if video_files:
+            # 使用延迟调用，让拖放操作先完成，避免阻塞资源管理器
+            QTimer.singleShot(100, lambda: utils.open_video_file(self, video_files[0]))
+            return
+        
+        # 拖放图片文件时，打开图片所在的文件夹并定位到该图片
+        extensions = [
+            f".{fmt.data().decode().lower()}"
+            for fmt in QtGui.QImageReader.supportedImageFormats()
+        ]
+        image_files = [i for i in items if i.lower().endswith(tuple(extensions))]
+        if image_files:
+            # 取第一个图片文件，打开其所在文件夹
+            first_image = image_files[0]
+            folder_path = osp.dirname(first_image)
+            recursive = self._config.get("load_subfolders", False)
+            self.import_image_folder(folder_path, recursive=recursive)
+            # 加载完文件夹后，定位到拖放的图片
+            if first_image in self.fn_to_index:
+                self.load_file(first_image)
 
     def load_recent(self, filename):
         if self.may_continue():
