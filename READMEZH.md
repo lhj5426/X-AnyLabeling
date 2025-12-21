@@ -572,4 +572,27 @@ https://github.com/user-attachments/assets/1c4b3e5b-90a1-4b1b-9fa5-be25504cf3ef
 
 https://github.com/user-attachments/assets/7dec363f-a6a3-42c9-a00c-45889fdd2a75
 
+115.增加拖拽打开 拖拽文件夹可以打开整个文件夹 拖拽文件夹里的图片可以打开整个文件夹 拖拽视频可以执行视频提取操作
+
+拖拽文件夹
+
+https://github.com/user-attachments/assets/2da7d798-8ead-48da-a949-43aae7f25b25
+
+拖拽图片
+
+https://github.com/user-attachments/assets/c5649d23-b9f5-49bd-8a24-55bd98d9d347
+
+拖拽视频
+
+https://github.com/user-attachments/assets/10e0ae4e-adb5-472c-8da6-eb41fe5d3553
+
+116.视频提取增强 优化 支持以视频时间命名提取的图片 支持 提取 帧 秒 分 并显示提取图片张数复刻自 ImageGrab_70en 
+
+https://github.com/user-attachments/assets/dbbdf699-e734-4843-917d-74f22eaf6333
+
+117.视频提取增强 增加硬字幕提取
+
+https://github.com/user-attachments/assets/4870f0e7-2e04-422f-8547-003ad9702e7e
+
+
 
