@@ -56,7 +56,7 @@ class ThumbnailItem(QtWidgets.QWidget):
     need_reload = QtCore.pyqtSignal(object)  # 需要重新加载
     toggle_edited = QtCore.pyqtSignal(object)  # 切换已编辑状态
     
-    def __init__(self, image_path, thumbnail_width=200, border_radius=8, edited_color="#FFA500", border_width=0, label_color_getter=None, parent=None):
+    def __init__(self, image_path, thumbnail_width=200, border_radius=8, edited_color="#FFA500", border_width=0, label_color_getter=None, parent=None, index=0):
         super().__init__(parent)
         self.image_path = image_path
         self.thumbnail_width = thumbnail_width
@@ -78,6 +78,9 @@ class ThumbnailItem(QtWidgets.QWidget):
         self.actual_width = thumbnail_width
         self.loaded_width = 0  # 已加载的pixmap宽度
         self.horizontal_mode = False  # 横向模式
+        self.index = index  # 图片序号（从1开始）
+        self.show_index = True  # 是否显示序号
+        self.keep_aspect = False  # 方格子模式：保持比例居中显示
         
         self.setFixedSize(thumbnail_width, thumbnail_width)
         self.setCursor(Qt.PointingHandCursor)
@@ -231,11 +234,57 @@ class ThumbnailItem(QtWidgets.QWidget):
         
         if self.pixmap and not self.pixmap.isNull():
             painter.setClipPath(path)
-            # 缩放pixmap适应当前尺寸
-            scaled = self.pixmap.scaled(self.width(), self.height(), 
-                                        Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-            painter.drawPixmap(0, 0, scaled)
+            
+            if self.keep_aspect:
+                # 方格子模式：保持比例居中显示，背景填充深灰色
+                painter.fillRect(rect, QtGui.QColor(40, 40, 40))
+                # 保持比例缩放
+                scaled = self.pixmap.scaled(self.width(), self.height(), 
+                                            Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                # 居中绘制
+                x = (self.width() - scaled.width()) // 2
+                y = (self.height() - scaled.height()) // 2
+                painter.drawPixmap(x, y, scaled)
+            else:
+                # 瀑布流模式：填满整个区域
+                scaled = self.pixmap.scaled(self.width(), self.height(), 
+                                            Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                painter.drawPixmap(0, 0, scaled)
+            
             painter.setClipping(False)
+            
+            # 绘制序号标签（左上角，圆角矩形）
+            if self.show_index and self.index > 0:
+                index_str = str(self.index)
+                
+                # 计算文字尺寸
+                font = painter.font()
+                font.setPointSize(9)
+                font.setBold(True)
+                painter.setFont(font)
+                fm = QtGui.QFontMetrics(font)
+                text_width = fm.horizontalAdvance(index_str)
+                text_height = fm.height()
+                
+                # 计算标签尺寸（文字+内边距）
+                padding_h = 6  # 水平内边距
+                padding_v = 3  # 垂直内边距
+                label_width = text_width + padding_h * 2
+                label_height = text_height + padding_v * 2
+                label_margin = 6
+                label_x = label_margin
+                label_y = label_margin
+                corner_radius = 4  # 圆角半径
+                
+                # 绘制半透明背景圆角矩形
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QtGui.QColor(0, 80, 160, 200))  # 深蓝色半透明
+                label_rect = QtCore.QRectF(label_x, label_y, label_width, label_height)
+                painter.drawRoundedRect(label_rect, corner_radius, corner_radius)
+                
+                # 绘制序号文字
+                painter.setPen(QtGui.QColor(255, 255, 255))
+                painter.drawText(label_rect, Qt.AlignCenter, index_str)
             
             # 绘制边框
             if self.is_manually_edited:
@@ -391,6 +440,8 @@ class MasonryWidget(QtWidgets.QWidget):
         self.margin = 10
         self.horizontal_mode = False  # 横向模式
         self.row_height = 200  # 横向模式的行高
+        self.grid_mode = False  # 方格子模式
+        self.grid_size = 200  # 方格子尺寸
         self._resize_timer = QtCore.QTimer()
         self._resize_timer.setSingleShot(True)
         self._resize_timer.timeout.connect(self._do_relayout)
@@ -423,35 +474,228 @@ class MasonryWidget(QtWidgets.QWidget):
             self.setMinimumHeight(100)
             return
         
-        if self.horizontal_mode:
+        if self.grid_mode:
+            if self.horizontal_mode:
+                self._do_grid_horizontal_layout()
+            else:
+                self._do_grid_layout()
+        elif self.horizontal_mode:
             self._do_horizontal_layout()
         else:
             self._do_vertical_layout()
     
     def _do_vertical_layout(self):
-        """纵向瀑布流布局（按列数）"""
+        """纵向瀑布流布局（按顺序轮流分配到各列：1→列1, 2→列2, 3→列3, 4→列4, 5→列1...）"""
         col_width = self.get_column_width()
         
-        # 更新所有item的几何尺寸（强制更新，确保从横向模式切换回来时正确）
+        # 更新所有item的几何尺寸
         for item in self.items:
             item.horizontal_mode = False
+            item.keep_aspect = False  # 瀑布流模式不保持比例
             item.update_geometry_only(col_width)
         
-        # 瀑布流布局
+        # 按顺序轮流分配到各列（瀑布流，但按序号顺序）
         column_heights = [self.margin] * self.columns
         
-        for item in self.items:
-            min_col = column_heights.index(min(column_heights))
-            x = self.margin + min_col * (col_width + self.spacing)
-            y = column_heights[min_col]
+        for idx, item in enumerate(self.items):
+            # 按顺序分配到列：0,1,2,3,0,1,2,3...
+            col = idx % self.columns
+            x = self.margin + col * (col_width + self.spacing)
+            y = column_heights[col]
             
             item.move(int(x), int(y))
             item.show()
             
-            column_heights[min_col] += item.actual_height + self.spacing
+            column_heights[col] += item.actual_height + self.spacing
         
         max_height = max(column_heights) + self.margin
         self.setMinimumHeight(int(max_height))
+    
+    def _do_grid_layout(self):
+        """缩略图纵向布局（固定列数，高度统一，宽度按比例，横向铺满窗口，无黑边）"""
+        available_width = self.width() - 2 * self.margin
+        if available_width <= 0:
+            available_width = 800
+        
+        cols = max(1, self.columns)
+        
+        # 计算每张图片的宽高比
+        items_data = []
+        for item in self.items:
+            if item.image_width > 0 and item.image_height > 0:
+                ratio = item.image_width / item.image_height
+            else:
+                ratio = 1.0
+            items_data.append((item, ratio))
+        
+        # 按列数分行（每行固定 cols 张图片）
+        rows = []
+        for i in range(0, len(items_data), cols):
+            row = items_data[i:i + cols]
+            rows.append(row)
+        
+        # 布局每一行
+        y = self.margin
+        prev_row_height = 150  # 记录上一行高度
+        
+        for row_idx, row in enumerate(rows):
+            if not row:
+                continue
+            
+            # 计算这一行所有图片的宽高比之和
+            total_ratio = sum(r for _, r in row)
+            num_items = len(row)
+            total_spacing = (num_items - 1) * self.spacing
+            
+            is_last_row = row_idx == len(rows) - 1
+            is_incomplete = num_items < cols
+            
+            # 计算行高：让所有图片正好填满整行宽度
+            row_height = (available_width - total_spacing) / total_ratio
+            
+            # 最后一行图片不足时，使用前一行的高度，不拉伸
+            if is_last_row and is_incomplete and len(rows) > 1:
+                row_height = prev_row_height
+            
+            row_height = max(80, int(row_height))
+            prev_row_height = row_height
+            
+            # 计算每张图片的宽度
+            x = self.margin
+            widths = []
+            for item, ratio in row:
+                widths.append(int(row_height * ratio))
+            
+            # 只有非最后一行不足时才补齐误差
+            if not (is_last_row and is_incomplete):
+                if num_items > 0:
+                    total_used = sum(widths) + total_spacing
+                    diff = available_width - total_used
+                    if diff != 0 and widths:
+                        widths[-1] += diff
+            
+            # 布局这一行的图片
+            for i, (item, ratio) in enumerate(row):
+                item_width = widths[i]
+                
+                item.horizontal_mode = False
+                item.keep_aspect = False  # 不保持比例，无黑边
+                item.actual_width = item_width
+                item.actual_height = row_height
+                item.setFixedSize(item_width, row_height)
+                
+                if item.loaded and item.needs_reload(max(item_width, row_height)):
+                    item.need_reload.emit(item)
+                
+                item.move(int(x), int(y))
+                item.show()
+                
+                x += item_width + self.spacing
+            
+            y += row_height + self.spacing
+        
+        self.setMinimumHeight(int(y + self.margin))
+    
+    def _do_grid_horizontal_layout(self):
+        """缩略图横向布局（justified布局，高度控制行高，横向铺满窗口）"""
+        available_width = self.width() - 2 * self.margin
+        if available_width <= 0:
+            available_width = 800
+        
+        target_row_height = self.row_height
+        
+        # 计算每张图片在目标高度下的宽度
+        items_data = []
+        for item in self.items:
+            if item.image_width > 0 and item.image_height > 0:
+                ratio = item.image_width / item.image_height
+            else:
+                ratio = 1.0
+            items_data.append((item, ratio))
+        
+        # 分行：根据目标高度计算每行能放多少图片
+        rows = []
+        current_row = []
+        current_width = 0
+        
+        for item, ratio in items_data:
+            item_width = target_row_height * ratio
+            
+            if current_row and current_width + item_width + self.spacing > available_width:
+                rows.append(current_row)
+                current_row = [(item, ratio)]
+                current_width = item_width
+            else:
+                current_row.append((item, ratio))
+                current_width += item_width + (self.spacing if len(current_row) > 1 else 0)
+        
+        if current_row:
+            rows.append(current_row)
+        
+        # 布局：每行图片拉伸填满宽度
+        y = self.margin
+        prev_row_height = target_row_height  # 记录上一行高度
+        
+        for row_idx, row in enumerate(rows):
+            if not row:
+                continue
+            
+            # 计算这一行所有图片的宽高比之和
+            total_ratio = sum(r for _, r in row)
+            num_items = len(row)
+            total_spacing = (num_items - 1) * self.spacing
+            
+            is_last_row = row_idx == len(rows) - 1
+            is_incomplete = num_items < 2  # 横向模式：少于2张算不完整
+            
+            # 计算这一行的实际高度，使得所有图片正好填满宽度
+            if is_last_row and is_incomplete and len(rows) > 1:
+                # 最后一行不足时，使用前一行的高度
+                row_height = prev_row_height
+            else:
+                row_height = (available_width - total_spacing) / total_ratio
+                # 限制高度范围
+                row_height = max(target_row_height * 0.5, min(row_height, target_row_height * 1.5))
+            
+            row_height = int(row_height)
+            prev_row_height = row_height
+            
+            # 计算每张图片的宽度
+            widths = []
+            for item, ratio in row:
+                widths.append(int(row_height * ratio))
+            
+            # 只有非最后一行不足时才补齐误差
+            if not (is_last_row and is_incomplete):
+                if num_items > 0:
+                    total_used = sum(widths) + total_spacing
+                    diff = available_width - total_used
+                    if diff != 0 and widths:
+                        widths[-1] += diff
+            
+            # 布局这一行的图片
+            x = self.margin
+            for i, (item, ratio) in enumerate(row):
+                item_width = widths[i]
+                
+                item.horizontal_mode = False
+                item.keep_aspect = False  # 不保持比例，填满格子
+                item.actual_width = item_width
+                item.actual_height = row_height
+                item.setFixedSize(item_width, row_height)
+                
+                if item.loaded and item.needs_reload(max(item_width, row_height)):
+                    item.need_reload.emit(item)
+                
+                item.move(int(x), int(y))
+                item.show()
+                
+                x += item_width + self.spacing
+            
+            y += row_height + self.spacing
+        
+        total_height = y + self.margin
+        self.setMinimumHeight(int(total_height))
     
     def _do_horizontal_layout(self):
         """横向justified布局（按行高，自动填满每行）"""
@@ -463,6 +707,7 @@ class MasonryWidget(QtWidgets.QWidget):
         items_with_ratio = []
         for item in self.items:
             item.horizontal_mode = True
+            item.keep_aspect = False  # 横向模式不保持比例
             if item.image_width > 0 and item.image_height > 0:
                 # 宽高比
                 ratio = item.image_width / item.image_height
@@ -494,6 +739,7 @@ class MasonryWidget(QtWidgets.QWidget):
         
         # 布局每一行
         y = self.margin
+        prev_row_height = self.row_height  # 记录上一行高度
         
         for row_idx, row in enumerate(rows):
             if not row:
@@ -504,23 +750,37 @@ class MasonryWidget(QtWidgets.QWidget):
             num_items = len(row)
             total_spacing = (num_items - 1) * self.spacing
             
-            # 计算这一行的实际高度，使得所有图片正好填满宽度
-            # available_width = sum(height * ratio) + total_spacing
-            # available_width - total_spacing = height * total_ratio
-            # height = (available_width - total_spacing) / total_ratio
+            is_last_row = row_idx == len(rows) - 1
+            is_incomplete = len(row) < 3
             
-            if row_idx == len(rows) - 1 and len(row) < 3:
-                # 最后一行如果图片太少，使用目标高度，不强制填满
-                row_height = self.row_height
+            # 计算这一行的实际高度，使得所有图片正好填满宽度
+            if is_last_row and is_incomplete and len(rows) > 1:
+                # 最后一行不足时，使用前一行的高度
+                row_height = prev_row_height
             else:
                 row_height = (available_width - total_spacing) / total_ratio
                 # 限制高度范围
                 row_height = max(self.row_height * 0.5, min(row_height, self.row_height * 1.5))
             
+            prev_row_height = row_height
+            
+            # 计算每张图片的宽度
+            widths = []
+            for item, ratio in row:
+                widths.append(int(row_height * ratio))
+            
+            # 只有非最后一行不足时才补齐误差
+            if not (is_last_row and is_incomplete):
+                if num_items > 0:
+                    total_used = sum(widths) + total_spacing
+                    diff = available_width - total_used
+                    if diff != 0 and widths:
+                        widths[-1] += diff
+            
             # 布局这一行的图片
             x = self.margin
-            for item, ratio in row:
-                item_width = int(row_height * ratio)
+            for i, (item, ratio) in enumerate(row):
+                item_width = widths[i]
                 item_height = int(row_height)
                 
                 item.actual_width = item_width
@@ -570,6 +830,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.columns = 4
         self.row_height = 200  # 横向模式行高
         self.horizontal_mode = False  # 横向模式
+        self.grid_mode = False  # 方格子模式（统一尺寸）
+        self.grid_size = 200  # 方格子尺寸
         
         self.loaded_count = 0
         self.load_batch_size = 10
@@ -708,7 +970,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         layout.addWidget(self.columns_label)
         
         self._add_sep(layout)
-        
         # 高度（横向模式）
         layout.addWidget(QtWidgets.QLabel("高度:"))
         self.height_mode_btn = QtWidgets.QPushButton("横向")
@@ -721,7 +982,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         layout.addWidget(self.height_mode_btn)
         
         self.height_slider = QtWidgets.QSlider(Qt.Horizontal)
-        self.height_slider.setRange(100, 500)
+        self.height_slider.setRange(100, 600)
         self.height_slider.setValue(self.row_height)
         self.height_slider.sliderReleased.connect(self.on_height_released)
         self.height_slider.valueChanged.connect(lambda v: self.height_label.setText(str(v)))
@@ -730,6 +991,18 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.height_label = QtWidgets.QLabel(str(self.row_height))
         self.height_label.setFixedWidth(30)
         layout.addWidget(self.height_label)
+        
+        self._add_sep(layout)
+        
+        # 瀑布流/方格子切换
+        self.layout_mode_btn = QtWidgets.QPushButton("瀑布流")
+        self.layout_mode_btn.setFixedSize(60, 28)
+        self.layout_mode_btn.setStyleSheet("""
+            QPushButton { background: #0078d4; color: #fff; border: 1px solid #005a9e; border-radius: 3px; padding: 4px 8px; font-weight: bold; }
+            QPushButton:hover { background: #1084d8; }
+        """)
+        self.layout_mode_btn.clicked.connect(self.toggle_layout_mode)
+        layout.addWidget(self.layout_mode_btn)
         
         layout.addStretch()
         
@@ -766,10 +1039,11 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     def create_thumbnail_items(self):
         """创建所有缩略图项"""
         edited_color = self._get_manually_edited_color().name()
-        for path in self.image_list:
+        for idx, path in enumerate(self.image_list, start=1):
             item = ThumbnailItem(
                 path, self.thumbnail_width, self.border_radius, 
-                edited_color, self.border_width, self._get_label_color
+                edited_color, self.border_width, self._get_label_color,
+                index=idx
             )
             item.clicked.connect(self.on_thumbnail_clicked)
             item.request_horizontal_viewer.connect(self.open_horizontal_viewer.emit)
@@ -790,19 +1064,24 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     
     def get_load_width(self):
         """获取加载宽度/高度"""
-        if self.horizontal_mode:
+        window_width = self.width()
+        if window_width < 100:
+            window_width = 1200
+        
+        available_width = window_width - 2 * self.masonry_widget.margin - 20
+        
+        if self.grid_mode:
+            # 缩略图模式：根据列数估算最大尺寸
+            # justified布局下，图片高度约等于 available_width / columns
+            estimated_size = available_width // max(1, self.columns)
+            return max(300, int(estimated_size * 1.5))
+        elif self.horizontal_mode:
             # 横向模式：使用行高
             return max(250, self.row_height)
         else:
-            # 纵向模式：使用列宽
-            window_width = self.width()
-            if window_width < 100:
-                window_width = 1200
-            
-            available_width = window_width - 2 * self.masonry_widget.margin - 20
+            # 纵向瀑布流模式：使用列宽
             total_spacing = (self.columns - 1) * self.spacing
             col_width = (available_width - total_spacing) // self.columns
-            
             return max(250, col_width)
     
     def load_next_batch(self):
@@ -931,19 +1210,33 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         for item in self.masonry_widget.items:
             item.set_border_width(self.border_width)
     
+    def toggle_layout_mode(self):
+        """切换瀑布流/方格子模式"""
+        self.grid_mode = not self.grid_mode
+        self.masonry_widget.grid_mode = self.grid_mode
+        
+        if self.grid_mode:
+            self.layout_mode_btn.setText("缩略图")
+        else:
+            self.layout_mode_btn.setText("瀑布流")
+        
+        self.masonry_widget.schedule_relayout(0)
+        self._resize_reload_timer.start(300)
+    
     def on_columns_released(self):
         self.columns = self.columns_slider.value()
         self.masonry_widget.columns = self.columns
         self.masonry_widget.schedule_relayout(0)
-        # 列数变化后，延迟处理重新加载
-        self._resize_reload_timer.start(300)
+        # 延迟处理重新加载，避免卡顿
+        self._resize_reload_timer.start(500)
     
     def on_height_released(self):
         """高度滑块释放"""
         self.row_height = self.height_slider.value()
         self.masonry_widget.row_height = self.row_height
         self.masonry_widget.schedule_relayout(0)
-        self._resize_reload_timer.start(300)
+        # 延迟处理重新加载，避免卡顿
+        self._resize_reload_timer.start(500)
     
     def set_vertical_mode(self):
         """设置为纵向模式"""
