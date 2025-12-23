@@ -594,5 +594,8 @@ https://github.com/user-attachments/assets/dbbdf699-e734-4843-917d-74f22eaf6333
 
 https://github.com/user-attachments/assets/4870f0e7-2e04-422f-8547-003ad9702e7e
 
+118.垂直横向查看器增加鼠标中键切换编辑状态配合过滤可以当看片台来用 用来筛选图片
+ttps://github.com/user-attachments/assets/198069b9-df15-4eb8-908f-af7fcce94ad0
+
 
 
