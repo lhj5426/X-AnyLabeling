@@ -602,6 +602,11 @@ https://github.com/user-attachments/assets/198069b9-df15-4eb8-908f-af7fcce94ad0
 
 https://github.com/user-attachments/assets/9f6c4b6f-c993-4eca-a36a-480123918ea8
 
+120.瀑布流缩略图 图片增加序号显示 增加缩略图模式
+
+https://github.com/user-attachments/assets/2aae7cd3-11fc-47e3-9051-d02e474c97c7
+
+
 
 
 
