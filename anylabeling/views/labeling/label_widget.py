@@ -92,6 +92,7 @@ from .widgets.label_sync_dialog import LabelSyncDialog
 from .widgets.rectangle_scale_dialog import RectangleScaleDialog
 from .widgets.horizontal_viewer_dialog import HorizontalViewerDialog
 from .widgets.vertical_viewer_dialog import VerticalViewerDialog
+from .widgets.thumbnail_viewer_dialog import MasonryThumbnailDialog
 from ..mainwindow_widgets.traffic_light_dialog import TrafficLightDialog
 from ...services import merger, tag_sorting
 
@@ -1548,6 +1549,12 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="vqa",
             tip=self.tr("在新窗口中纵向预览所有图片"),
         )
+        thumbnail_viewer_tool = action(
+            self.tr("瀑布流缩略图"),
+            self.open_thumbnail_viewer,
+            icon="objects",
+            tip=self.tr("在新窗口中以瀑布流方式预览所有图片缩略图"),
+        )
         merge_shapes = action(
             self.tr("区域合并工具"),
             self.toggle_merge_tool,
@@ -2561,6 +2568,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 remove_point,
                 horizontal_viewer_tool,
                 vertical_viewer_tool,
+                thumbnail_viewer_tool,
             ),
             on_load_active=(
                 close,
@@ -2682,6 +2690,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 rectangle3_width_tool,
                 horizontal_viewer_tool,
                 vertical_viewer_tool,
+                thumbnail_viewer_tool,
             ),
         )
         utils.add_actions(
@@ -6822,6 +6831,10 @@ class LabelingWidget(QtWidgets.QWidget):
                 # 强制刷新UI
                 self.file_list_widget.viewport().update()
                 QtWidgets.QApplication.processEvents()
+                
+                # 更新缩略图查看器的颜色
+                if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog and self.thumbnail_viewer_dialog.isVisible():
+                    self.thumbnail_viewer_dialog.update_edited_color()
         else:
             # Handle non-color values and color components like alpha
             if key == ['shape', 'overlap_color_alpha']:
@@ -11371,6 +11384,9 @@ class LabelingWidget(QtWidgets.QWidget):
         
         if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog and self.vertical_viewer_dialog.isVisible():
             self.vertical_viewer_dialog.update_image_list(self.image_list, current_file)
+        
+        if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog and self.thumbnail_viewer_dialog.isVisible():
+            self.thumbnail_viewer_dialog.update_image_list(self.image_list, current_file)
     
     def _load_folder_last_page(self, folder_path):
         """从文件夹读取上次浏览的页码和文件名"""
@@ -11460,6 +11476,32 @@ class LabelingWidget(QtWidgets.QWidget):
                 except Exception:
                     return True
         
+        # 编辑状态过滤 - 特殊处理：没有JSON文件视为"未手动编辑"
+        if mode == 'edit':
+            if not has_label:
+                # 没有JSON文件，视为未手动编辑
+                if value == 'manually':
+                    return False  # 不是手动编辑的
+                elif value == 'not_manually':
+                    return True  # 是未手动编辑的
+            
+            # 有JSON文件，读取manually_edited字段
+            try:
+                with open(label_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                # 优先从根级别读取（旧格式），如果没有再从other_data读取（新格式）
+                manually_edited = data.get("manually_edited", data.get("other_data", {}).get("manually_edited", False))
+                if value == 'manually':
+                    return manually_edited
+                elif value == 'not_manually':
+                    return not manually_edited
+            except Exception:
+                # 读取失败，视为未手动编辑
+                if value == 'manually':
+                    return False
+                elif value == 'not_manually':
+                    return True
+        
         # 如果没有标注文件，其他过滤条件无法检查，直接返回False
         if not has_label:
             return False
@@ -11470,15 +11512,6 @@ class LabelingWidget(QtWidgets.QWidget):
                 data = json.load(f)
         except Exception:
             return False  # 如果读取失败，过滤掉该文件
-        
-        # 编辑状态过滤
-        if mode == 'edit':
-            # 优先从根级别读取（旧格式），如果没有再从other_data读取（新格式）
-            manually_edited = data.get("manually_edited", data.get("other_data", {}).get("manually_edited", False))
-            if value == 'manually':
-                return manually_edited
-            elif value == 'not_manually':
-                return not manually_edited
         
         # 文本内容过滤
         if mode == 'text':
@@ -12813,6 +12846,40 @@ class LabelingWidget(QtWidgets.QWidget):
         self.vertical_viewer_dialog.image_switched.connect(self.load_file)
         self.vertical_viewer_dialog.open_horizontal_viewer.connect(self.open_horizontal_viewer)
         self.vertical_viewer_dialog.show()
+    
+    def open_thumbnail_viewer(self, target_filename=None):
+        """打开瀑布流缩略图查看器"""
+        if not self.image_list:
+            self.error_message(
+                self.tr("No images loaded"),
+                self.tr("Please load an image folder before using this tool."),
+            )
+            return
+        
+        # If target_filename is not provided, use current image
+        if not isinstance(target_filename, str):
+            target_filename = self.image_path
+        
+        if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog and self.thumbnail_viewer_dialog.isVisible():
+            # 如果窗口被最小化，先还原它
+            if self.thumbnail_viewer_dialog.isMinimized():
+                self.thumbnail_viewer_dialog.showNormal()
+            self.thumbnail_viewer_dialog.raise_()
+            self.thumbnail_viewer_dialog.activateWindow()
+            return
+        
+        if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog:
+            self.thumbnail_viewer_dialog.close()
+        
+        self.thumbnail_viewer_dialog = MasonryThumbnailDialog(
+            self.image_list,
+            current_filename=target_filename,
+            parent=self
+        )
+        self.thumbnail_viewer_dialog.image_switched.connect(self.load_file)
+        self.thumbnail_viewer_dialog.open_horizontal_viewer.connect(self.open_horizontal_viewer)
+        self.thumbnail_viewer_dialog.open_vertical_viewer.connect(self.open_vertical_viewer)
+        self.thumbnail_viewer_dialog.show()
     
     def set_magnifier_settings(self):
         """打开放大镜设置对话框（非阻塞式）"""

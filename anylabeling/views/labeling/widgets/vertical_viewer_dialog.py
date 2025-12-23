@@ -234,7 +234,13 @@ class VerticalThumbnailItem(QtWidgets.QGraphicsPixmapItem):
         self.update()
 
     def get_height(self):
-        return self.pixmap().height()
+        try:
+            pixmap = self.pixmap()
+            if pixmap and not pixmap.isNull():
+                return pixmap.height()
+            return int(self.base_width / self.aspect_ratio)
+        except RuntimeError:
+            return int(self.base_width / self.aspect_ratio)
 
     def paint(self, painter, option, widget):
         super().paint(painter, option, widget)
@@ -648,7 +654,20 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             size = reader.size()
             if size.isValid():
                 resolution_str = f" [{size.width()}x{size.height()}]"
-            self.setWindowTitle(f"垂直滚动看图 - [{idx + 1}/{len(self.image_list)}]{resolution_str}")
+            
+            # 检查是否已编辑
+            edited_str = ""
+            json_path = os.path.splitext(path)[0] + ".json"
+            if os.path.exists(json_path):
+                try:
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if data.get("manually_edited", False):
+                            edited_str = "[已编辑]"
+                except Exception:
+                    pass
+            
+            self.setWindowTitle(f"垂直滚动看图 - [{idx + 1}/{len(self.image_list)}]{resolution_str}{edited_str}")
 
     def relayout_items(self):
         # 记录当前图片的旧位置
@@ -740,7 +759,20 @@ class VerticalViewerDialog(QtWidgets.QDialog):
              size = reader.size()
              if size.isValid():
                  resolution_str = f" [{size.width()}x{size.height()}]"
-             self.setWindowTitle(f"垂直滚动看图 - [{idx + 1}/{len(self.image_list)}]{resolution_str}")
+             
+             # 检查是否已编辑
+             edited_str = ""
+             json_path = os.path.splitext(center_item.path)[0] + ".json"
+             if os.path.exists(json_path):
+                 try:
+                     with open(json_path, 'r', encoding='utf-8') as f:
+                         data = json.load(f)
+                         if data.get("manually_edited", False):
+                             edited_str = "[已编辑]"
+                 except Exception:
+                     pass
+             
+             self.setWindowTitle(f"垂直滚动看图 - [{idx + 1}/{len(self.image_list)}]{resolution_str}{edited_str}")
              
              if self.thumbnails_visible:
                  # 只有当选中项变化时才更新
@@ -993,6 +1025,9 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         # 更新主界面的文件列表颜色
         if self.labeling_widget:
             self.labeling_widget.update_file_item_color(path, data.get("manually_edited", False))
+        
+        # 立即更新窗口标题以反映编辑状态变化
+        self.on_scroll()
 
     def trigger_open_horizontal_viewer(self):
         center_item = self.get_center_item()

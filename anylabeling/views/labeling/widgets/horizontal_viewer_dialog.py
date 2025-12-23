@@ -118,7 +118,13 @@ class HorizontalThumbnailItem(QtWidgets.QGraphicsPixmapItem):
         self.update()
 
     def get_width(self):
-        return self.pixmap().width()
+        try:
+            pixmap = self.pixmap()
+            if pixmap and not pixmap.isNull():
+                return pixmap.width()
+            return int(self.base_height * self.aspect_ratio)
+        except RuntimeError:
+            return int(self.base_height * self.aspect_ratio)
 
     def set_selected(self, selected):
         if self.selected != selected:
@@ -429,7 +435,14 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.items_list = []
         self.current_selected_item = None
         
-        x_offset = 0
+        # 计算左侧额外空间，确保第一张图片可以居中显示
+        viewport_width = self.view.viewport().width()
+        if viewport_width > 0:
+            left_extra_space = viewport_width / (2 * self.view_scale) if self.view_scale > 0 else viewport_width / 2
+        else:
+            left_extra_space = 500  # 默认值
+        
+        x_offset = left_extra_space  # 从左侧额外空间开始
         spacing = 0 
         
         # Populate thumbnails
@@ -456,7 +469,15 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             
             x_offset += item.get_width() + spacing
             
-        self.scene.setSceneRect(0, 0, x_offset, SCENE_BASE_HEIGHT)
+        # 添加额外空间，确保最后一张图片可以居中显示
+        # 额外空间 = 视口宽度的一半（这样最后一张图片的中心可以对齐到视口中心）
+        viewport_width = self.view.viewport().width()
+        if viewport_width > 0:
+            right_extra_space = viewport_width / (2 * self.view_scale) if self.view_scale > 0 else viewport_width / 2
+        else:
+            right_extra_space = 500  # 默认值
+        
+        self.scene.setSceneRect(0, 0, x_offset + right_extra_space, SCENE_BASE_HEIGHT)
         
         # 标记需要初始居中
         self._need_initial_center = True
@@ -738,6 +759,9 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         # 更新主界面的文件列表颜色
         if self.labeling_widget:
             self.labeling_widget.update_file_item_color(path, data.get("manually_edited", False))
+        
+        # 立即更新窗口标题以反映编辑状态变化
+        self.update_title_progress()
 
     def trigger_open_vertical_viewer(self):
         center_item = self.get_center_item()
@@ -873,7 +897,20 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             if size.isValid():
                 resolution_str = f" [{size.width()}x{size.height()}]"
             
-            self.setWindowTitle(f"横向滚动看图 - [{closest_idx + 1}/{len(self.image_list)}]{resolution_str}")
+            # 检查是否已编辑
+            edited_str = ""
+            json_path = os.path.splitext(current_item.path)[0] + ".json"
+            if os.path.exists(json_path):
+                try:
+                    import json
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if data.get("manually_edited", False):
+                            edited_str = "[已编辑]"
+                except Exception:
+                    pass
+            
+            self.setWindowTitle(f"横向滚动看图 - [{closest_idx + 1}/{len(self.image_list)}]{resolution_str}{edited_str}")
             
             new_item = self.items_list[closest_idx]
             if self.current_selected_item != new_item:
@@ -944,24 +981,27 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         if self.closing: return
         try:
             if item.path != path: return
+            old_width = item.get_width()
         except RuntimeError:
             return
         
-        old_width = item.get_width()
-        item.set_image(image, aspect_ratio)
-        item.set_shapes(shapes, scale_factor)
-        new_width = item.get_width()
-        
-        if abs(new_width - old_width) > 1:
-            # relayout_items 会自动调整滚动位置以保持当前图片稳定
-            self.request_relayout()
-        
-        # 当前图片加载完成后，应用自适应缩放
-        if path == self.current_filename:
-            if getattr(self, '_need_initial_center', False):
-                self._need_initial_center = False
-            self._apply_initial_transform()
-            self._center_on_current()
+        try:
+            item.set_image(image, aspect_ratio)
+            item.set_shapes(shapes, scale_factor)
+            new_width = item.get_width()
+            
+            if abs(new_width - old_width) > 1:
+                # relayout_items 会自动调整滚动位置以保持当前图片稳定
+                self.request_relayout()
+            
+            # 当前图片加载完成后，应用自适应缩放
+            if path == self.current_filename:
+                if getattr(self, '_need_initial_center', False):
+                    self._need_initial_center = False
+                self._apply_initial_transform()
+                self._center_on_current()
+        except RuntimeError:
+            return
 
     def request_relayout(self):
         if not self.layout_timer.isActive():
@@ -976,14 +1016,28 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             current_item = self.items_map[self.current_filename]
             old_current_x = current_item.pos().x()
         
-        x_offset = 0
+        # 计算左侧额外空间
+        viewport_width = self.view.viewport().width()
+        if viewport_width > 0:
+            left_extra_space = viewport_width / (2 * self.view_scale) if self.view_scale > 0 else viewport_width / 2
+        else:
+            left_extra_space = 500
+        
+        x_offset = left_extra_space  # 从左侧额外空间开始
         spacing = 0
         
         for item in self.items_list:
             item.setPos(x_offset, 0)
             x_offset += item.boundingRect().width() + spacing
             
-        self.scene.setSceneRect(0, 0, x_offset, SCENE_BASE_HEIGHT)
+        # 添加额外空间，确保最后一张图片可以居中显示
+        viewport_width = self.view.viewport().width()
+        if viewport_width > 0:
+            right_extra_space = viewport_width / (2 * self.view_scale) if self.view_scale > 0 else viewport_width / 2
+        else:
+            right_extra_space = 500  # 默认值
+        
+        self.scene.setSceneRect(0, 0, x_offset + right_extra_space, SCENE_BASE_HEIGHT)
         
         # 如果当前图片位置变化了，调整滚动位置以保持视图稳定
         if old_current_x is not None and self.current_filename in self.items_map:
