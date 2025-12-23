@@ -47,7 +47,15 @@ https://www.basiccat.org/zh/imagetrans/
 
 无论是看 CG 还是看 韩国条漫（隐藏分隔符无缝拼接连续滚动） 都可以 
 
-增强看图看漫画的阅读体验
+另外还可以使用瀑布流看图 对查看GALGAMECG 和无字的 AICG图 十分友好
+
+
+
+<img width="1925" height="1045" alt="image" src="https://github.com/user-attachments/assets/c907d8d3-1809-404a-a741-019bd5837d17" />
+
+同时对 横向看图 垂直看图 瀑布流 增加 鼠标中键 标记图片功能(已编辑)功能
+
+增强看图看漫画的阅读体验 并可用于筛选图片用 
 
 本工具打通了看漫画的第一步文字检测  和看漫画的最后一步看的阅读体验
 
@@ -56,6 +64,7 @@ https://www.basiccat.org/zh/imagetrans/
 
 因为使用AI编写代码 故 无法与主分支合并
 ![1759753741939](https://github.com/user-attachments/assets/611b27eb-1796-4b04-8e94-d17c081b3f69)
+
 
 本魔改服务于仅服务于 自训练模型 使用
 
