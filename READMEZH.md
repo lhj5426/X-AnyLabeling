@@ -598,5 +598,11 @@ https://github.com/user-attachments/assets/4870f0e7-2e04-422f-8547-003ad9702e7e
 
 https://github.com/user-attachments/assets/198069b9-df15-4eb8-908f-af7fcce94ad0
 
+119.增加瀑布流缩略图 缩略图上可显示标签数量 鼠标中键 同样可以切换已编辑状态
+
+https://github.com/user-attachments/assets/9f6c4b6f-c993-4eca-a36a-480123918ea8
+
+
+
 
 
