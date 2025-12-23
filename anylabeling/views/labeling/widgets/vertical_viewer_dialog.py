@@ -454,6 +454,13 @@ class VerticalViewerDialog(QtWidgets.QDialog):
                     self.update_view_transform()
                 QtCore.QTimer.singleShot(100, self.check_visible_items)
             elif event.type() == QtCore.QEvent.MouseButtonPress:
+                # 处理鼠标中键点击 - 标记为手动编辑
+                if event.button() == QtCore.Qt.MiddleButton:
+                    item = self.view.itemAt(event.pos())
+                    if isinstance(item, VerticalThumbnailItem):
+                        self.toggle_manually_edited(item.path)
+                        event.accept()
+                        return True
                 self.view.setFocus()
         return super().eventFilter(obj, event)
 
@@ -635,7 +642,13 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             view_item = self.items_map[path]
             self._center_on_item(view_item)
             idx = self.thumbnail_list.row(item)
-            self.setWindowTitle(f"垂直滚动看图 - {idx + 1}/{len(self.image_list)}")
+            # 获取当前图片的分辨率
+            resolution_str = ""
+            reader = QtGui.QImageReader(path)
+            size = reader.size()
+            if size.isValid():
+                resolution_str = f" [{size.width()}x{size.height()}]"
+            self.setWindowTitle(f"垂直滚动看图 - [{idx + 1}/{len(self.image_list)}]{resolution_str}")
 
     def relayout_items(self):
         # 记录当前图片的旧位置
@@ -721,7 +734,13 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         center_item = self.get_center_item()
         if center_item:
              idx = self.items_list.index(center_item)
-             self.setWindowTitle(f"垂直滚动看图 - {idx + 1}/{len(self.image_list)}")
+             # 获取当前图片的分辨率
+             resolution_str = ""
+             reader = QtGui.QImageReader(center_item.path)
+             size = reader.size()
+             if size.isValid():
+                 resolution_str = f" [{size.width()}x{size.height()}]"
+             self.setWindowTitle(f"垂直滚动看图 - [{idx + 1}/{len(self.image_list)}]{resolution_str}")
              
              if self.thumbnails_visible:
                  # 只有当选中项变化时才更新
@@ -925,9 +944,55 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             item.update()
 
     def switch_to_image(self, path):
+        # 更新当前文件名，确保窗口恢复时能正确定位
+        self.current_filename = path
         self.image_switched.emit(path)
         # 切换后自动最小化窗口，方便在主界面操作
         self.showMinimized()
+
+    def toggle_manually_edited(self, path):
+        """切换图片的手动编辑标记状态"""
+        import json
+        json_path = os.path.splitext(path)[0] + ".json"
+        
+        if not os.path.exists(json_path):
+            # JSON文件不存在，创建一个带有manually_edited标记的文件
+            data = {
+                "version": "3.2.2",
+                "flags": {},
+                "shapes": [],
+                "imagePath": os.path.basename(path),
+                "imageData": None,
+                "imageHeight": 0,
+                "imageWidth": 0,
+                "manually_edited": True
+            }
+            # 尝试获取图片尺寸
+            reader = QtGui.QImageReader(path)
+            size = reader.size()
+            if size.isValid():
+                data["imageWidth"] = size.width()
+                data["imageHeight"] = size.height()
+        else:
+            # 读取现有JSON文件
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception:
+                return
+            # 切换manually_edited状态
+            data["manually_edited"] = not data.get("manually_edited", False)
+        
+        # 保存JSON文件
+        try:
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            return
+        
+        # 更新主界面的文件列表颜色
+        if self.labeling_widget:
+            self.labeling_widget.update_file_item_color(path, data.get("manually_edited", False))
 
     def trigger_open_horizontal_viewer(self):
         center_item = self.get_center_item()

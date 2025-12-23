@@ -8292,6 +8292,10 @@ class LabelingWidget(QtWidgets.QWidget):
             # 如果是十六进制字符串格式
             return QtGui.QColor(color_value)
     
+    def update_file_item_color(self, image_path, manually_edited):
+        """公开方法：更新文件列表项的颜色（供外部调用，如看图窗口）"""
+        self._update_file_list_item_color(image_path, manually_edited)
+    
     def _update_file_list_item_color(self, image_path, manually_edited):
         """Helper function to update file list item color based on manually_edited status"""
         items = self.file_list_widget.findItems(image_path, Qt.MatchExactly)
