@@ -35,6 +35,11 @@ class AlignmentDialog(QtWidgets.QDialog):
     unify_height = QtCore.pyqtSignal(bool)
     unify_width = QtCore.pyqtSignal(bool)
     unify_angle = QtCore.pyqtSignal(bool)
+    push_out = QtCore.pyqtSignal(bool)  # 矩形弹出/分离信号（依赖参照物）
+    push_out_all = QtCore.pyqtSignal()  # 整页矩形弹出分离信号（独立功能）
+    push_out_selected = QtCore.pyqtSignal()  # 选中矩形弹出分离信号（独立功能）
+    clear_edge_connections = QtCore.pyqtSignal()  # 清除全部边缘连接信号
+    clear_selected_edge_connections = QtCore.pyqtSignal()  # 清除选中矩形的边缘连接信号
     
     # 指定尺寸信号: (标签列表, 宽度, 高度, 范围) 范围: "current", "selected", "range", "all"
     apply_specified_size = QtCore.pyqtSignal(list, int, int, str)
@@ -347,6 +352,100 @@ class AlignmentDialog(QtWidgets.QDialog):
         
         main_layout.addWidget(unify_group)
 
+        # --- 矩形边界边距对齐功能区（独立功能，不依赖参照物） ---
+        push_out_group = QtWidgets.QGroupBox(self.tr("矩形边界边距对齐"))
+        push_out_layout = QtWidgets.QVBoxLayout(push_out_group)
+        
+        # 说明文字
+        push_out_desc = QtWidgets.QLabel(self.tr("自动检测重叠的矩形，将穿透的矩形推出使边缘贴合"))
+        push_out_desc.setWordWrap(True)
+        push_out_desc.setStyleSheet("color: #666; font-size: 11px;")
+        push_out_layout.addWidget(push_out_desc)
+        
+        # 按钮行
+        push_out_btn_layout = QtWidgets.QHBoxLayout()
+        
+        self.btn_push_out_selected = QtWidgets.QPushButton(self.tr("选中矩形"))
+        self.btn_push_out_all = QtWidgets.QPushButton(self.tr("整页矩形"))
+        
+        push_out_btn_style = """
+            QPushButton {
+                background-color: #9b59b6;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: #8e44ad;
+            }
+        """
+        self.btn_push_out_selected.setStyleSheet(push_out_btn_style)
+        self.btn_push_out_all.setStyleSheet(push_out_btn_style)
+        
+        self.btn_push_out_selected.setToolTip(self.tr("处理当前选中的矩形之间的重叠"))
+        self.btn_push_out_all.setToolTip(self.tr("处理整页所有矩形之间的重叠"))
+        
+        push_out_btn_layout.addWidget(self.btn_push_out_selected)
+        push_out_btn_layout.addWidget(self.btn_push_out_all)
+        push_out_layout.addLayout(push_out_btn_layout)
+        
+        # 连接边缘选项
+        connect_layout = QtWidgets.QHBoxLayout()
+        self.connect_edges_checkbox = QtWidgets.QCheckBox(self.tr("弹出后连接边缘"))
+        self.connect_edges_checkbox.setToolTip(self.tr("弹出后将贴合的边缘连接起来，移动或调整一个矩形时另一个会同步变化"))
+        connect_layout.addWidget(self.connect_edges_checkbox)
+        
+        self.btn_clear_selected_connections = QtWidgets.QPushButton(self.tr("清除选中"))
+        self.btn_clear_selected_connections.setToolTip(self.tr("清除选中矩形的边缘连接关系"))
+        self.btn_clear_selected_connections.setStyleSheet("""
+            QPushButton {
+                background-color: #e67e22;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover {
+                background-color: #d35400;
+            }
+        """)
+        connect_layout.addWidget(self.btn_clear_selected_connections)
+        
+        self.btn_clear_connections = QtWidgets.QPushButton(self.tr("清除全部"))
+        self.btn_clear_connections.setToolTip(self.tr("清除当前页面所有的边缘连接关系"))
+        self.btn_clear_connections.setStyleSheet("""
+            QPushButton {
+                background-color: #e74c3c;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QPushButton:hover {
+                background-color: #c0392b;
+            }
+        """)
+        connect_layout.addWidget(self.btn_clear_connections)
+        connect_layout.addStretch()
+        push_out_layout.addLayout(connect_layout)
+        
+        # 弹出方向选项
+        direction_layout = QtWidgets.QHBoxLayout()
+        direction_layout.addWidget(QtWidgets.QLabel(self.tr("弹出方向:")))
+        self.push_direction_combo = QtWidgets.QComboBox()
+        self.push_direction_combo.addItem(self.tr("水平（左右）"), "horizontal")
+        self.push_direction_combo.addItem(self.tr("垂直（上下）"), "vertical")
+        self.push_direction_combo.addItem(self.tr("自动（最短距离）"), "auto")
+        self.push_direction_combo.setCurrentIndex(0)  # 默认水平
+        self.push_direction_combo.setToolTip(self.tr("选择弹出方向：水平适合竖排矩形，垂直适合横排矩形"))
+        direction_layout.addWidget(self.push_direction_combo)
+        direction_layout.addStretch()
+        push_out_layout.addLayout(direction_layout)
+        
+        main_layout.addWidget(push_out_group)
+
         # --- Log GroupBox ---
         log_group = QtWidgets.QGroupBox(self.tr("日志"))
         log_layout = QtWidgets.QVBoxLayout(log_group)
@@ -388,6 +487,14 @@ class AlignmentDialog(QtWidgets.QDialog):
 
         self.btn_unify_angle.left_clicked.connect(lambda: self.unify_angle.emit(True))
         self.btn_unify_angle.right_clicked.connect(lambda: self.unify_angle.emit(False))
+
+        # Connect push out buttons (独立功能)
+        self.btn_push_out_selected.clicked.connect(self.push_out_selected.emit)
+        self.btn_push_out_all.clicked.connect(self.push_out_all.emit)
+        
+        # Connect clear connections buttons
+        self.btn_clear_selected_connections.clicked.connect(self.clear_selected_edge_connections.emit)
+        self.btn_clear_connections.clicked.connect(self.clear_edge_connections.emit)
         
         # Connect specified size buttons
         self.btn_apply_size_current.clicked.connect(lambda: self._emit_apply_size("current"))
@@ -485,6 +592,18 @@ class AlignmentDialog(QtWidgets.QDialog):
         if not text:
             return set()
         return {label.strip() for label in text.split(',') if label.strip()}
+
+    def is_connect_edges_enabled(self):
+        """获取是否启用弹出后连接边缘"""
+        return self.connect_edges_checkbox.isChecked()
+
+    def get_push_direction(self):
+        """获取弹出方向设置
+        
+        Returns:
+            str: "horizontal"（水平/左右）, "vertical"（垂直/上下）, 或 "auto"（自动）
+        """
+        return self.push_direction_combo.currentData()
 
     def update_page_range(self, current_page, total_pages):
         """更新范围选择的页码范围"""

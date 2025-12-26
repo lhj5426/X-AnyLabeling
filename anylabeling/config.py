@@ -50,11 +50,20 @@ def save_config(config):
                     existing = yaml.safe_load(f) or {}
             except Exception:  # noqa
                 existing = {}
+        
+        # 保留文件中已有的merge_tool_settings
+        existing_merge_settings = existing.get("merge_tool_settings")
+        
         merged = _merge_prefer_non_null(existing, config)
 
         # Force overwrite for label_toggle_shortcuts to handle deletions properly
         if "label_toggle_shortcuts" in config:
             merged["label_toggle_shortcuts"] = config["label_toggle_shortcuts"]
+        
+        # 始终保留文件中已有的merge_tool_settings
+        # merge_dialog.py会直接写文件来保存这个设置
+        if existing_merge_settings:
+            merged["merge_tool_settings"] = existing_merge_settings
             
         with open(user_config_file, "w", encoding="utf-8") as f:
             yaml.safe_dump(merged, f, allow_unicode=True)

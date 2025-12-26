@@ -1,4 +1,8 @@
 from PyQt5 import QtWidgets, QtCore
+from anylabeling.config import get_config, save_config
+import os
+import yaml
+
 
 class MergeDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -174,16 +178,23 @@ class MergeDialog(QtWidgets.QDialog):
         button_layout = QtWidgets.QHBoxLayout()
         self.run_current_button = QtWidgets.QPushButton("对当前文件运行")
         self.run_all_button = QtWidgets.QPushButton("对所有文件运行")
-        self.cancel_button = QtWidgets.QPushButton("取消")
+        self.cancel_button = QtWidgets.QPushButton("关闭")
         
         button_layout.addWidget(self.run_current_button)
         button_layout.addWidget(self.run_all_button)
         button_layout.addWidget(self.cancel_button)
         button_layout.addStretch()
         
-        self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.clicked.connect(self._on_close)
+        
+        # 🎯 运行按钮点击时也保存设置
+        self.run_current_button.clicked.connect(self.save_settings_to_config)
+        self.run_all_button.clicked.connect(self.save_settings_to_config)
         
         self.layout.addLayout(button_layout)
+        
+        # 🎯 在构造函数末尾加载配置
+        self.load_settings_from_config()
 
     def get_config(self):
         config = {}
@@ -244,3 +255,116 @@ class MergeDialog(QtWidgets.QDialog):
         config["OUTPUT_SHAPE_TYPE"] = "rectangle" if self.output_type_group.checkedId() == 1 else "rotation"
 
         return config
+
+    def save_settings_to_config(self):
+        """保存当前设置到配置文件"""
+        merge_settings = {
+            "merge_mode": self.merge_mode.currentData(),
+            "ltr_labels": self.ltr_labels_edit.text(),
+            "rtl_labels": self.rtl_labels_edit.text(),
+            "ttb_labels": self.ttb_labels_edit.text(),
+            "label_merge_strategy": self.label_merge_strategy.currentData(),
+            "enable_exclude_labels": self.enable_exclude_labels.isChecked(),
+            "exclude_labels": self.exclude_labels.text(),
+            "require_same_label": self.require_same_label.isChecked(),
+            "use_specific_groups": self.use_specific_groups.isChecked(),
+            "specific_groups": self.specific_groups_edit.toPlainText(),
+            "max_vertical_gap": self.max_vertical_gap.value(),
+            "min_width_overlap_ratio": self.min_width_overlap_ratio.value(),
+            "max_horizontal_gap": self.max_horizontal_gap.value(),
+            "min_height_overlap_ratio": self.min_height_overlap_ratio.value(),
+            "allow_negative_gap": self.allow_negative_gap.isChecked(),
+            "output_shape_type": "rectangle" if self.output_type_group.checkedId() == 1 else "rotation",
+        }
+        
+        # 直接读写配置文件，避免get_config的副作用
+        user_config_file = os.path.join(os.path.expanduser("~"), ".YSGxanylabelingrc")
+        try:
+            existing = {}
+            if os.path.exists(user_config_file):
+                with open(user_config_file, "r", encoding="utf-8") as f:
+                    existing = yaml.safe_load(f) or {}
+            
+            existing["merge_tool_settings"] = merge_settings
+            
+            with open(user_config_file, "w", encoding="utf-8") as f:
+                yaml.safe_dump(existing, f, allow_unicode=True)
+        except Exception as e:
+            print(f"[ERROR] Failed to save config: {e}")
+
+    def load_settings_from_config(self):
+        """从配置文件加载设置"""
+        # 直接读取配置文件，避免get_config的副作用
+        user_config_file = os.path.join(os.path.expanduser("~"), ".YSGxanylabelingrc")
+        try:
+            if not os.path.exists(user_config_file):
+                return
+            with open(user_config_file, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+        except Exception:
+            return
+        
+        settings = config.get("merge_tool_settings", {})
+        
+        if not settings:
+            return
+        
+        # 加载合并模式
+        merge_mode = settings.get("merge_mode", "VERTICAL")
+        for i in range(self.merge_mode.count()):
+            if self.merge_mode.itemData(i) == merge_mode:
+                self.merge_mode.setCurrentIndex(i)
+                break
+        
+        # 加载标签方向设置
+        self.ltr_labels_edit.setText(settings.get("ltr_labels", ""))
+        self.rtl_labels_edit.setText(settings.get("rtl_labels", "balloon,qipao,shuqing"))
+        self.ttb_labels_edit.setText(settings.get("ttb_labels", "changfangtiao,hengxie"))
+        
+        # 加载标签合并策略
+        strategy = settings.get("label_merge_strategy", "PREFER_SHORTER")
+        for i in range(self.label_merge_strategy.count()):
+            if self.label_merge_strategy.itemData(i) == strategy:
+                self.label_merge_strategy.setCurrentIndex(i)
+                break
+        
+        # 加载黑名单设置
+        self.enable_exclude_labels.setChecked(settings.get("enable_exclude_labels", True))
+        self.exclude_labels.setText(settings.get("exclude_labels", "other"))
+        
+        # 加载其他复选框
+        self.require_same_label.setChecked(settings.get("require_same_label", False))
+        self.use_specific_groups.setChecked(settings.get("use_specific_groups", False))
+        self.specific_groups_edit.setPlainText(settings.get("specific_groups", "balloon\nqipao\nshuqing\nchangfangtiao\nhengxie"))
+        
+        # 加载几何参数
+        self.max_vertical_gap.setValue(settings.get("max_vertical_gap", 10))
+        self.min_width_overlap_ratio.setValue(settings.get("min_width_overlap_ratio", 90))
+        self.max_horizontal_gap.setValue(settings.get("max_horizontal_gap", 10))
+        self.min_height_overlap_ratio.setValue(settings.get("min_height_overlap_ratio", 90))
+        
+        # 加载高级选项
+        self.allow_negative_gap.setChecked(settings.get("allow_negative_gap", True))
+        
+        # 加载输出类型
+        output_type = settings.get("output_shape_type", "rectangle")
+        if output_type == "rectangle":
+            self.radio_output_rectangle.setChecked(True)
+        else:
+            self.radio_output_rotation.setChecked(True)
+
+    def showEvent(self, event):
+        """窗口显示时不再重新加载配置，避免覆盖用户修改"""
+        super().showEvent(event)
+        # 注意：不再在这里加载配置，因为对话框是单例模式
+        # 配置只在构造函数中加载一次
+
+    def _on_close(self):
+        """关闭按钮点击时保存配置并关闭"""
+        self.save_settings_to_config()
+        self.hide()
+
+    def closeEvent(self, event):
+        """窗口关闭时保存配置"""
+        self.save_settings_to_config()
+        super().closeEvent(event)

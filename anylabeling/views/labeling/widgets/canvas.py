@@ -229,6 +229,11 @@ class Canvas(
         self.is_alignment_target_mode = False
         self.alignment_mode_active = False
 
+        # Edge connection (边缘连接) state
+        # 存储连接关系: {(shape1_id, edge1): (shape2_id, edge2), ...}
+        # edge: 'left', 'right', 'top', 'bottom'
+        self.edge_connections = {}  # 边缘连接关系字典
+
         # Segmentation tool state
         self.segmentation_mode = None  # 'vertical', 'horizontal', or None
         self.crosshair_style = 'default'  # 'default', 'vertical_only', 'horizontal_only'
@@ -1901,6 +1906,9 @@ class Canvas(
         self.moving_start_mouse_pos = None
         self.snap_accumulated_offset = QtCore.QPointF(0, 0)
         self.is_snapped = False
+        
+        # 🎯 清除连接形状的原始位置
+        self._connected_shapes_original = None
 
         # 🎯 清除顶点拖拽状态（模仿粘贴模式）
         self.vertex_drag_original_points = None
@@ -2287,16 +2295,12 @@ class Canvas(
         self.repaint()
 
     def update_delete_path_intersections(self):
-        """Update intersected shapes list for Alt+RightButton delete path, ordered by intersection position along path"""
+        """Update intersected shapes list for Alt+RightButton delete path, ordered by intersection position along path.
+        Note: This function does NOT skip locked shapes, as ALT+right click delete path
+        will unlock and delete locked shapes.
+        """
         if not self.delete_path_selection_mode or len(self.delete_path_selection_points) < 2:
             return
-
-        # Get locked labels
-        locked_labels = {
-            label.strip()
-            for label in self._config.get("locked_labels", "").split(",")
-            if label.strip()
-        }
 
         # Recalculate all intersections and their positions along the path
         # Store (cumulative_distance_to_intersection, shape) pairs
@@ -2310,12 +2314,6 @@ class Canvas(
 
             for shape in self.shapes:
                 if not shape.visible:
-                    continue
-                # Skip locked shapes
-                is_locked = shape.label in locked_labels and not getattr(
-                    shape, "is_session_unlocked", False
-                )
-                if is_locked:
                     continue
                 # Skip if already recorded
                 if any(s == shape for _, s in shape_intersections):
@@ -2853,15 +2851,20 @@ class Canvas(
                 # Horizontal edge - move vertically only
                 new_v1 = QtCore.QPointF(original_v1.x(), original_v1.y() + total_offset.y())
                 new_v2 = QtCore.QPointF(original_v2.x(), original_v2.y() + total_offset.y())
+                edge_offset = QtCore.QPointF(0, total_offset.y())
             else:
                 # Vertical edge - move horizontally only
                 new_v1 = QtCore.QPointF(original_v1.x() + total_offset.x(), original_v1.y())
                 new_v2 = QtCore.QPointF(original_v2.x() + total_offset.x(), original_v2.y())
+                edge_offset = QtCore.QPointF(total_offset.x(), 0)
 
             # Update the two vertices
             shape.points[v1_index] = new_v1
             shape.points[v2_index] = new_v2
             shape.is_edited = True # Mark shape as edited
+            
+            # 🎯 处理边缘连接同步
+            self._sync_edge_connection(shape, edge_index, edge_offset)
 
         elif shape.shape_type in ["rotation", "rotation3"]:
             # For rotated rectangles, move edge along its perpendicular direction
@@ -2891,6 +2894,111 @@ class Canvas(
             shape.points[v1_index] = new_v1
             shape.points[v2_index] = new_v2
             shape.is_edited = True # Mark shape as edited
+            
+            # 🎯 处理边缘连接同步
+            self._sync_edge_connection(shape, edge_index, perp_offset)
+
+    def _sync_edge_connection(self, shape, edge_index, offset, visited=None):
+        """同步边缘连接的形状（支持链式传递）
+        
+        当一个形状的边被移动时，检查是否有连接的形状，并同步调整。
+        连接的形状移动后，会递归检查它的其他连接，实现链式传递。
+        
+        Args:
+            shape: 被移动边的形状
+            edge_index: 边的索引 (0=top, 1=right, 2=bottom, 3=left for rectangle)
+            offset: 边的移动偏移量
+            visited: 已访问的形状集合（防止循环）
+        """
+        if not self.edge_connections:
+            return
+        
+        # 初始化已访问集合
+        if visited is None:
+            visited = set()
+        
+        # 将edge_index转换为边名称
+        edge_names = ['top', 'right', 'bottom', 'left']
+        if edge_index < 0 or edge_index >= len(edge_names):
+            return
+        
+        edge_name = edge_names[edge_index]
+        key = (id(shape), edge_name)
+        
+        if key not in self.edge_connections:
+            return
+        
+        connected_shape, connected_edge = self.edge_connections[key]
+        
+        # 防止循环处理
+        if id(connected_shape) in visited:
+            return
+        visited.add(id(connected_shape))
+        
+        # 🎯 简化逻辑：无论扩大还是缩小，连接的矩形都整体移动
+        # 这样可以保持连接关系，不会拉伸其他矩形
+        
+        if shape.shape_type == 'rectangle' and connected_shape.shape_type == 'rectangle':
+            move_offset = None
+            
+            if edge_name == 'right' and connected_edge == 'left':
+                # shape的右边连接other的左边 -> other整体水平移动
+                move_offset = QtCore.QPointF(offset.x(), 0)
+                    
+            elif edge_name == 'left' and connected_edge == 'right':
+                # shape的左边连接other的右边 -> other整体水平移动
+                move_offset = QtCore.QPointF(offset.x(), 0)
+                    
+            elif edge_name == 'bottom' and connected_edge == 'top':
+                # shape的下边连接other的上边 -> other整体垂直移动
+                move_offset = QtCore.QPointF(0, offset.y())
+                    
+            elif edge_name == 'top' and connected_edge == 'bottom':
+                # shape的上边连接other的下边 -> other整体垂直移动
+                move_offset = QtCore.QPointF(0, offset.y())
+            
+            if move_offset and (move_offset.x() != 0 or move_offset.y() != 0):
+                connected_shape.move_by(move_offset)
+                connected_shape.is_edited = True
+                
+                # 🎯 链式传递：检查连接的矩形是否还有其他连接
+                # 遍历所有边，检查是否有连接需要同步
+                for other_edge_idx, other_edge_name in enumerate(edge_names):
+                    other_key = (id(connected_shape), other_edge_name)
+                    if other_key in self.edge_connections:
+                        next_shape, _ = self.edge_connections[other_key]
+                        # 只传递给还没访问过的形状
+                        if id(next_shape) not in visited and next_shape != shape:
+                            self._sync_edge_connection(connected_shape, other_edge_idx, move_offset, visited)
+
+    def _adjust_shape_edge(self, shape, edge_name, amount):
+        """调整形状的指定边
+        
+        Args:
+            shape: 要调整的形状
+            edge_name: 边名称 ('left', 'right', 'top', 'bottom')
+            amount: 调整量（正数向右/下，负数向左/上）
+        """
+        if shape.shape_type != 'rectangle' or len(shape.points) != 4:
+            return
+        
+        # 矩形顶点顺序: 0=左上, 1=右上, 2=右下, 3=左下
+        if edge_name == 'left':
+            # 调整左边：移动顶点0和3的x坐标
+            shape.points[0] = QtCore.QPointF(shape.points[0].x() + amount, shape.points[0].y())
+            shape.points[3] = QtCore.QPointF(shape.points[3].x() + amount, shape.points[3].y())
+        elif edge_name == 'right':
+            # 调整右边：移动顶点1和2的x坐标
+            shape.points[1] = QtCore.QPointF(shape.points[1].x() + amount, shape.points[1].y())
+            shape.points[2] = QtCore.QPointF(shape.points[2].x() + amount, shape.points[2].y())
+        elif edge_name == 'top':
+            # 调整上边：移动顶点0和1的y坐标
+            shape.points[0] = QtCore.QPointF(shape.points[0].x(), shape.points[0].y() + amount)
+            shape.points[1] = QtCore.QPointF(shape.points[1].x(), shape.points[1].y() + amount)
+        elif edge_name == 'bottom':
+            # 调整下边：移动顶点2和3的y坐标
+            shape.points[2] = QtCore.QPointF(shape.points[2].x(), shape.points[2].y() + amount)
+            shape.points[3] = QtCore.QPointF(shape.points[3].x(), shape.points[3].y() + amount)
 
 
     def bounded_move_shapes(self, shapes, pos, enable_snap=True):
@@ -3006,10 +3114,64 @@ class Canvas(
             # Mark all moved shapes as edited
             for item in self.moving_shapes_original:
                 item['shape'].is_edited = True
+            
+            # 🎯 同步移动连接的形状（基于原始位置）
+            if self.edge_connections:
+                final_move_offset = final_offset if snap_offset else total_offset
+                self._sync_connected_shapes_on_move(shapes, final_move_offset)
 
             self.prev_point = pos
             return True
         return False
+
+    def _sync_connected_shapes_on_move(self, moved_shapes, total_offset):
+        """当形状移动时，同步移动所有连接的形状（支持链式传递）
+        
+        Args:
+            moved_shapes: 被移动的形状列表
+            total_offset: 从开始移动到现在的总偏移量
+        """
+        if not self.edge_connections:
+            return
+        
+        # 🎯 使用递归收集所有需要同步移动的形状（链式传递）
+        shapes_to_move = set()
+        visited = set(id(s) for s in moved_shapes)  # 已访问的形状
+        
+        def collect_connected_shapes(shape):
+            """递归收集所有连接的形状"""
+            for edge in ['left', 'right', 'top', 'bottom']:
+                key = (id(shape), edge)
+                if key in self.edge_connections:
+                    connected_shape, _ = self.edge_connections[key]
+                    if id(connected_shape) not in visited:
+                        visited.add(id(connected_shape))
+                        shapes_to_move.add(connected_shape)
+                        # 递归收集连接的形状
+                        collect_connected_shapes(connected_shape)
+        
+        # 从所有被移动的形状开始收集
+        for shape in moved_shapes:
+            collect_connected_shapes(shape)
+        
+        # 第一次移动时，保存连接形状的原始位置
+        if not hasattr(self, '_connected_shapes_original') or self._connected_shapes_original is None:
+            self._connected_shapes_original = {}
+            for connected_shape in shapes_to_move:
+                self._connected_shapes_original[id(connected_shape)] = [
+                    QtCore.QPointF(pt.x(), pt.y()) for pt in connected_shape.points
+                ]
+        
+        # 基于原始位置 + 总偏移量来移动连接的形状
+        for connected_shape in shapes_to_move:
+            shape_id = id(connected_shape)
+            if shape_id in self._connected_shapes_original:
+                original_points = self._connected_shapes_original[shape_id]
+                new_points = []
+                for pt in original_points:
+                    new_points.append(QtCore.QPointF(pt.x() + total_offset.x(), pt.y() + total_offset.y()))
+                connected_shape.points = new_points
+                connected_shape.is_edited = True
 
     def move_by_keyboard(self, dp: QtCore.QPointF):
         """Move selected shapes by keyboard."""
@@ -5276,6 +5438,36 @@ class Canvas(
         # If all checks pass, update the shape's points.
         for i, new_point in enumerate(new_points):
             shape.points[i] = new_point
+        
+        # 🎯 处理边缘连接同步（矩形内部滚轮调整两边边距）
+        if self.edge_connections:
+            if shape.shape_type == "rectangle":
+                if adjust_height:
+                    # 调整高度：上边(0)和下边(2)同时移动
+                    # 上边向上/下移动
+                    top_offset = QtCore.QPointF(0, -adjustment)
+                    self._sync_edge_connection(shape, 0, top_offset)  # top edge
+                    # 下边向下/上移动
+                    bottom_offset = QtCore.QPointF(0, adjustment)
+                    self._sync_edge_connection(shape, 2, bottom_offset)  # bottom edge
+                else:
+                    # 调整宽度：左边(3)和右边(1)同时移动
+                    # 左边向左/右移动
+                    left_offset = QtCore.QPointF(-adjustment, 0)
+                    self._sync_edge_connection(shape, 3, left_offset)  # left edge
+                    # 右边向右/左移动
+                    right_offset = QtCore.QPointF(adjustment, 0)
+                    self._sync_edge_connection(shape, 1, right_offset)  # right edge
+            elif shape.shape_type == "rotation":
+                # 旋转矩形的边缘连接同步（基于delta方向）
+                if adjust_height:
+                    # 上边(0)和下边(2)
+                    self._sync_edge_connection(shape, 0, -delta)
+                    self._sync_edge_connection(shape, 2, delta)
+                else:
+                    # 左边(3)和右边(1)
+                    self._sync_edge_connection(shape, 3, -delta)
+                    self._sync_edge_connection(shape, 1, delta)
 
     def _adjust_rotation_edge(self, shape, cursor_pos, move_outward, adjust_mode="normal"):
         """Adjust the rotated rectangle edge closest to the cursor position.
@@ -5362,6 +5554,10 @@ class Canvas(
             # Check if new points are within bounds
             shape.points[idx1] = QtCore.QPointF(new_x1, new_y1)
             shape.points[idx2] = QtCore.QPointF(new_x2, new_y2)
+            
+            # 🎯 处理边缘连接同步（旋转矩形滚轮调整）
+            offset = QtCore.QPointF(move_x, move_y)
+            self._sync_edge_connection(shape, closest_edge_index, offset)
 
     def _adjust_rectangle_edge(self, shape, cursor_pos, move_outward, adjust_mode="normal"):
         """Adjust the rectangle edge closest to cursor position within image boundaries.
@@ -5418,6 +5614,15 @@ class Canvas(
 
             if new_point is not None:
                 shape.points[i] = new_point
+        
+        # 🎯 处理边缘连接同步（滚轮调整）
+        edge_index_map = {'top': 0, 'right': 1, 'bottom': 2, 'left': 3}
+        if closest_edge in edge_index_map:
+            if closest_edge in ['left', 'right']:
+                offset = QtCore.QPointF(step if closest_edge == 'right' else -step, 0)
+            else:
+                offset = QtCore.QPointF(0, step if closest_edge == 'bottom' else -step)
+            self._sync_edge_connection(shape, edge_index_map[closest_edge], offset)
 
     def _point_to_line_distance(self, point, line_start, line_end):
         """Calculate the distance from a point to a line segment"""
@@ -5505,13 +5710,52 @@ class Canvas(
         """Move selected shapes by an offset (using keyboard)
 
         方向键移动时禁用吸附，只显示辅助线，让用户可以自由移动
+        支持连接的形状同步移动
         """
         if self.selected_shapes:
-            self.bounded_move_shapes(
-                self.selected_shapes, self.prev_point + offset, enable_snap=False
-            )
+            # 直接移动选中的形状
+            for shape in self.selected_shapes:
+                shape.move_by(offset)
+                shape.is_edited = True
+            
+            # 🎯 同步移动连接的形状（链式传递）
+            if self.edge_connections:
+                self._sync_connected_shapes_on_keyboard_move(self.selected_shapes, offset)
+            
             self.repaint()
             self.moving_shape = True
+
+    def _sync_connected_shapes_on_keyboard_move(self, moved_shapes, offset):
+        """键盘移动时同步连接的形状（链式传递）
+        
+        Args:
+            moved_shapes: 被移动的形状列表
+            offset: 移动偏移量
+        """
+        if not self.edge_connections:
+            return
+        
+        # 使用递归收集所有需要同步移动的形状
+        shapes_to_move = set()
+        visited = set(id(s) for s in moved_shapes)
+        
+        def collect_connected_shapes(shape):
+            for edge in ['left', 'right', 'top', 'bottom']:
+                key = (id(shape), edge)
+                if key in self.edge_connections:
+                    connected_shape, _ = self.edge_connections[key]
+                    if id(connected_shape) not in visited:
+                        visited.add(id(connected_shape))
+                        shapes_to_move.add(connected_shape)
+                        collect_connected_shapes(connected_shape)
+        
+        for shape in moved_shapes:
+            collect_connected_shapes(shape)
+        
+        # 移动所有连接的形状
+        for connected_shape in shapes_to_move:
+            connected_shape.move_by(offset)
+            connected_shape.is_edited = True
 
     def rotate_by_keyboard(self, theta):
         """Rotate selected shapes by an theta (using keyboard)"""

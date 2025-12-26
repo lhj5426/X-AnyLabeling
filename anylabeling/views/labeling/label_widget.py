@@ -4335,6 +4335,12 @@ class LabelingWidget(QtWidgets.QWidget):
             self.alignment_dialog.unify_height.connect(lambda auto_exit: self._perform_alignment('unify_height', auto_exit))
             self.alignment_dialog.unify_width.connect(lambda auto_exit: self._perform_alignment('unify_width', auto_exit))
             self.alignment_dialog.unify_angle.connect(lambda auto_exit: self._perform_alignment('unify_angle', auto_exit))
+            # Connect push out signals (独立功能)
+            self.alignment_dialog.push_out_selected.connect(self._push_out_selected_shapes)
+            self.alignment_dialog.push_out_all.connect(self._push_out_all_shapes)
+            # Connect clear edge connections signals
+            self.alignment_dialog.clear_edge_connections.connect(self._clear_edge_connections)
+            self.alignment_dialog.clear_selected_edge_connections.connect(self._clear_selected_edge_connections)
             # Connect specified size signals
             self.alignment_dialog.apply_specified_size.connect(self.on_apply_specified_size)
             self.alignment_dialog.apply_specified_size_range.connect(self.on_apply_specified_size_range)
@@ -4644,6 +4650,12 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.set_dirty()
         self.canvas.repaint()
+        
+        # 🎯 执行对齐/统一操作后，自动清除边缘连接关系
+        # 因为矩形位置/尺寸已改变，原来的连接关系不再有效
+        if self.canvas.edge_connections:
+            self.canvas.edge_connections.clear()
+            self.alignment_dialog.log(self.tr("已自动清除边缘连接关系"))
 
         if processed_count > 0:
             self.alignment_dialog.log(self.tr("操作完成，共处理了 {count} 个矩形。").format(count=processed_count))
@@ -4656,6 +4668,541 @@ class LabelingWidget(QtWidgets.QWidget):
             self.on_alignment_dialog_finished()
         else:
             self.alignment_dialog.log(self.tr("保持对齐模式，可继续执行其他操作"))
+
+    def _get_locked_labels(self):
+        """获取高亮设置中锁定的标签列表"""
+        config = get_config()
+        locked_str = config.get("locked_labels", "")
+        if not locked_str:
+            return set()
+        return {label.strip() for label in locked_str.split(',') if label.strip()}
+
+    def _add_edge_connection(self, shape1, edge1, shape2, edge2):
+        """添加边缘连接关系
+        
+        Args:
+            shape1: 第一个形状
+            edge1: 第一个形状的边 ('left', 'right', 'top', 'bottom')
+            shape2: 第二个形状
+            edge2: 第二个形状的边
+        """
+        # 使用shape的id作为key
+        key1 = (id(shape1), edge1)
+        key2 = (id(shape2), edge2)
+        
+        # 双向连接
+        self.canvas.edge_connections[key1] = (shape2, edge2)
+        self.canvas.edge_connections[key2] = (shape1, edge1)
+
+    def _clear_edge_connections(self):
+        """清除所有边缘连接关系"""
+        self.canvas.edge_connections.clear()
+        if self.alignment_dialog:
+            self.alignment_dialog.log(self.tr("已清除所有边缘连接关系"))
+
+    def _clear_selected_edge_connections(self):
+        """清除选中矩形的边缘连接关系"""
+        if not self.canvas.selected_shapes:
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr("请先选中要断开连接的矩形"))
+            return
+        
+        if not self.canvas.edge_connections:
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr("当前没有任何边缘连接"))
+            return
+        
+        # 收集要删除的连接键
+        keys_to_remove = []
+        
+        for shape in self.canvas.selected_shapes:
+            shape_id = id(shape)
+            # 检查这个形状的所有边
+            for edge in ['left', 'right', 'top', 'bottom']:
+                key = (shape_id, edge)
+                if key in self.canvas.edge_connections:
+                    # 获取连接的另一端
+                    connected_shape, connected_edge = self.canvas.edge_connections[key]
+                    other_key = (id(connected_shape), connected_edge)
+                    
+                    # 标记两端的连接都要删除
+                    keys_to_remove.append(key)
+                    keys_to_remove.append(other_key)
+        
+        # 删除连接
+        removed_count = 0
+        for key in keys_to_remove:
+            if key in self.canvas.edge_connections:
+                del self.canvas.edge_connections[key]
+                removed_count += 1
+        
+        if self.alignment_dialog:
+            if removed_count > 0:
+                self.alignment_dialog.log(self.tr("已清除选中矩形的 {count} 个边缘连接").format(count=removed_count // 2))
+            else:
+                self.alignment_dialog.log(self.tr("选中的矩形没有边缘连接"))
+
+    def _get_connected_shape(self, shape, edge):
+        """获取与指定形状的指定边连接的形状
+        
+        Args:
+            shape: 形状
+            edge: 边 ('left', 'right', 'top', 'bottom')
+            
+        Returns:
+            (connected_shape, connected_edge) 或 None
+        """
+        key = (id(shape), edge)
+        if key in self.canvas.edge_connections:
+            return self.canvas.edge_connections[key]
+        return None
+
+    def _push_out_selected_shapes(self):
+        """弹出分离：以选中的矩形为基准，把与它重叠的矩形弹开"""
+        if not self.alignment_dialog:
+            return
+        
+        self.alignment_dialog.log_widget.clear()
+        
+        # 获取标签过滤器
+        filter_text = self.alignment_dialog.label_filter_input.text().strip()
+        target_labels = {label.strip() for label in filter_text.split(',') if label.strip()}
+        
+        # 获取锁定的标签（不参与弹出）
+        locked_labels = self._get_locked_labels()
+        
+        # 获取选中的矩形
+        selected = [s for s in self.canvas.selected_shapes if s.shape_type in ['rectangle', 'rotation']]
+        
+        if not selected:
+            self.alignment_dialog.log(self.tr("请先选中一个或多个矩形作为基准"))
+            return
+        
+        self.alignment_dialog.log(self.tr("以 {count} 个选中矩形为基准，弹出周围重叠的矩形").format(count=len(selected)))
+        if target_labels:
+            self.alignment_dialog.log(self.tr("只处理标签: {labels}").format(labels=", ".join(target_labels)))
+        if locked_labels:
+            self.alignment_dialog.log(self.tr("锁定标签(不移动): {labels}").format(labels=", ".join(locked_labels)))
+        
+        self.canvas.store_shapes()
+        
+        # 获取所有非选中的矩形
+        all_shapes = [s for s in self.canvas.shapes if s.shape_type in ['rectangle', 'rotation']]
+        other_shapes = [s for s in all_shapes if s not in selected]
+        
+        processed_count = 0
+        skipped_count = 0
+        
+        # 对每个选中的基准矩形
+        for base_shape in selected:
+            base_rect = base_shape.bounding_rect()
+            
+            # 检查所有其他矩形是否与基准重叠
+            for other_shape in other_shapes:
+                # 检查是否是锁定的标签
+                if other_shape.label in locked_labels:
+                    continue  # 跳过锁定的标签
+                
+                # 检查标签过滤
+                if target_labels and other_shape.label not in target_labels:
+                    continue  # 跳过不在过滤列表中的标签
+                
+                other_rect = other_shape.bounding_rect()
+                
+                if base_rect.intersects(other_rect):
+                    # 压边弹出逻辑：
+                    # 只有当other的一边在base外面，另一边在base里面时，才算"压边"
+                    # 选择移动距离最小的方向弹出
+                    # moves格式: (距离, 偏移量, 方向名, other的边, base的边)
+                    
+                    moves = []
+                    
+                    # 检测从右边压入：other主体在base右边，但other的左边进入了base
+                    # 条件：other右边在base右边外面，且other左边在base内部（在base左边和右边之间）
+                    if (other_rect.right() > base_rect.right() and 
+                        other_rect.left() > base_rect.left() and 
+                        other_rect.left() < base_rect.right()):
+                        push_dist = base_rect.right() - other_rect.left()
+                        moves.append((abs(push_dist), QtCore.QPointF(push_dist, 0), "右", "left", "right"))
+                    
+                    # 检测从左边压入：other主体在base左边，但other的右边进入了base
+                    # 条件：other左边在base左边外面，且other右边在base内部
+                    if (other_rect.left() < base_rect.left() and 
+                        other_rect.right() < base_rect.right() and 
+                        other_rect.right() > base_rect.left()):
+                        push_dist = base_rect.left() - other_rect.right()
+                        moves.append((abs(push_dist), QtCore.QPointF(push_dist, 0), "左", "right", "left"))
+                    
+                    # 检测从下边压入：other主体在base下边，但other的上边进入了base
+                    # 条件：other下边在base下边外面，且other上边在base内部
+                    if (other_rect.bottom() > base_rect.bottom() and 
+                        other_rect.top() > base_rect.top() and 
+                        other_rect.top() < base_rect.bottom()):
+                        push_dist = base_rect.bottom() - other_rect.top()
+                        moves.append((abs(push_dist), QtCore.QPointF(0, push_dist), "下", "top", "bottom"))
+                    
+                    # 检测从上边压入：other主体在base上边，但other的下边进入了base
+                    # 条件：other上边在base上边外面，且other下边在base内部
+                    if (other_rect.top() < base_rect.top() and 
+                        other_rect.bottom() < base_rect.bottom() and 
+                        other_rect.bottom() > base_rect.top()):
+                        push_dist = base_rect.top() - other_rect.bottom()
+                        moves.append((abs(push_dist), QtCore.QPointF(0, push_dist), "上", "bottom", "top"))
+                    
+                    # 只执行移动距离最小的那个方向（避免多方向同时弹出）
+                    if moves:
+                        moves.sort(key=lambda x: x[0])  # 按距离排序
+                        dist, delta, direction, other_edge, base_edge = moves[0]
+                        other_shape.move_by(delta)
+                        self.alignment_dialog.log(self.tr("'{label}' 向{dir}弹出 {dist:.1f} 像素").format(
+                            label=other_shape.label, dir=direction, dist=dist))
+                        processed_count += 1
+                        
+                        # 如果启用了连接边缘，记录连接关系
+                        if self.alignment_dialog.is_connect_edges_enabled():
+                            self._add_edge_connection(base_shape, base_edge, other_shape, other_edge)
+                            self.alignment_dialog.log(self.tr("  已连接: {base}的{base_edge}边 <-> {other}的{other_edge}边").format(
+                                base=base_shape.label, base_edge=base_edge,
+                                other=other_shape.label, other_edge=other_edge))
+        
+        self.set_dirty()
+        self.canvas.repaint()
+        
+        if processed_count > 0:
+            self.alignment_dialog.log(self.tr("弹出分离完成，共移动了 {count} 个矩形").format(count=processed_count))
+        else:
+            self.alignment_dialog.log(self.tr("没有发现与选中矩形重叠的其他矩形"))
+
+    def _push_out_all_shapes(self):
+        """弹出分离整页所有矩形（独立功能，不依赖参照物）"""
+        self._push_out_shapes_batch(self.canvas.shapes, "整页")
+
+    def _push_out_shapes_batch(self, shapes_to_process, scope_name):
+        """执行矩形弹出分离的核心逻辑（批量处理所有重叠）
+        
+        使用压边逻辑：检测哪条边被压了，就往那个方向弹出
+        支持迭代弹出：如果弹出后又覆盖了其他矩形，继续弹出
+        
+        Args:
+            shapes_to_process: 要处理的矩形列表
+            scope_name: 范围名称，用于日志显示
+        """
+        if not self.alignment_dialog:
+            return
+        
+        self.alignment_dialog.log_widget.clear()
+        
+        # 获取标签过滤器
+        filter_text = self.alignment_dialog.label_filter_input.text().strip()
+        target_labels = {label.strip() for label in filter_text.split(',') if label.strip()}
+        
+        # 获取锁定的标签（不参与弹出）
+        locked_labels = self._get_locked_labels()
+        
+        # 只处理矩形类型，并应用标签过滤，排除锁定标签
+        rectangles = []
+        for s in shapes_to_process:
+            if s.shape_type not in ['rectangle', 'rotation']:
+                continue
+            if s.label in locked_labels:
+                continue  # 排除锁定的标签
+            if target_labels and s.label not in target_labels:
+                continue
+            rectangles.append(s)
+        
+        if len(rectangles) < 2:
+            self.alignment_dialog.log(self.tr("需要至少2个矩形才能进行弹出分离"))
+            return
+        
+        connect_enabled = self.alignment_dialog.is_connect_edges_enabled()
+        push_direction = self.alignment_dialog.get_push_direction()
+        
+        direction_names = {
+            "horizontal": self.tr("水平（左右）"),
+            "vertical": self.tr("垂直（上下）"),
+            "auto": self.tr("自动")
+        }
+        
+        self.alignment_dialog.log(self.tr("开始{scope}弹出分离，共 {count} 个矩形").format(
+            scope=scope_name, count=len(rectangles)))
+        self.alignment_dialog.log(self.tr("弹出方向: {dir}").format(dir=direction_names.get(push_direction, push_direction)))
+        if target_labels:
+            self.alignment_dialog.log(self.tr("只处理标签: {labels}").format(labels=", ".join(target_labels)))
+        if locked_labels:
+            self.alignment_dialog.log(self.tr("锁定标签(不移动): {labels}").format(labels=", ".join(locked_labels)))
+        if connect_enabled:
+            self.alignment_dialog.log(self.tr("弹出后将建立边缘连接"))
+        
+        self.canvas.store_shapes()
+        
+        processed_count = 0
+        max_iterations = 100  # 防止无限循环
+        iteration = 0
+        
+        # 🎯 记录上一轮被移动的矩形（入侵者）
+        # 如果入侵者又和别人重叠，入侵者应该继续移动
+        last_moved_shapes = set()
+        
+        while iteration < max_iterations:
+            iteration += 1
+            moved_any = False
+            current_moved_shapes = set()
+            
+            # 检查所有矩形对之间的重叠
+            for i in range(len(rectangles)):
+                for j in range(i + 1, len(rectangles)):
+                    shape_i = rectangles[i]
+                    shape_j = rectangles[j]
+                    
+                    rect_i = shape_i.bounding_rect()
+                    rect_j = shape_j.bounding_rect()
+                    
+                    if not rect_i.intersects(rect_j):
+                        continue
+                    
+                    # 🎯 决定谁要移动
+                    # 规则：
+                    # - 第一轮：入侵者（压边的那个）被驱逐
+                    # - 后续轮：如果上一轮被移动的矩形撞到了其他矩形，
+                    #   角色反转：被撞到的原住民要让路（因为入侵者是被迫来的）
+                    
+                    i_was_moved = id(shape_i) in last_moved_shapes
+                    j_was_moved = id(shape_j) in last_moved_shapes
+                    
+                    mover_shape = None
+                    static_shape = None
+                    
+                    # 🎯 角色反转逻辑
+                    if i_was_moved and not j_was_moved:
+                        # shape_i 上一轮被移动（是被迫来的入侵者）
+                        # shape_j 是原住民，但被撞到了，所以 shape_j 要让路
+                        mover_shape = shape_j  # 原住民让路
+                        static_shape = shape_i  # 入侵者不动（因为它是被迫来的）
+                    elif j_was_moved and not i_was_moved:
+                        # shape_j 上一轮被移动（是被迫来的入侵者）
+                        # shape_i 是原住民，但被撞到了，所以 shape_i 要让路
+                        mover_shape = shape_i  # 原住民让路
+                        static_shape = shape_j  # 入侵者不动
+                    
+                    if mover_shape and static_shape:
+                        # 已确定谁要移动，计算弹出方向
+                        static_rect = static_shape.bounding_rect()
+                        mover_rect = mover_shape.bounding_rect()
+                        moves = self._detect_push_directions(static_rect, mover_rect)
+                        
+                        if not moves:
+                            # 完全重叠的情况，用备用逻辑
+                            moves = self._detect_push_directions_fallback(static_rect, mover_rect)
+                        
+                        # 🎯 根据方向设置过滤
+                        moves = self._filter_moves_by_direction(moves, push_direction)
+                        
+                        if moves:
+                            moves.sort(key=lambda x: x[0])
+                            dist, delta, direction, mover_edge, static_edge = moves[0]
+                            mover_shape.move_by(delta)
+                            current_moved_shapes.add(id(mover_shape))
+                            
+                            self.alignment_dialog.log(self.tr("'{label}' 向{dir}弹出 {dist:.1f} 像素（让路）").format(
+                                label=mover_shape.label, dir=direction, dist=dist))
+                            
+                            if connect_enabled:
+                                self._add_edge_connection(static_shape, static_edge, mover_shape, mover_edge)
+                                self.alignment_dialog.log(self.tr("  已连接: {static}的{static_edge}边 <-> {mover}的{mover_edge}边").format(
+                                    static=static_shape.label, static_edge=static_edge,
+                                    mover=mover_shape.label, mover_edge=mover_edge))
+                            
+                            processed_count += 1
+                            moved_any = True
+                    else:
+                        # 第一轮或两个都是/都不是上一轮移动的，选择移动距离最小的方案
+                        moves_j = self._detect_push_directions(rect_i, rect_j)
+                        moves_i = self._detect_push_directions(rect_j, rect_i)
+                        
+                        # 🎯 根据方向设置过滤
+                        moves_j = self._filter_moves_by_direction(moves_j, push_direction)
+                        moves_i = self._filter_moves_by_direction(moves_i, push_direction)
+                        
+                        best_move = None
+                        if moves_j:
+                            moves_j.sort(key=lambda x: x[0])
+                            best_j = moves_j[0]
+                            best_move = (best_j[0], best_j[1], best_j[2], shape_j, shape_i, best_j[3], best_j[4])
+                        
+                        if moves_i:
+                            moves_i.sort(key=lambda x: x[0])
+                            best_i = moves_i[0]
+                            if best_move is None or best_i[0] < best_move[0]:
+                                best_move = (best_i[0], best_i[1], best_i[2], shape_i, shape_j, best_i[3], best_i[4])
+                        
+                        # 完全重叠的备用逻辑
+                        if not best_move:
+                            moves_fallback = self._detect_push_directions_fallback(rect_i, rect_j)
+                            # 🎯 根据方向设置过滤
+                            moves_fallback = self._filter_moves_by_direction(moves_fallback, push_direction)
+                            if moves_fallback:
+                                moves_fallback.sort(key=lambda x: x[0])
+                                fb = moves_fallback[0]
+                                best_move = (fb[0], fb[1], fb[2], shape_j, shape_i, fb[3], fb[4])
+                        
+                        if best_move:
+                            dist, delta, direction, mover, static, mover_edge, static_edge = best_move
+                            mover.move_by(delta)
+                            current_moved_shapes.add(id(mover))
+                            
+                            self.alignment_dialog.log(self.tr("'{label}' 向{dir}弹出 {dist:.1f} 像素").format(
+                                label=mover.label, dir=direction, dist=dist))
+                            
+                            if connect_enabled:
+                                self._add_edge_connection(static, static_edge, mover, mover_edge)
+                                self.alignment_dialog.log(self.tr("  已连接: {static}的{static_edge}边 <-> {mover}的{mover_edge}边").format(
+                                    static=static.label, static_edge=static_edge,
+                                    mover=mover.label, mover_edge=mover_edge))
+                            
+                            processed_count += 1
+                            moved_any = True
+            
+            # 更新上一轮被移动的矩形
+            last_moved_shapes = current_moved_shapes
+            
+            # 如果这一轮没有移动任何矩形，说明已经完成
+            if not moved_any:
+                break
+        
+        if iteration >= max_iterations:
+            self.alignment_dialog.log(self.tr("警告: 达到最大迭代次数 {max}，可能还有重叠").format(max=max_iterations))
+        
+        self.set_dirty()
+        self.canvas.repaint()
+        
+        if processed_count > 0:
+            self.alignment_dialog.log(self.tr("弹出分离完成，共移动了 {count} 次，迭代 {iter} 轮").format(
+                count=processed_count, iter=iteration))
+        else:
+            self.alignment_dialog.log(self.tr("没有发现重叠的矩形"))
+
+    def _detect_push_directions(self, static_rect, mover_rect):
+        """检测压边方向
+        
+        Args:
+            static_rect: 静止矩形的边界框
+            mover_rect: 移动矩形的边界框
+            
+        Returns:
+            list of (距离, 偏移量, 方向名, mover的边, static的边)
+        """
+        moves = []
+        
+        # 检测从右边压入：mover主体在static右边，但mover的左边进入了static
+        if (mover_rect.right() > static_rect.right() and 
+            mover_rect.left() > static_rect.left() and 
+            mover_rect.left() < static_rect.right()):
+            push_dist = static_rect.right() - mover_rect.left()
+            moves.append((abs(push_dist), QtCore.QPointF(push_dist, 0), "右", "left", "right"))
+        
+        # 检测从左边压入：mover主体在static左边，但mover的右边进入了static
+        if (mover_rect.left() < static_rect.left() and 
+            mover_rect.right() < static_rect.right() and 
+            mover_rect.right() > static_rect.left()):
+            push_dist = static_rect.left() - mover_rect.right()
+            moves.append((abs(push_dist), QtCore.QPointF(push_dist, 0), "左", "right", "left"))
+        
+        # 检测从下边压入：mover主体在static下边，但mover的上边进入了static
+        if (mover_rect.bottom() > static_rect.bottom() and 
+            mover_rect.top() > static_rect.top() and 
+            mover_rect.top() < static_rect.bottom()):
+            push_dist = static_rect.bottom() - mover_rect.top()
+            moves.append((abs(push_dist), QtCore.QPointF(0, push_dist), "下", "top", "bottom"))
+        
+        # 检测从上边压入：mover主体在static上边，但mover的下边进入了static
+        if (mover_rect.top() < static_rect.top() and 
+            mover_rect.bottom() < static_rect.bottom() and 
+            mover_rect.bottom() > static_rect.top()):
+            push_dist = static_rect.top() - mover_rect.bottom()
+            moves.append((abs(push_dist), QtCore.QPointF(0, push_dist), "上", "bottom", "top"))
+        
+        # 🎯 处理完全重叠的情况：mover完全在static内部，或mover完全覆盖static
+        # 如果上面的压边检测都没有匹配，但确实有重叠，则选择最短距离弹出
+        if not moves and static_rect.intersects(mover_rect):
+            # 计算四个方向的弹出距离
+            # 向右弹出：mover左边移动到static右边
+            dist_right = static_rect.right() - mover_rect.left()
+            # 向左弹出：mover右边移动到static左边
+            dist_left = mover_rect.right() - static_rect.left()
+            # 向下弹出：mover上边移动到static下边
+            dist_down = static_rect.bottom() - mover_rect.top()
+            # 向上弹出：mover下边移动到static上边
+            dist_up = mover_rect.bottom() - static_rect.top()
+            
+            # 选择最短距离的方向
+            if dist_right > 0:
+                moves.append((dist_right, QtCore.QPointF(dist_right, 0), "右", "left", "right"))
+            if dist_left > 0:
+                moves.append((dist_left, QtCore.QPointF(-dist_left, 0), "左", "right", "left"))
+            if dist_down > 0:
+                moves.append((dist_down, QtCore.QPointF(0, dist_down), "下", "top", "bottom"))
+            if dist_up > 0:
+                moves.append((dist_up, QtCore.QPointF(0, -dist_up), "上", "bottom", "top"))
+        
+        return moves
+
+    def _filter_moves_by_direction(self, moves, push_direction):
+        """根据弹出方向设置过滤移动选项
+        
+        Args:
+            moves: 移动选项列表 [(距离, 偏移量, 方向名, mover边, static边), ...]
+            push_direction: "horizontal"（只左右）, "vertical"（只上下）, "auto"（全部）
+            
+        Returns:
+            过滤后的移动选项列表
+        """
+        if push_direction == "auto":
+            return moves
+        elif push_direction == "horizontal":
+            # 只保留左右方向
+            return [m for m in moves if m[2] in ("左", "右")]
+        elif push_direction == "vertical":
+            # 只保留上下方向
+            return [m for m in moves if m[2] in ("上", "下")]
+        return moves
+
+    def _detect_push_directions_fallback(self, static_rect, mover_rect):
+        """完全重叠时的备用弹出方向检测
+        
+        当压边检测无法确定方向时使用，计算四个方向的弹出距离
+        
+        Args:
+            static_rect: 静止矩形的边界框
+            mover_rect: 移动矩形的边界框
+            
+        Returns:
+            list of (距离, 偏移量, 方向名, mover的边, static的边)
+        """
+        moves = []
+        
+        if not static_rect.intersects(mover_rect):
+            return moves
+        
+        # 计算四个方向的弹出距离
+        # 向右弹出：mover左边移动到static右边
+        dist_right = static_rect.right() - mover_rect.left()
+        # 向左弹出：mover右边移动到static左边
+        dist_left = mover_rect.right() - static_rect.left()
+        # 向下弹出：mover上边移动到static下边
+        dist_down = static_rect.bottom() - mover_rect.top()
+        # 向上弹出：mover下边移动到static上边
+        dist_up = mover_rect.bottom() - static_rect.top()
+        
+        if dist_right > 0:
+            moves.append((dist_right, QtCore.QPointF(dist_right, 0), "右", "left", "right"))
+        if dist_left > 0:
+            moves.append((dist_left, QtCore.QPointF(-dist_left, 0), "左", "right", "left"))
+        if dist_down > 0:
+            moves.append((dist_down, QtCore.QPointF(0, dist_down), "下", "top", "bottom"))
+        if dist_up > 0:
+            moves.append((dist_up, QtCore.QPointF(0, -dist_up), "上", "bottom", "top"))
+        
+        return moves
 
     def on_apply_specified_size(self, labels, width, height, scope):
         """应用指定尺寸到指定标签的矩形
@@ -4672,6 +5219,12 @@ class LabelingWidget(QtWidgets.QWidget):
             self._apply_specified_size_selected(labels, width, height)
         elif scope == "all":
             self._apply_specified_size_all(labels, width, height)
+        
+        # 🎯 执行指定尺寸后，自动清除边缘连接关系
+        if self.canvas.edge_connections:
+            self.canvas.edge_connections.clear()
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr("已自动清除边缘连接关系"))
 
     def _apply_specified_size_current(self, labels, width, height):
         """应用指定尺寸到当前页面的指定标签"""
@@ -4988,6 +5541,12 @@ class LabelingWidget(QtWidgets.QWidget):
 
         if self.alignment_dialog:
             self.alignment_dialog.log(self.tr(f"范围: 处理了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框"))
+        
+        # 🎯 执行指定尺寸后，自动清除边缘连接关系
+        if self.canvas.edge_connections:
+            self.canvas.edge_connections.clear()
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr("已自动清除边缘连接关系"))
 
     def _resize_shape_to_size(self, shape, width, height):
         """调整单个shape到指定尺寸"""
@@ -10181,12 +10740,28 @@ class LabelingWidget(QtWidgets.QWidget):
         self.set_dirty()
 
     def delete_shapes_by_path(self, shapes_to_delete):
-        """Delete shapes selected by Alt+RightButton path"""
+        """Delete shapes selected by Alt+RightButton path.
+        Note: This will also unlock and delete locked shapes.
+        """
         if not shapes_to_delete:
             return
 
+        # Get locked labels
+        locked_labels = {
+            label.strip()
+            for label in self._config.get("locked_labels", "").split(",")
+            if label.strip()
+        }
+
         # Remove shapes from canvas and label list
         for shape in shapes_to_delete:
+            # Unlock locked shapes before deletion
+            is_locked = shape.label in locked_labels and not getattr(
+                shape, "is_session_unlocked", False
+            )
+            if is_locked:
+                shape.is_session_unlocked = True
+            
             # Remove from label list
             item = self.label_list.find_item_by_shape(shape)
             if item:
