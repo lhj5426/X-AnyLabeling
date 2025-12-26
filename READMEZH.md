@@ -598,6 +598,10 @@ https://github.com/user-attachments/assets/4870f0e7-2e04-422f-8547-003ad9702e7e
 
 https://github.com/user-attachments/assets/198069b9-df15-4eb8-908f-af7fcce94ad0
 
+
+https://github.com/user-attachments/assets/92d4c866-edf7-42d5-a449-8aa272f03cc9
+
+
 119.增加瀑布流缩略图 缩略图上可显示标签数量 鼠标中键 同样可以切换已编辑状态
 
 https://github.com/user-attachments/assets/9f6c4b6f-c993-4eca-a36a-480123918ea8
@@ -605,6 +609,10 @@ https://github.com/user-attachments/assets/9f6c4b6f-c993-4eca-a36a-480123918ea8
 120.瀑布流缩略图 图片增加序号显示 增加缩略图模式
 
 https://github.com/user-attachments/assets/2aae7cd3-11fc-47e3-9051-d02e474c97c7
+
+121.矩形对齐工具增加边界边距对齐 并连接矩形边界
+
+https://github.com/user-attachments/assets/72297e1b-06b2-4b1e-bed1-bdc15b67c8d6
 
 
 
