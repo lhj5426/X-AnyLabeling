@@ -614,6 +614,26 @@ https://github.com/user-attachments/assets/2aae7cd3-11fc-47e3-9051-d02e474c97c7
 
 https://github.com/user-attachments/assets/72297e1b-06b2-4b1e-bed1-bdc15b67c8d6
 
+122.高亮和锁定增加 取消功能增强 可以 按奇数或者偶数 隐藏一半 并可排除锁定的标签 配合反选可以精确调整
+
+https://github.com/user-attachments/assets/0eb07561-92db-46a6-a56a-d93d6f520a57
+
+123.高亮和锁定 增加 重叠检测 标识数字
+
+https://github.com/user-attachments/assets/b8f28a39-8cae-40e5-87a8-e7967d5221a1
+
+124.高亮和锁定 配合取消增强 增加反选增强 排除锁定的标签 可区分水平矩形和旋转矩形
+
+https://github.com/user-attachments/assets/6d7a0468-9367-4f37-8f75-ebe5d24c1918
+
+125.高亮和锁定 常驻高亮 增加 第五种高亮状态 只显示边框颜色不显示填充色
+
+https://github.com/user-attachments/assets/71889a2d-d902-4a11-b02f-deeb7492e754
+
+126.高亮和锁定 标签锁定增加 锁定的标签不显示序号  画布内显示鼠标坐标矩形坐标 可设置左上左下配合全屏只显示画布时使用
+
+https://github.com/user-attachments/assets/4aafb37e-32a2-4414-ba31-8ba9b7c85ca9
+
 
 
 
