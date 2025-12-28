@@ -4251,6 +4251,10 @@ class Canvas(
         if self.show_order:
             self.draw_order_circles(p)
 
+        # Draw overlap indicators (重叠检测显示)
+        if self._config.get("overlap_detect_enabled", False):
+            self.draw_overlap_indicators(p)
+
         # Draw mouse coordinates
         if self.cross_line_show:
             # Save painter state to isolate opacity settings
@@ -5018,13 +5022,28 @@ class Canvas(
                 (pt.y() + offset.y()) * self.scale
             )
 
-        # Calculate order for each shape
+        # 获取锁定标签设置
+        locked_hide_order = self._config.get("locked_hide_order", True)
+        locked_labels = set()
+        if locked_hide_order:
+            locked_labels_str = self._config.get("locked_labels", "")
+            locked_labels = {label.strip() for label in locked_labels_str.split(",") if label.strip()}
+
+        # Calculate order for each shape (排除锁定的标签)
         label_counters = {}
         shape_orders = {}
-        for i, shape in enumerate(self.shapes):
+        order_index = 0
+        for shape in self.shapes:
+            # 如果启用了锁定后不显示序号，跳过锁定的标签
+            if locked_hide_order and shape.label in locked_labels:
+                # 检查是否被会话解锁
+                if not getattr(shape, "is_session_unlocked", False):
+                    continue
+            
+            order_index += 1
             label = shape.label
             label_counters[label] = label_counters.get(label, 0) + 1
-            shape_orders[id(shape)] = (i + 1, label_counters[label])
+            shape_orders[id(shape)] = (order_index, label_counters[label])
 
         # Draw order circles for visible shapes
         for shape in self.shapes:
@@ -5037,13 +5056,18 @@ class Canvas(
             if global_order <= 0:
                 continue
 
-            # Calculate shape center
+            # Calculate shape center, offset down to avoid overlap with width/height display
             if not shape.points:
                 continue
             sum_x = sum(pt.x() for pt in shape.points)
             sum_y = sum(pt.y() for pt in shape.points)
             center_img = QtCore.QPointF(sum_x / len(shape.points), sum_y / len(shape.points))
             center_screen = to_screen(center_img)
+            # Only offset down if show_wh is enabled, or show_degrees is enabled AND shape is rotation type
+            # (horizontal rectangles don't show angle even if show_degrees is on)
+            should_offset = self.show_wh or (self.show_degrees and shape.shape_type == "rotation")
+            if should_offset:
+                center_screen.setY(center_screen.y() + 30)  # Offset down by 30 pixels
 
             # Draw blue background circle
             circle_radius = 12
@@ -5060,6 +5084,346 @@ class Canvas(
 
             # Center the text
             text = str(global_order)
+            fm = QtGui.QFontMetrics(font)
+            text_width = fm.horizontalAdvance(text)
+            ascent = fm.ascent()
+            descent = fm.descent()
+            text_x = center_screen.x() - text_width / 2
+            text_y = center_screen.y() + (ascent - descent) / 2
+            p.drawText(QtCore.QPointF(text_x, text_y), text)
+
+        p.restore()
+
+    def draw_overlap_indicators(self, p):
+        """Draw overlap count indicators for overlapping rectangles"""
+        if not self.shapes:
+            return
+
+        # Get overlap detection settings
+        threshold = self._config.get("overlap_detect_threshold", 50) / 100.0  # Convert to 0-1
+        exclude_locked = self._config.get("overlap_exclude_locked", True)
+
+        # Get locked labels if exclude_locked is enabled
+        locked_labels = set()
+        if exclude_locked:
+            locked_labels_str = self._config.get("locked_labels", "")
+            locked_labels = {label.strip() for label in locked_labels_str.split(",") if label.strip()}
+
+        # Get exclude labels from config
+        exclude_labels_str = self._config.get("overlap_exclude_labels", "")
+        exclude_labels = {label.strip() for label in exclude_labels_str.split(",") if label.strip()}
+
+        # Reset painter transform to draw in screen coordinates (fixed pixel size)
+        p.save()
+        p.resetTransform()
+
+        # Convert image coordinates to screen coordinates
+        offset = self.offset_to_center()
+
+        def to_screen(pt):
+            return QtCore.QPointF(
+                (pt.x() + offset.x()) * self.scale,
+                (pt.y() + offset.y()) * self.scale
+            )
+
+        # Get ALL rectangle shapes (ignore visibility for overlap detection)
+        rect_shapes = []
+        for shape in self.shapes:
+            # Don't filter by visibility - detect overlap even for hidden shapes
+            if shape.shape_type not in ["rectangle", "rotation"]:
+                continue
+            if shape.label in ["AUTOLABEL_OBJECT", "AUTOLABEL_ADD", "AUTOLABEL_REMOVE"]:
+                continue
+            if len(shape.points) < 4:
+                continue
+            # Skip locked labels if exclude_locked is enabled
+            if exclude_locked and shape.label in locked_labels:
+                # Check if session unlocked
+                if not getattr(shape, "is_session_unlocked", False):
+                    continue
+            # Skip labels in exclude list
+            if shape.label in exclude_labels:
+                continue
+            rect_shapes.append(shape)
+
+        if len(rect_shapes) < 2:
+            p.restore()
+            return
+
+        # Calculate axis-aligned bounding box for each shape
+        def get_bbox(shape):
+            xs = [pt.x() for pt in shape.points]
+            ys = [pt.y() for pt in shape.points]
+            return (min(xs), min(ys), max(xs), max(ys))
+
+        # Check if two convex polygons overlap using Separating Axis Theorem (SAT)
+        def polygons_overlap(points1, points2):
+            """Check if two convex polygons overlap using SAT"""
+            def get_edges(points):
+                edges = []
+                for i in range(len(points)):
+                    p1 = points[i]
+                    p2 = points[(i + 1) % len(points)]
+                    edges.append((p2.x() - p1.x(), p2.y() - p1.y()))
+                return edges
+
+            def get_perpendicular(edge):
+                return (-edge[1], edge[0])
+
+            def project_polygon(points, axis):
+                min_proj = float('inf')
+                max_proj = float('-inf')
+                for pt in points:
+                    proj = pt.x() * axis[0] + pt.y() * axis[1]
+                    min_proj = min(min_proj, proj)
+                    max_proj = max(max_proj, proj)
+                return min_proj, max_proj
+
+            def projections_overlap(proj1, proj2):
+                return not (proj1[1] < proj2[0] or proj2[1] < proj1[0])
+
+            # Get all edges from both polygons
+            edges1 = get_edges(points1)
+            edges2 = get_edges(points2)
+
+            # Test all axes
+            for edge in edges1 + edges2:
+                axis = get_perpendicular(edge)
+                # Normalize axis
+                length = (axis[0]**2 + axis[1]**2)**0.5
+                if length < 0.0001:
+                    continue
+                axis = (axis[0]/length, axis[1]/length)
+
+                proj1 = project_polygon(points1, axis)
+                proj2 = project_polygon(points2, axis)
+
+                if not projections_overlap(proj1, proj2):
+                    return False  # Found separating axis, no overlap
+
+            return True  # No separating axis found, polygons overlap
+
+        # Calculate polygon area using Shoelace formula
+        def polygon_area(points):
+            n = len(points)
+            if n < 3:
+                return 0.0
+            area = 0.0
+            for i in range(n):
+                j = (i + 1) % n
+                area += points[i].x() * points[j].y()
+                area -= points[j].x() * points[i].y()
+            return abs(area) / 2.0
+
+        # Sutherland-Hodgman polygon clipping algorithm
+        def clip_polygon(subject_points, clip_points):
+            """Clip subject polygon by clip polygon, return intersection polygon"""
+            def inside_edge(point, edge_start, edge_end):
+                """Check if point is on the left side of the edge"""
+                return ((edge_end.x() - edge_start.x()) * (point.y() - edge_start.y()) -
+                        (edge_end.y() - edge_start.y()) * (point.x() - edge_start.x())) >= 0
+
+            def line_intersection(p1, p2, p3, p4):
+                """Find intersection point of two lines"""
+                x1, y1 = p1.x(), p1.y()
+                x2, y2 = p2.x(), p2.y()
+                x3, y3 = p3.x(), p3.y()
+                x4, y4 = p4.x(), p4.y()
+
+                denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+                if abs(denom) < 1e-10:
+                    return None
+
+                t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
+                x = x1 + t * (x2 - x1)
+                y = y1 + t * (y2 - y1)
+                return QtCore.QPointF(x, y)
+
+            output = list(subject_points)
+
+            for i in range(len(clip_points)):
+                if len(output) == 0:
+                    return []
+
+                input_list = output
+                output = []
+
+                edge_start = clip_points[i]
+                edge_end = clip_points[(i + 1) % len(clip_points)]
+
+                for j in range(len(input_list)):
+                    current = input_list[j]
+                    previous = input_list[j - 1]
+
+                    if inside_edge(current, edge_start, edge_end):
+                        if not inside_edge(previous, edge_start, edge_end):
+                            intersection = line_intersection(previous, current, edge_start, edge_end)
+                            if intersection:
+                                output.append(intersection)
+                        output.append(current)
+                    elif inside_edge(previous, edge_start, edge_end):
+                        intersection = line_intersection(previous, current, edge_start, edge_end)
+                        if intersection:
+                            output.append(intersection)
+
+            return output
+
+        # Calculate overlap ratio between two shapes using actual polygon intersection
+        def calc_overlap_ratio(shape1, shape2):
+            # First quick check with bounding boxes
+            bbox1 = get_bbox(shape1)
+            bbox2 = get_bbox(shape2)
+
+            # If bounding boxes don't overlap, shapes definitely don't overlap
+            if (bbox1[2] < bbox2[0] or bbox2[2] < bbox1[0] or
+                bbox1[3] < bbox2[1] or bbox2[3] < bbox1[1]):
+                return 0.0
+
+            # For rotation shapes, use actual polygon intersection
+            if shape1.shape_type == "rotation" or shape2.shape_type == "rotation":
+                # Check if polygons overlap at all using SAT
+                if not polygons_overlap(shape1.points, shape2.points):
+                    return 0.0
+
+                # For rotated rectangles, calculate overlap using actual polygon areas
+                # Get the actual polygon areas
+                area1 = polygon_area(shape1.points)
+                area2 = polygon_area(shape2.points)
+
+                if area1 <= 0 or area2 <= 0:
+                    return 0.0
+
+                # Try to calculate intersection area using polygon clipping
+                # Make sure points are in correct order (counter-clockwise)
+                points1 = list(shape1.points)
+                points2 = list(shape2.points)
+
+                # Check if polygon is clockwise and reverse if needed
+                def is_clockwise(points):
+                    total = 0.0
+                    for i in range(len(points)):
+                        j = (i + 1) % len(points)
+                        total += (points[j].x() - points[i].x()) * (points[j].y() + points[i].y())
+                    return total > 0
+
+                if is_clockwise(points1):
+                    points1 = points1[::-1]
+                if is_clockwise(points2):
+                    points2 = points2[::-1]
+
+                intersection_points = clip_polygon(points1, points2)
+
+                if len(intersection_points) >= 3:
+                    inter_area = polygon_area(intersection_points)
+                    min_area = min(area1, area2)
+                    if min_area > 0:
+                        return inter_area / min_area
+
+                # Fallback: if clipping failed but SAT says they overlap,
+                # use bounding box overlap as estimate
+                x1_min, y1_min, x1_max, y1_max = bbox1
+                x2_min, y2_min, x2_max, y2_max = bbox2
+
+                inter_x_min = max(x1_min, x2_min)
+                inter_y_min = max(y1_min, y2_min)
+                inter_x_max = min(x1_max, x2_max)
+                inter_y_max = min(y1_max, y2_max)
+
+                if inter_x_min < inter_x_max and inter_y_min < inter_y_max:
+                    bbox_inter_area = (inter_x_max - inter_x_min) * (inter_y_max - inter_y_min)
+                    # Estimate actual overlap as a fraction of bbox overlap
+                    # Since rotated rects have smaller area than their bbox
+                    estimated_ratio = bbox_inter_area / min(area1, area2)
+                    return min(estimated_ratio, 1.0)
+
+                return 0.0
+
+            # For axis-aligned rectangles, use bounding box calculation
+            x1_min, y1_min, x1_max, y1_max = bbox1
+            x2_min, y2_min, x2_max, y2_max = bbox2
+
+            inter_x_min = max(x1_min, x2_min)
+            inter_y_min = max(y1_min, y2_min)
+            inter_x_max = min(x1_max, x2_max)
+            inter_y_max = min(y1_max, y2_max)
+
+            if inter_x_min >= inter_x_max or inter_y_min >= inter_y_max:
+                return 0.0
+
+            inter_area = (inter_x_max - inter_x_min) * (inter_y_max - inter_y_min)
+            area1 = (x1_max - x1_min) * (y1_max - y1_min)
+            area2 = (x2_max - x2_min) * (y2_max - y2_min)
+
+            # Use smaller area as denominator
+            min_area = min(area1, area2)
+            if min_area <= 0:
+                return 0.0
+
+            return inter_area / min_area
+
+        # Build overlap groups using Union-Find
+        shape_list = rect_shapes
+        
+        # Union-Find data structure
+        parent = {id(shape): id(shape) for shape in shape_list}
+        
+        def find(x):
+            if parent[x] != x:
+                parent[x] = find(parent[x])
+            return parent[x]
+        
+        def union(x, y):
+            px, py = find(x), find(y)
+            if px != py:
+                parent[px] = py
+        
+        # Build overlap relationships
+        for i, shape1 in enumerate(shape_list):
+            for j, shape2 in enumerate(shape_list):
+                if i >= j:
+                    continue
+                ratio = calc_overlap_ratio(shape1, shape2)
+                if ratio >= threshold:
+                    union(id(shape1), id(shape2))
+        
+        # Group shapes by their root
+        groups = {}  # root_id -> list of shapes
+        for shape in shape_list:
+            root = find(id(shape))
+            if root not in groups:
+                groups[root] = []
+            groups[root].append(shape)
+        
+        # Draw one indicator per group (only for groups with 2+ shapes)
+        for root, group_shapes in groups.items():
+            if len(group_shapes) < 2:
+                continue
+            
+            # Calculate the intersection area center for this group
+            # Use the first shape's top area as indicator position
+            first_shape = group_shapes[0]
+            first_bbox = get_bbox(first_shape)
+            center_x = (first_bbox[0] + first_bbox[2]) / 2
+            top_y = first_bbox[1] + (first_bbox[3] - first_bbox[1]) * 0.15  # 15% from top
+            center_img = QtCore.QPointF(center_x, top_y)
+            center_screen = to_screen(center_img)
+
+            # Draw orange background circle
+            circle_radius = 14
+            p.setBrush(QtGui.QBrush(QtGui.QColor(255, 140, 0)))  # Dark Orange
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))  # White border
+            p.drawEllipse(center_screen, circle_radius, circle_radius)
+
+            # Draw overlap count text
+            font = QtGui.QFont()
+            font.setPointSize(10)
+            font.setBold(True)
+            p.setFont(font)
+            p.setPen(QtGui.QColor(255, 255, 255))  # White text
+
+            # Center the text
+            count = len(group_shapes)
+            text = str(count)
             fm = QtGui.QFontMetrics(font)
             text_width = fm.horizontalAdvance(text)
             ascent = fm.ascent()

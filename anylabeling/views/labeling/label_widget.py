@@ -402,6 +402,8 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.handle_normal_point = self._config.get("handle_normal_point", False)
         Shape.handle_normal_square = self._config.get("handle_normal_square", False)
         Shape.handle_detect_chaotic = self._config.get("handle_detect_chaotic", True)
+        # Highlight border color settings
+        Shape.highlight_use_border_color = self._config.get("highlight_use_border_color", False)
         # Locked shape handle display settings
         Shape.locked_show_point = self._config.get("locked_show_point", False)
         Shape.locked_show_square = self._config.get("locked_show_square", False)
@@ -485,26 +487,94 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.btn_invert_selection_shapes = QtWidgets.QPushButton(self.tr("反选"))
         def invert_all_objects():
+            # 获取反选功能增强设置
+            exclude_locked = self._config.get("invert_exclude_locked", True)
+            
+            # 获取锁定的标签列表
+            locked_labels = set()
+            if exclude_locked:
+                locked_labels_str = self._config.get("locked_labels", "")
+                locked_labels = {label.strip() for label in locked_labels_str.split(",") if label.strip()}
+            
             for item in self.label_list:
+                shape = item.data(Qt.UserRole)
+                # 如果启用了排除锁定，检查图形是否真正被锁定（在锁定列表中且未被会话解锁）
+                if exclude_locked and shape and shape.label in locked_labels:
+                    if not getattr(shape, "is_session_unlocked", False):
+                        continue
                 item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
         self.btn_invert_selection_shapes.clicked.connect(invert_all_objects)
 
         self.btn_deselect_all_shapes = QtWidgets.QPushButton(self.tr("取消"))
         def deselect_all_objects():
-            # 遍历label_list中的所有item并取消勾选
-            for item in self.label_list:
-                item.setCheckState(Qt.Unchecked)
-            # 同时取消标签列表的勾选
-            for i in range(self.unique_label_list.count()):
-                item = self.unique_label_list.item(i)
-                item.setCheckState(Qt.Unchecked)
-            # 确保canvas.shapes中的所有图形都被隐藏
+            # 获取取消功能增强设置
+            exclude_locked = self._config.get("deselect_exclude_locked", True)
+            deselect_even = self._config.get("deselect_even", False)
+            deselect_odd = self._config.get("deselect_odd", False)
+            
+            # 获取锁定的标签
+            locked_labels = set()
+            if exclude_locked:
+                locked_labels_str = self._config.get("locked_labels", "")
+                locked_labels = {label.strip() for label in locked_labels_str.split(",") if label.strip()}
+            
+            # 判断是否应该跳过该项（锁定且未解锁）
+            def should_skip_locked(shape):
+                if not exclude_locked:
+                    return False
+                if shape and shape.label in locked_labels:
+                    # 检查是否被会话解锁
+                    if not getattr(shape, "is_session_unlocked", False):
+                        return True
+                return False
+            
+            # 根据偶数/奇数设置决定取消哪些项（按原始列表序号）
+            if deselect_even:
+                # 按偶数取消（2, 4, 6...）- 按原始列表序号
+                for i, item in enumerate(self.label_list):
+                    if (i + 1) % 2 == 0:  # 偶数位置
+                        shape = item.shape()
+                        if should_skip_locked(shape):
+                            continue
+                        item.setCheckState(Qt.Unchecked)
+            elif deselect_odd:
+                # 按奇数取消（1, 3, 5...）- 按原始列表序号
+                for i, item in enumerate(self.label_list):
+                    if (i + 1) % 2 == 1:  # 奇数位置
+                        shape = item.shape()
+                        if should_skip_locked(shape):
+                            continue
+                        item.setCheckState(Qt.Unchecked)
+            else:
+                # 正常取消所有（排除锁定且未解锁的）
+                for item in self.label_list:
+                    shape = item.shape()
+                    if should_skip_locked(shape):
+                        continue
+                    item.setCheckState(Qt.Unchecked)
+                # 只有在正常取消所有时才取消标签列表的勾选（排除锁定的标签）
+                for i in range(self.unique_label_list.count()):
+                    item = self.unique_label_list.item(i)
+                    label_text = item.data(Qt.UserRole)
+                    if label_text is None:
+                        label_text = item.text()
+                    # 如果启用了排除锁定，且该标签在锁定列表中，则跳过
+                    if exclude_locked and label_text in locked_labels:
+                        continue
+                    item.setCheckState(Qt.Unchecked)
+            
+            # 更新canvas中图形的可见性
             for shape in self.canvas.shapes:
-                shape.visible = False
-                self.canvas.set_shape_visible(shape, False)
-            # 同步更新 visibility_shapes_mode action 的状态
-            self._config["show_shapes"] = False
-            self.actions.visibility_shapes_mode.setChecked(False)
+                # 找到对应的item
+                list_item = self.label_list.find_item_by_shape(shape)
+                if list_item:
+                    shape.visible = list_item.checkState() == Qt.Checked
+                    self.canvas.set_shape_visible(shape, shape.visible)
+            
+            # 检查是否还有可见的图形
+            any_visible = any(shape.visible for shape in self.canvas.shapes)
+            self._config["show_shapes"] = any_visible
+            self.actions.visibility_shapes_mode.setChecked(any_visible)
             self.canvas.update()
             self.update_navigator_shapes()
         self.btn_deselect_all_shapes.clicked.connect(deselect_all_objects)
@@ -929,6 +999,10 @@ class LabelingWidget(QtWidgets.QWidget):
         # Connect shape modifications to update navigator title
         self.canvas.shape_moved.connect(self._update_navigator_title_with_selection)
         self.canvas.shape_rotated.connect(self._update_navigator_title_with_selection)
+        # Connect shape modifications to update canvas overlay info
+        self.canvas.shape_moved.connect(self._update_canvas_overlay_on_shape_change)
+        self.canvas.shape_rotated.connect(self._update_canvas_overlay_on_shape_change)
+        self.canvas.selection_changed.connect(self._update_canvas_overlay_on_shape_change)
         self.canvas.drawing_polygon.connect(self.toggle_drawing_sensitive)
         self.canvas.drawing_cancelled.connect(self.on_drawing_cancelled)
         self.canvas.hide_shapes_requested.connect(self.hide_shapes_by_path)
@@ -2939,11 +3013,36 @@ class LabelingWidget(QtWidgets.QWidget):
         central_layout.addWidget(self.label_instruction)
         central_layout.addSpacing(5)
         central_layout.addWidget(self.auto_labeling_widget)
-        central_layout.addWidget(scroll_area)
+        
+        # Create a container for scroll_area with overlay info label
+        self.canvas_container = QWidget()
+        canvas_container_layout = QVBoxLayout(self.canvas_container)
+        canvas_container_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_container_layout.setSpacing(0)
+        canvas_container_layout.addWidget(scroll_area)
+        
+        # Create overlay info label (fixed position at bottom-left)
+        self.canvas_overlay_label = QLabel(self.canvas_container)
+        self.canvas_overlay_label.setStyleSheet("""
+            QLabel {
+                background-color: rgba(0, 0, 0, 180);
+                color: white;
+                font-family: Arial;
+                font-size: 10pt;
+                font-weight: bold;
+                padding: 8px;
+                border-radius: 5px;
+            }
+        """)
+        self.canvas_overlay_label.hide()  # Hidden by default
+        self.canvas_overlay_label.setAttribute(Qt.WA_TransparentForMouseEvents)  # Don't block mouse events
+        
+        central_layout.addWidget(self.canvas_container)
         layout.addItem(central_layout)
 
         # Save central area for resize
         self._central_widget = scroll_area
+        self._scroll_area = scroll_area  # Keep reference for overlay positioning
 
         # Stretch central area (image view)
         layout.setStretch(1, 1)
@@ -5694,12 +5793,19 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.handle_normal_point = self._config.get("handle_normal_point", False)
         Shape.handle_normal_square = self._config.get("handle_normal_square", False)
         Shape.handle_detect_chaotic = self._config.get("handle_detect_chaotic", True)
+        # 高亮时直接使用独立边框颜色设置
+        Shape.highlight_use_border_color = self._config.get("highlight_use_border_color", False)
         # 锁定标签的控制柄显示设置
         Shape.locked_show_point = self._config.get("locked_show_point", False)
         Shape.locked_show_square = self._config.get("locked_show_square", False)
         # 更新锁定标签集合
         locked_labels_str = self._config.get("locked_labels", "")
         Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
+        self.canvas.update()
+
+    def apply_highlight_border_setting(self, is_enabled):
+        """应用高亮边框颜色设置，实时生效"""
+        Shape.highlight_use_border_color = is_enabled
         self.canvas.update()
 
     def on_page_text_description_changed(self, shape_index, new_description):
@@ -8411,6 +8517,79 @@ class LabelingWidget(QtWidgets.QWidget):
         """
         if hasattr(self, 'navigator_dialog') and self.navigator_dialog:
             self.navigator_dialog.navigator.set_canvas_mouse_pos(pos)
+        
+        # Update canvas overlay info label
+        self._update_canvas_overlay_info(pos)
+
+    def _update_canvas_overlay_info(self, mouse_pos):
+        """Update the canvas overlay info label with mouse and shape info."""
+        if not hasattr(self, 'canvas_overlay_label'):
+            return
+        
+        # Check if overlay is enabled
+        if not self._config.get("canvas_overlay_info_enabled", False):
+            self.canvas_overlay_label.hide()
+            return
+        
+        info_lines = []
+        
+        # Mouse coordinates
+        if mouse_pos is not None:
+            info_lines.append(f"鼠标: X={mouse_pos.x():.2f}, Y={mouse_pos.y():.2f}")
+        
+        # Selected shape info
+        if self.canvas.selected_shapes and len(self.canvas.selected_shapes) == 1:
+            shape = self.canvas.selected_shapes[0]
+            if shape.points and len(shape.points) >= 2:
+                xs = [pt.x() for pt in shape.points]
+                ys = [pt.y() for pt in shape.points]
+                x_min, y_min = min(xs), min(ys)
+                x_max, y_max = max(xs), max(ys)
+                width = x_max - x_min
+                height = y_max - y_min
+                info_lines.append(f"矩形: ({x_min:.2f},{y_min:.2f})-({x_max:.2f},{y_max:.2f}) W={width:.2f} H={height:.2f}")
+        
+        if not info_lines:
+            self.canvas_overlay_label.hide()
+            return
+        
+        # Update label text
+        self.canvas_overlay_label.setText("\n".join(info_lines))
+        self.canvas_overlay_label.adjustSize()
+        
+        # Get position setting
+        position = self._config.get("canvas_overlay_position", "bottom_left")
+        margin = 10
+        container_width = self.canvas_container.width()
+        container_height = self.canvas_container.height()
+        label_width = self.canvas_overlay_label.width()
+        label_height = self.canvas_overlay_label.height()
+        
+        # Calculate position based on setting
+        if position == "top_left":
+            label_x = margin
+            label_y = margin
+        elif position == "top_right":
+            label_x = container_width - label_width - margin
+            label_y = margin
+        elif position == "bottom_right":
+            label_x = container_width - label_width - margin
+            label_y = container_height - label_height - margin
+        else:  # bottom_left (default)
+            label_x = margin
+            label_y = container_height - label_height - margin
+        
+        self.canvas_overlay_label.move(label_x, label_y)
+        self.canvas_overlay_label.show()
+        self.canvas_overlay_label.raise_()  # Bring to front
+
+    def _update_canvas_overlay_on_shape_change(self, *args):
+        """Update canvas overlay when shape is moved, rotated, or selection changed."""
+        # Get current mouse position from canvas if available
+        mouse_pos = None
+        if hasattr(self.canvas, 'prev_move_point') and self.canvas.prev_move_point:
+            mouse_pos = self.canvas.prev_move_point
+        self._update_canvas_overlay_info(mouse_pos)
 
     def add_label(self, shape, update_last_label=True, is_new_shape=False):
         global_order = len(self.label_list) + 1

@@ -1332,6 +1332,11 @@ class TagSortDialog(QtWidgets.QDialog):
         self.exclude_label_edit.setPlaceholderText(self.tr("示例: 标签1, 标签2"))
         self.exclude_keep_checkbox = QtWidgets.QCheckBox(self.tr("排除标签保持原顺序"))
         self.exclude_keep_checkbox.setChecked(True)
+        
+        # 新增：排除锁定的标签
+        self.exclude_locked_checkbox = QtWidgets.QCheckBox(self.tr("排除锁定的标签"))
+        self.exclude_locked_checkbox.setChecked(True)
+        self.exclude_locked_checkbox.setToolTip(self.tr("勾选后，锁定的标签不参与排序"))
 
         # 新增：序号显示选项
         self.hide_numbers_checkbox = QtWidgets.QCheckBox(self.tr("序号显示时跳过排除标签"))
@@ -1349,6 +1354,7 @@ class TagSortDialog(QtWidgets.QDialog):
         self.spatial_mode_combo.currentIndexChanged.connect(self._on_spatial_mode_changed)
         self.exclude_label_edit.textChanged.connect(self._on_sort_parameter_changed)
         self.exclude_keep_checkbox.stateChanged.connect(self._on_sort_parameter_changed)
+        self.exclude_locked_checkbox.stateChanged.connect(self._on_sort_parameter_changed)
         self.hide_numbers_checkbox.stateChanged.connect(self._on_sort_parameter_changed)
 
 
@@ -1356,6 +1362,7 @@ class TagSortDialog(QtWidgets.QDialog):
         sort_form = QtWidgets.QFormLayout(sort_group)
         sort_form.addRow(self.tr("排除标签"), self.exclude_label_edit)
         sort_form.addRow("", self.exclude_keep_checkbox)
+        sort_form.addRow("", self.exclude_locked_checkbox)
         sort_form.addRow("", self.hide_numbers_checkbox)
         sort_form.addRow(self.tr("空间排序方式"), self.spatial_mode_combo)
 
@@ -1523,12 +1530,25 @@ class TagSortDialog(QtWidgets.QDialog):
 
     def _collect_exclude_labels(self) -> List[str]:
         text = self.exclude_label_edit.text().strip()
-        if not text:
-            return []
-        for sep in ('\n', '\t', ';', '；', '、'):
-            text = text.replace(sep, ',')
-        parts = [segment.strip() for segment in text.split(',')]
-        return [part for part in parts if part]
+        exclude_labels = []
+        if text:
+            for sep in ('\n', '\t', ';', '；', '、'):
+                text = text.replace(sep, ',')
+            parts = [segment.strip() for segment in text.split(',')]
+            exclude_labels = [part for part in parts if part]
+        
+        # 如果勾选了"排除锁定的标签"，添加锁定的标签
+        if self.exclude_locked_checkbox.isChecked():
+            parent = self.parent()
+            if parent and hasattr(parent, '_config'):
+                locked_labels_str = parent._config.get("locked_labels", "")
+                if locked_labels_str:
+                    locked_labels = [label.strip() for label in locked_labels_str.split(",") if label.strip()]
+                    for label in locked_labels:
+                        if label not in exclude_labels:
+                            exclude_labels.append(label)
+        
+        return exclude_labels
 
     def _build_payload(self, scope: str) -> dict:
         options = self._collect_sort_options()

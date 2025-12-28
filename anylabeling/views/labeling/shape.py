@@ -71,6 +71,8 @@ class Shape:
     handle_normal_point = False  # 非高亮时显示点
     handle_normal_square = False  # 非高亮时显示块
     handle_detect_chaotic = True  # 检测混沌状态（高亮下被点击过的图形用非高亮设置）
+    # Highlight border color settings
+    highlight_use_border_color = False  # 高亮时直接使用独立边框颜色（状态5）
     # Locked shape handle display settings
     locked_show_point = False  # 锁定后显示点
     locked_show_square = False  # 锁定后显示块
@@ -296,8 +298,13 @@ class Shape:
         ]
 
     def is_label_locked(self):
-        """检查当前 shape 的标签是否在锁定列表中"""
+        """检查当前 shape 的标签是否在锁定列表中
+        注意：如果 shape 已被会话解锁（is_session_unlocked=True），则不视为锁定
+        """
         if not self.label or not Shape.locked_labels:
+            return False
+        # 如果已被会话解锁，则不视为锁定
+        if getattr(self, "is_session_unlocked", False):
             return False
         return self.label.strip() in Shape.locked_labels
 
@@ -481,20 +488,23 @@ class Shape:
                     color = self._border_color
                 else:
                     color = self.select_line_color
-                # 边框宽度：高亮模式下根据 fill 状态选择不同的宽度
+                # 边框宽度：高亮模式下根据 fill 状态和 highlight_use_border_color 设置选择不同的宽度
                 if Shape.highlighting_enabled:
-                    if self.fill:
-                        # 高亮状态（有填充）使用高亮边框宽度
-                        if self._border_width is not None:
+                    if Shape.highlight_use_border_color or not self.fill:
+                        # 启用"高亮时直接使用独立边框颜色"或点击后取消高亮（无填充）
+                        # 使用点击后边框宽度（状态5）
+                        if self._border_width_selected is not None:
+                            width = self._border_width_selected
+                        elif self._border_width is not None:
                             width = self._border_width
                         elif self.select_line_width is not None:
                             width = self.select_line_width
                         else:
                             width = self.line_width
                     else:
-                        # 点击后取消高亮（无填充）使用点击后边框宽度
-                        if self._border_width_selected is not None:
-                            width = self._border_width_selected
+                        # 高亮状态（有填充）使用高亮边框宽度
+                        if self._border_width is not None:
+                            width = self._border_width
                         elif self.select_line_width is not None:
                             width = self.select_line_width
                         else:
@@ -510,18 +520,21 @@ class Shape:
                     color = self._border_color
                 else:
                     color = self.line_color
-                # 边框宽度：高亮模式下根据 fill 状态选择不同的宽度
+                # 边框宽度：高亮模式下根据 fill 状态和 highlight_use_border_color 设置选择不同的宽度
                 if Shape.highlighting_enabled:
-                    if self.fill:
-                        # 有填充时使用高亮边框宽度
-                        if self._border_width is not None:
+                    if Shape.highlight_use_border_color or not self.fill:
+                        # 启用"高亮时直接使用独立边框颜色"或无填充时（被点击过）
+                        # 使用点击后边框宽度（状态5）
+                        if self._border_width_selected is not None:
+                            width = self._border_width_selected
+                        elif self._border_width is not None:
                             width = self._border_width
                         else:
                             width = self.line_width
                     else:
-                        # 无填充时（被点击过）使用点击后边框宽度
-                        if self._border_width_selected is not None:
-                            width = self._border_width_selected
+                        # 有填充时使用高亮边框宽度
+                        if self._border_width is not None:
+                            width = self._border_width
                         else:
                             width = self.line_width
                 else:
@@ -668,7 +681,12 @@ class Shape:
 
             # 先填充，再画边框，这样边框会完整显示在填充色上面（像相框一样）
             # 避免边框和填充色之间出现过渡色
-            if self.fill:
+            # 当启用"高亮时直接使用独立边框颜色"时，跳过填充（模拟状态5：填充消失，边框保留）
+            should_fill = self.fill
+            if Shape.highlighting_enabled and Shape.highlight_use_border_color:
+                should_fill = False  # 高亮时直接进入状态5，不显示填充
+            
+            if should_fill:
                 r, g, b = self.line_color.red(), self.line_color.green(), self.line_color.blue()
                 if Shape.highlighting_enabled:
                     # 优先使用标签独立透明度，否则使用全局设置
