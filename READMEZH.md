@@ -634,6 +634,23 @@ https://github.com/user-attachments/assets/71889a2d-d902-4a11-b02f-deeb7492e754
 
 https://github.com/user-attachments/assets/4aafb37e-32a2-4414-ba31-8ba9b7c85ca9
 
+127. 高亮和锁定 增加 PS风格画布平移功能
+
+https://github.com/user-attachments/assets/095d173b-f211-4cb2-8f18-f857f0234a5d
+
+128.配合 PS风格平移功能 水平矩形增加 可以在画布外创建功能
+
+https://github.com/user-attachments/assets/8faa1f1f-9677-4ef6-bf10-a443db673fb8
+
+129.视图增加 显示旋转矩形 方向功能
+
+https://github.com/user-attachments/assets/5cf31f45-2266-43c7-b78e-36fde706dd76
+
+130. 矩形对齐工具 增加 修复旋转矩形方向  对齐方向增加对旋转矩形的支持
+
+https://github.com/user-attachments/assets/8f5bfc91-13f8-485f-97f5-49aba8e64b12
+
+
 
 
 
