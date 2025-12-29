@@ -586,7 +586,7 @@ class LabelingWidget(QtWidgets.QWidget):
         def toggle_highlight():
             all_shapes = [item.shape() for item in self.label_list]
             if not all_shapes:
-                btn_highlight.setChecked(False)
+                self.btn_highlight.setChecked(False)
                 return
 
             # Reload config to get latest settings
@@ -2002,6 +2002,17 @@ class LabelingWidget(QtWidgets.QWidget):
             enabled=True,
             auto_trigger=True,
         )
+        show_edge_direction = action(
+            self.tr("显示边方向"),
+            lambda x: self.set_canvas_params("show_edge_direction", x),
+            shortcut=shortcuts.get("show_edge_direction", ""),
+            tip=self.tr("Show edge direction labels for rotated rectangles"),
+            icon=None,
+            checkable=True,
+            checked=self._config.get("show_edge_direction", False),
+            enabled=True,
+            auto_trigger=True,
+        )
 
         # Languages
         select_lang_en = action(
@@ -2584,6 +2595,7 @@ class LabelingWidget(QtWidgets.QWidget):
             show_attributes=show_attributes,
             show_linking=show_linking,
             show_order=show_order,
+            show_edge_direction=show_edge_direction,
             show_navigator=show_navigator,
             zoom_at_mouse=zoom_at_mouse, # Add the new action here
             zoom_actions=zoom_actions,
@@ -2892,6 +2904,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 show_linking,
                 show_groups,
                 show_order,
+                show_edge_direction,
                 hide_selected_polygons,
                 show_hidden_polygons,
                 group_selected_shapes,
@@ -4434,6 +4447,9 @@ class LabelingWidget(QtWidgets.QWidget):
             self.alignment_dialog.unify_height.connect(lambda auto_exit: self._perform_alignment('unify_height', auto_exit))
             self.alignment_dialog.unify_width.connect(lambda auto_exit: self._perform_alignment('unify_width', auto_exit))
             self.alignment_dialog.unify_angle.connect(lambda auto_exit: self._perform_alignment('unify_angle', auto_exit))
+            # Connect fix direction signals
+            self.alignment_dialog.fix_direction.connect(self._fix_shape_direction)
+            self.alignment_dialog.fix_direction_range.connect(self._fix_shape_direction_range)
             # Connect push out signals (独立功能)
             self.alignment_dialog.push_out_selected.connect(self._push_out_selected_shapes)
             self.alignment_dialog.push_out_all.connect(self._push_out_all_shapes)
@@ -4484,15 +4500,32 @@ class LabelingWidget(QtWidgets.QWidget):
     # --- Alignment Tool Handlers ---
     def on_select_reference_mode(self, is_active):
         """Enter/Exit the reference shape selection mode."""
-        self.is_reference_selection_mode = is_active
-        self.canvas.set_reference_selection_mode(is_active)
-        if self.alignment_dialog:
-            if is_active:
+        if is_active:
+            # 检查是否已经有选中的矩形，如果有就直接设为参照物
+            selected = self.canvas.selected_shapes
+            if selected and len(selected) == 1:
+                # 直接把选中的矩形设为参照物
+                shape = selected[0]
+                self.reference_shape = shape
+                self.canvas.set_reference_shape(shape)
+                if self.alignment_dialog:
+                    self.alignment_dialog.log(self.tr("已将选中的 '{label}' 设为参照物。").format(label=shape.label))
+                    self.alignment_dialog.log(self.tr("请单击或多选需要对齐的矩形。"))
+                    self.alignment_dialog.set_reference_mode(False)
+                    self.alignment_dialog.set_button_to_target_selection_mode()
+                    self.canvas.set_alignment_target_mode(True)
+                return
+            
+            # 没有选中矩形或选中了多个，进入选择模式
+            self.is_reference_selection_mode = True
+            self.canvas.set_reference_selection_mode(True)
+            if self.alignment_dialog:
                 self.alignment_dialog.log(self.tr("请在画布上单击一个矩形作为参照物。"))
                 self.reference_shape = None
                 self.canvas.set_reference_shape(None)
-            else:
-                pass
+        else:
+            self.is_reference_selection_mode = False
+            self.canvas.set_reference_selection_mode(False)
 
     def on_reference_shape_selected(self, shape):
         """Callback when a reference shape is selected on the canvas."""
@@ -4523,6 +4556,130 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.select_shapes(list(current_selection))
         if self.alignment_dialog:
             self.alignment_dialog.log(self.tr("已选中所有 '{label}' 标签的矩形。").format(label=ref_label))
+
+    def _get_shape_edge_x(self, shape, edge):
+        """获取形状的左边或右边的X坐标（用于普通矩形）
+        
+        Args:
+            shape: 形状对象
+            edge: 'left' 或 'right'
+        
+        Returns:
+            float: 边界的X坐标
+        """
+        if not shape.points:
+            return 0
+        
+        x_coords = [p.x() for p in shape.points]
+        if edge == 'left':
+            return min(x_coords)
+        else:  # right
+            return max(x_coords)
+
+    def _get_shape_edge_y(self, shape, edge):
+        """获取形状的上边或下边的Y坐标（用于普通矩形）
+        
+        Args:
+            shape: 形状对象
+            edge: 'top' 或 'bottom'
+        
+        Returns:
+            float: 边界的Y坐标
+        """
+        if not shape.points:
+            return 0
+        
+        y_coords = [p.y() for p in shape.points]
+        if edge == 'top':
+            return min(y_coords)
+        else:  # bottom
+            return max(y_coords)
+
+    def _get_rotation_edge_line(self, shape, edge):
+        """获取旋转矩形指定边的两个端点
+        
+        旋转矩形的点顺序: p0=左上, p1=右上, p2=右下, p3=左下
+        
+        Args:
+            shape: 旋转矩形形状对象
+            edge: 'left', 'right', 'top', 'bottom'
+        
+        Returns:
+            tuple: (点1, 点2) 组成边的两个端点
+        """
+        if shape.shape_type != 'rotation' or len(shape.points) != 4:
+            return None
+        
+        p0, p1, p2, p3 = shape.points
+        if edge == 'left':
+            return (p0, p3)  # 左边: p0-p3
+        elif edge == 'right':
+            return (p1, p2)  # 右边: p1-p2
+        elif edge == 'top':
+            return (p0, p1)  # 上边: p0-p1
+        elif edge == 'bottom':
+            return (p3, p2)  # 下边: p3-p2
+        return None
+
+    def _calculate_rotation_alignment_delta(self, ref_shape, target_shape, edge):
+        """计算旋转矩形对齐所需的位移
+        
+        让目标矩形的指定边与参照矩形的对应边共线
+        
+        Args:
+            ref_shape: 参照旋转矩形
+            target_shape: 目标旋转矩形
+            edge: 'left', 'right', 'top', 'bottom'
+        
+        Returns:
+            QPointF: 需要移动的位移向量
+        """
+        import math
+        
+        ref_line = self._get_rotation_edge_line(ref_shape, edge)
+        target_line = self._get_rotation_edge_line(target_shape, edge)
+        
+        if not ref_line or not target_line:
+            return QtCore.QPointF(0, 0)
+        
+        # 参照边的中点
+        ref_mid = QtCore.QPointF(
+            (ref_line[0].x() + ref_line[1].x()) / 2,
+            (ref_line[0].y() + ref_line[1].y()) / 2
+        )
+        
+        # 目标边的中点
+        target_mid = QtCore.QPointF(
+            (target_line[0].x() + target_line[1].x()) / 2,
+            (target_line[0].y() + target_line[1].y()) / 2
+        )
+        
+        # 计算参照边的方向向量
+        edge_vec = QtCore.QPointF(
+            ref_line[1].x() - ref_line[0].x(),
+            ref_line[1].y() - ref_line[0].y()
+        )
+        
+        # 边的长度
+        edge_len = math.sqrt(edge_vec.x() ** 2 + edge_vec.y() ** 2)
+        if edge_len < 0.001:
+            return QtCore.QPointF(0, 0)
+        
+        # 单位法向量（垂直于边，指向外侧）
+        # 对于左边，法向量指向左；对于右边，法向量指向右
+        # 对于上边，法向量指向上；对于下边，法向量指向下
+        normal = QtCore.QPointF(-edge_vec.y() / edge_len, edge_vec.x() / edge_len)
+        
+        # 从目标中点到参照中点的向量
+        diff = QtCore.QPointF(ref_mid.x() - target_mid.x(), ref_mid.y() - target_mid.y())
+        
+        # 计算在法向量方向上的投影（这是需要移动的距离）
+        proj_dist = diff.x() * normal.x() + diff.y() * normal.y()
+        
+        # 沿法向量方向移动
+        delta = QtCore.QPointF(normal.x() * proj_dist, normal.y() * proj_dist)
+        
+        return delta
 
     def _perform_alignment(self, mode, auto_exit=True):
         """Generic helper to perform all alignment and unify actions.
@@ -4569,6 +4726,18 @@ class LabelingWidget(QtWidgets.QWidget):
             self.alignment_dialog.log(self.tr("目标标签: {labels}").format(labels=target_labels))
 
         ref_rect = self.reference_shape.bounding_rect()
+        # 对于普通矩形，获取其边界位置
+        ref_left_x = self._get_shape_edge_x(self.reference_shape, 'left')
+        ref_right_x = self._get_shape_edge_x(self.reference_shape, 'right')
+        ref_top_y = self._get_shape_edge_y(self.reference_shape, 'top')
+        ref_bottom_y = self._get_shape_edge_y(self.reference_shape, 'bottom')
+        ref_center_x = (ref_left_x + ref_right_x) / 2
+        ref_center_y = (ref_top_y + ref_bottom_y) / 2
+        
+        # 检查参照物是否是旋转矩形
+        ref_is_rotation = (self.reference_shape.shape_type == 'rotation' and 
+                          len(self.reference_shape.points) == 4)
+        
         self.canvas.store_shapes()
         
         processed_count = 0
@@ -4577,25 +4746,53 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.alignment_dialog.log(self.tr("跳过 '{label}': 标签不匹配").format(label=shape.label))
                 continue
 
-            shape_rect = shape.bounding_rect()
+            # 检查目标是否是旋转矩形
+            shape_is_rotation = (shape.shape_type == 'rotation' and len(shape.points) == 4)
+            
+            # 对于普通矩形，获取其边界位置
+            shape_left_x = self._get_shape_edge_x(shape, 'left')
+            shape_right_x = self._get_shape_edge_x(shape, 'right')
+            shape_top_y = self._get_shape_edge_y(shape, 'top')
+            shape_bottom_y = self._get_shape_edge_y(shape, 'bottom')
+            shape_center_x = (shape_left_x + shape_right_x) / 2
+            shape_center_y = (shape_top_y + shape_bottom_y) / 2
+            
             delta = QtCore.QPointF(0, 0)
             action_taken = False
-
-            if mode == 'left':
-                delta.setX(ref_rect.left() - shape_rect.left())
-            elif mode == 'right':
-                delta.setX(ref_rect.right() - shape_rect.right())
-            elif mode == 'h_center':
-                delta.setX(ref_rect.center().x() - shape_rect.center().x())
-            elif mode == 'top':
-                delta.setY(ref_rect.top() - shape_rect.top())
-            elif mode == 'bottom':
-                delta.setY(ref_rect.bottom() - shape_rect.bottom())
-            elif mode == 'v_center':
-                delta.setY(ref_rect.center().y() - shape_rect.center().y())
             
-            if not delta.isNull():
-                shape.move_by(delta)
+            # 如果参照物和目标都是旋转矩形，使用边共线对齐
+            if ref_is_rotation and shape_is_rotation and mode in ['left', 'right', 'top', 'bottom']:
+                delta = self._calculate_rotation_alignment_delta(
+                    self.reference_shape, shape, mode
+                )
+                self.alignment_dialog.log(
+                    f"处理形状: {shape.label}, 旋转矩形边对齐 delta=({delta.x():.2f}, {delta.y():.2f})"
+                )
+            else:
+                # 普通矩形对齐逻辑
+                if mode == 'left':
+                    self.alignment_dialog.log(f"处理形状: {shape.label}, 左边X={shape_left_x:.2f}, 参照左边X={ref_left_x:.2f}")
+                    delta.setX(ref_left_x - shape_left_x)
+                    self.alignment_dialog.log(f"左对齐 delta.x={delta.x():.2f}")
+                elif mode == 'right':
+                    self.alignment_dialog.log(f"处理形状: {shape.label}, 右边X={shape_right_x:.2f}, 参照右边X={ref_right_x:.2f}")
+                    delta.setX(ref_right_x - shape_right_x)
+                    self.alignment_dialog.log(f"右对齐 delta.x={delta.x():.2f}")
+                elif mode == 'h_center':
+                    delta.setX(ref_center_x - shape_center_x)
+                elif mode == 'top':
+                    self.alignment_dialog.log(f"处理形状: {shape.label}, 上边Y={shape_top_y:.2f}, 参照上边Y={ref_top_y:.2f}")
+                    delta.setY(ref_top_y - shape_top_y)
+                elif mode == 'bottom':
+                    self.alignment_dialog.log(f"处理形状: {shape.label}, 下边Y={shape_bottom_y:.2f}, 参照下边Y={ref_bottom_y:.2f}")
+                    delta.setY(ref_bottom_y - shape_bottom_y)
+                elif mode == 'v_center':
+                    delta.setY(ref_center_y - shape_center_y)
+            
+            # 对齐操作：只要是对齐模式就算处理过（即使delta为0也表示已经对齐）
+            if mode in ['left', 'right', 'h_center', 'top', 'bottom', 'v_center']:
+                if not delta.isNull():
+                    shape.move_by(delta)
                 action_taken = True
             
             # Unify size
@@ -4683,7 +4880,7 @@ class LabelingWidget(QtWidgets.QWidget):
             # Unify angle (only for rotation shapes)
             if mode == 'unify_angle':
                 if shape.shape_type == 'rotation' and self.reference_shape.shape_type == 'rotation':
-                    # Get the reference angle
+                    # 直接使用参照矩形的direction值
                     ref_angle = self.reference_shape.direction
 
                     # Get current shape's center and dimensions
@@ -4691,35 +4888,19 @@ class LabelingWidget(QtWidgets.QWidget):
                     target_center_y = (shape.points[0].y() + shape.points[1].y() + shape.points[2].y() + shape.points[3].y()) / 4.0
                     target_center = QtCore.QPointF(target_center_x, target_center_y)
 
-                    # 计算原始矩形的两条边长度
-                    edge1_length = utils.distance(shape.points[1] - shape.points[0])
-                    edge2_length = utils.distance(shape.points[2] - shape.points[1])
-
-                    # 计算参照矩形的宽高比例，判断哪条边是"宽"
-                    ref_edge1 = utils.distance(self.reference_shape.points[1] - self.reference_shape.points[0])
-                    ref_edge2 = utils.distance(self.reference_shape.points[2] - self.reference_shape.points[1])
-                    ref_is_horizontal = ref_edge1 >= ref_edge2  # 参照矩形是否横向（第一条边更长）
-
-                    # 判断目标矩形是否横向
-                    target_is_horizontal = edge1_length >= edge2_length
-
-                    # 如果目标矩形和参照矩形的方向一致，保持原来的宽高
-                    # 如果方向不一致，需要交换宽高以保持视觉上的一致性
-                    if target_is_horizontal == ref_is_horizontal:
-                        # 方向一致，保持原来的宽高顺序
-                        target_intrinsic_width = edge1_length
-                        target_intrinsic_height = edge2_length
-                    else:
-                        # 方向不一致，交换宽高
-                        target_intrinsic_width = edge2_length
-                        target_intrinsic_height = edge1_length
+                    # 计算目标矩形的宽高
+                    tgt_edge1 = utils.distance(shape.points[1] - shape.points[0])
+                    tgt_edge2 = utils.distance(shape.points[2] - shape.points[1])
+                    
+                    target_width = tgt_edge1
+                    target_height = tgt_edge2
 
                     # Update the shape's direction
                     shape.direction = ref_angle
 
                     # Reconstruct the rotated rectangle's points with the new angle
-                    half_w = target_intrinsic_width / 2.0
-                    half_h = target_intrinsic_height / 2.0
+                    half_w = target_width / 2.0
+                    half_h = target_height / 2.0
 
                     cos_a = math.cos(ref_angle)
                     sin_a = math.sin(ref_angle)
@@ -4736,7 +4917,41 @@ class LabelingWidget(QtWidgets.QWidget):
                             pt.x() * sin_a + pt.y() * cos_a + target_center.y(),
                         )
 
-                    shape.points = [rot(p0_local), rot(p1_local), rot(p2_local), rot(p3_local)]
+                    new_points = [rot(p0_local), rot(p1_local), rot(p2_local), rot(p3_local)]
+                    
+                    # 检查新的方向是否和原来一致（用"下"边的方向判断）
+                    # 原来的"下"边: p3 -> p2
+                    old_down_vec = shape.points[2] - shape.points[3]
+                    # 新的"下"边: new_p3 -> new_p2
+                    new_down_vec = new_points[2] - new_points[3]
+                    # 点积判断方向是否一致
+                    dot = old_down_vec.x() * new_down_vec.x() + old_down_vec.y() * new_down_vec.y()
+                    
+                    if dot < 0:
+                        # 方向反了，需要同时修改参照矩形的方向
+                        # 参照矩形也用同样的方式重建（方向会翻转）
+                        ref_center = (self.reference_shape.points[0] + self.reference_shape.points[2]) / 2.0
+                        ref_w = utils.distance(self.reference_shape.points[1] - self.reference_shape.points[0])
+                        ref_h = utils.distance(self.reference_shape.points[2] - self.reference_shape.points[1])
+                        ref_half_w = ref_w / 2.0
+                        ref_half_h = ref_h / 2.0
+                        
+                        ref_p0_local = QtCore.QPointF(-ref_half_w, -ref_half_h)
+                        ref_p1_local = QtCore.QPointF(ref_half_w, -ref_half_h)
+                        ref_p2_local = QtCore.QPointF(ref_half_w, ref_half_h)
+                        ref_p3_local = QtCore.QPointF(-ref_half_w, ref_half_h)
+                        
+                        def rot_ref(pt):
+                            return QtCore.QPointF(
+                                pt.x() * cos_a - pt.y() * sin_a + ref_center.x(),
+                                pt.x() * sin_a + pt.y() * cos_a + ref_center.y(),
+                            )
+                        
+                        self.reference_shape.points = [rot_ref(ref_p0_local), rot_ref(ref_p1_local), 
+                                                       rot_ref(ref_p2_local), rot_ref(ref_p3_local)]
+                        self.alignment_dialog.log(self.tr("参照矩形方向已同步调整"))
+                    
+                    shape.points = new_points
                     action_taken = True
                 elif shape.shape_type != 'rotation':
                     self.alignment_dialog.log(self.tr("跳过 '{label}': 不是旋转矩形").format(label=shape.label))
@@ -4767,6 +4982,292 @@ class LabelingWidget(QtWidgets.QWidget):
             self.on_alignment_dialog_finished()
         else:
             self.alignment_dialog.log(self.tr("保持对齐模式，可继续执行其他操作"))
+
+    def _fix_shape_direction(self, scope="selected"):
+        """修复旋转矩形的方向。
+        
+        用当前的角度值重建矩形，使方向标准化（和手动调整角度一样的效果）。
+        
+        Args:
+            scope: "current" 本页, "selected" 选中, "all" 全部
+        """
+        if not self.alignment_dialog:
+            return
+        
+        self.alignment_dialog.log_widget.clear()
+        
+        # 获取旋转标签过滤
+        target_labels = self.alignment_dialog.get_angle_target_labels()
+        
+        if scope == "current":
+            # 本页所有旋转矩形
+            shapes_to_process = [s for s in self.canvas.shapes if s.shape_type == 'rotation']
+            self.alignment_dialog.log(self.tr("正在处理本页的旋转矩形..."))
+        elif scope == "selected":
+            # 选中的旋转矩形
+            shapes_to_process = [s for s in self.canvas.selected_shapes if s.shape_type == 'rotation']
+            if not shapes_to_process:
+                self.alignment_dialog.log(self.tr("错误: 没有选中任何旋转矩形。"))
+                return
+        elif scope == "all":
+            # 全部文件
+            self._fix_shape_direction_all_files(target_labels)
+            return
+        else:
+            return
+        
+        processed_count = self._fix_shapes_direction_batch(shapes_to_process, target_labels)
+        
+        if processed_count > 0:
+            self.set_dirty()
+            self.canvas.repaint()
+            self.alignment_dialog.log(self.tr("操作完成，共修复了 {count} 个矩形的方向。").format(count=processed_count))
+        else:
+            self.alignment_dialog.log(self.tr("操作完成，未找到符合条件的旋转矩形。"))
+
+    def _fix_shape_direction_range(self, start_index, end_index):
+        """修复指定范围内文件的旋转矩形方向。"""
+        if not self.alignment_dialog:
+            return
+        
+        self.alignment_dialog.log_widget.clear()
+        
+        # 获取旋转标签过滤
+        target_labels = self.alignment_dialog.get_angle_target_labels()
+        
+        total_processed = 0
+        total_files = end_index - start_index + 1
+        
+        self.alignment_dialog.log(self.tr("正在处理第 {start} 到 {end} 页的旋转矩形...").format(
+            start=start_index + 1, end=end_index + 1))
+        
+        # 创建进度对话框
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在修复方向..."),
+            self.tr("取消"),
+            0,
+            total_files,
+            self
+        )
+        progress.setWindowTitle(self.tr("修复方向"))
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        
+        processed_count = 0
+        for i in range(start_index, end_index + 1):
+            if progress.wasCanceled():
+                self.alignment_dialog.log(self.tr("用户取消操作，已处理 {count} 个矩形。").format(count=total_processed))
+                break
+            
+            progress.setValue(processed_count)
+            progress.setLabelText(self.tr("正在处理: {current}/{total}").format(current=processed_count + 1, total=total_files))
+            QtWidgets.QApplication.processEvents()
+            processed_count += 1
+            
+            if i < 0 or i >= len(self.image_list):
+                continue
+            
+            image_path = self.image_list[i]
+            label_file = osp.splitext(image_path)[0] + ".json"
+            
+            if not osp.exists(label_file):
+                continue
+            
+            try:
+                with open(label_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                modified = False
+                for shape_data in data.get("shapes", []):
+                    if shape_data.get("shape_type") != "rotation":
+                        continue
+                    
+                    label = shape_data.get("label", "")
+                    if target_labels and label not in target_labels:
+                        continue
+                    
+                    # 修复方向
+                    if self._fix_shape_data_direction(shape_data):
+                        modified = True
+                        total_processed += 1
+                
+                if modified:
+                    with open(label_file, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    
+            except Exception as e:
+                self.alignment_dialog.log(self.tr("处理文件 {file} 时出错: {error}").format(
+                    file=osp.basename(label_file), error=str(e)))
+        
+        progress.setValue(total_files)
+        
+        # 重新加载当前页面
+        if self.filename:
+            self.load_file(self.filename)
+        
+        self.alignment_dialog.log(self.tr("范围处理完成，共修复了 {count} 个矩形的方向。").format(count=total_processed))
+
+    def _fix_shape_direction_all_files(self, target_labels):
+        """修复所有文件的旋转矩形方向。"""
+        total_processed = 0
+        total_files = len(self.image_list)
+        
+        self.alignment_dialog.log(self.tr("正在处理全部 {count} 个文件的旋转矩形...").format(count=total_files))
+        
+        # 创建进度对话框
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在修复方向..."),
+            self.tr("取消"),
+            0,
+            total_files,
+            self
+        )
+        progress.setWindowTitle(self.tr("修复方向"))
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        
+        for i, image_path in enumerate(self.image_list):
+            if progress.wasCanceled():
+                self.alignment_dialog.log(self.tr("用户取消操作，已处理 {count} 个矩形。").format(count=total_processed))
+                break
+            
+            progress.setValue(i)
+            progress.setLabelText(self.tr("正在处理: {current}/{total}").format(current=i + 1, total=total_files))
+            QtWidgets.QApplication.processEvents()
+            
+            label_file = osp.splitext(image_path)[0] + ".json"
+            
+            if not osp.exists(label_file):
+                continue
+            
+            try:
+                with open(label_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                modified = False
+                for shape_data in data.get("shapes", []):
+                    if shape_data.get("shape_type") != "rotation":
+                        continue
+                    
+                    label = shape_data.get("label", "")
+                    if target_labels and label not in target_labels:
+                        continue
+                    
+                    # 修复方向
+                    if self._fix_shape_data_direction(shape_data):
+                        modified = True
+                        total_processed += 1
+                
+                if modified:
+                    with open(label_file, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    
+            except Exception as e:
+                self.alignment_dialog.log(self.tr("处理文件 {file} 时出错: {error}").format(
+                    file=osp.basename(label_file), error=str(e)))
+        
+        progress.setValue(total_files)
+        
+        # 重新加载当前页面
+        if self.filename:
+            self.load_file(self.filename)
+        
+        self.alignment_dialog.log(self.tr("全部处理完成，共修复了 {count} 个矩形的方向。").format(count=total_processed))
+
+    def _fix_shape_data_direction(self, shape_data):
+        """修复JSON中shape数据的方向，返回是否修改。"""
+        points = shape_data.get("points", [])
+        if len(points) != 4:
+            return False
+        
+        direction = shape_data.get("direction", 0)
+        
+        # 计算中心点
+        center_x = sum(p[0] for p in points) / 4.0
+        center_y = sum(p[1] for p in points) / 4.0
+        
+        # 计算宽高
+        edge1 = math.sqrt((points[1][0] - points[0][0])**2 + (points[1][1] - points[0][1])**2)
+        edge2 = math.sqrt((points[2][0] - points[1][0])**2 + (points[2][1] - points[1][1])**2)
+        width = edge1
+        height = edge2
+        
+        # 用当前角度重建矩形
+        half_w = width / 2.0
+        half_h = height / 2.0
+        
+        cos_a = math.cos(direction)
+        sin_a = math.sin(direction)
+        
+        # 标准顶点顺序（局部坐标）
+        local_points = [
+            (-half_w, -half_h),  # 左上
+            (half_w, -half_h),   # 右上
+            (half_w, half_h),    # 右下
+            (-half_w, half_h),   # 左下
+        ]
+        
+        new_points = []
+        for lx, ly in local_points:
+            nx = lx * cos_a - ly * sin_a + center_x
+            ny = lx * sin_a + ly * cos_a + center_y
+            new_points.append([nx, ny])
+        
+        shape_data["points"] = new_points
+        return True
+
+    def _fix_shapes_direction_batch(self, shapes, target_labels):
+        """批量修复shapes的方向，返回处理数量。"""
+        processed_count = 0
+        
+        for shape in shapes:
+            # 标签过滤
+            if target_labels and shape.label not in target_labels:
+                if self.alignment_dialog:
+                    self.alignment_dialog.log(self.tr("跳过 '{label}': 不在旋转标签列表中").format(label=shape.label))
+                continue
+            
+            # 获取当前角度
+            current_angle = shape.direction
+            
+            # 获取中心点
+            center_x = (shape.points[0].x() + shape.points[1].x() + shape.points[2].x() + shape.points[3].x()) / 4.0
+            center_y = (shape.points[0].y() + shape.points[1].y() + shape.points[2].y() + shape.points[3].y()) / 4.0
+            center = QtCore.QPointF(center_x, center_y)
+            
+            # 计算宽高
+            edge1 = utils.distance(shape.points[1] - shape.points[0])
+            edge2 = utils.distance(shape.points[2] - shape.points[1])
+            width = edge1
+            height = edge2
+            
+            # 用当前角度重建矩形
+            half_w = width / 2.0
+            half_h = height / 2.0
+            
+            cos_a = math.cos(current_angle)
+            sin_a = math.sin(current_angle)
+            
+            # 标准顶点顺序（局部坐标）
+            p0_local = QtCore.QPointF(-half_w, -half_h)  # 左上
+            p1_local = QtCore.QPointF(half_w, -half_h)   # 右上
+            p2_local = QtCore.QPointF(half_w, half_h)    # 右下
+            p3_local = QtCore.QPointF(-half_w, half_h)   # 左下
+            
+            def rot(pt):
+                return QtCore.QPointF(
+                    pt.x() * cos_a - pt.y() * sin_a + center.x(),
+                    pt.x() * sin_a + pt.y() * cos_a + center.y(),
+                )
+            
+            shape.points = [rot(p0_local), rot(p1_local), rot(p2_local), rot(p3_local)]
+            processed_count += 1
+            if self.alignment_dialog:
+                self.alignment_dialog.log(self.tr("已修复 '{label}' 的方向").format(label=shape.label))
+        
+        return processed_count
 
     def _get_locked_labels(self):
         """获取高亮设置中锁定的标签列表"""
@@ -5882,6 +6383,7 @@ class LabelingWidget(QtWidgets.QWidget):
             "show_linking": "show_linking",
             "show_attributes": "show_attributes",
             "show_order": "show_order",
+            "show_edge_direction": "show_edge_direction",
             "show_wh": "show_wh",
             "visibility_shapes_mode": "toggle_visibility_shapes",
             "hide_selected_polygons": "hide_selected_polygons",
@@ -7280,6 +7782,7 @@ class LabelingWidget(QtWidgets.QWidget):
             "show_linking": self.actions.show_linking,
             "show_attributes": self.actions.show_attributes,
             "show_order": self.actions.show_order,
+            "show_edge_direction": self.actions.show_edge_direction,
             "show_wh": self.actions.show_wh,
             "show_navigator": self.actions.show_navigator,
             "show_overview": getattr(self.actions, 'show_overview', None),
@@ -8533,11 +9036,25 @@ class LabelingWidget(QtWidgets.QWidget):
         
         info_lines = []
         
-        # Mouse coordinates
+        # Mouse coordinates + selection info on same line
+        mouse_line = ""
         if mouse_pos is not None:
-            info_lines.append(f"鼠标: X={mouse_pos.x():.2f}, Y={mouse_pos.y():.2f}")
+            mouse_line = f"鼠标: X={mouse_pos.x():.2f}, Y={mouse_pos.y():.2f}"
         
-        # Selected shape info
+        # 添加选中信息到鼠标行
+        selection_suffix = ""
+        if self.canvas.selected_shapes and len(self.canvas.selected_shapes) == 1:
+            shape = self.canvas.selected_shapes[0]
+            edited_mark = "〔已编辑〕" if getattr(shape, 'is_edited', False) else ""
+            selection_suffix = f"  【{shape.label}】{edited_mark}"
+        elif self.canvas.selected_shapes and len(self.canvas.selected_shapes) > 1:
+            count = len(self.canvas.selected_shapes)
+            selection_suffix = f"  「{count}」"
+        
+        if mouse_line or selection_suffix:
+            info_lines.append(mouse_line + selection_suffix)
+        
+        # Selected shape info (矩形坐标信息单独一行)
         if self.canvas.selected_shapes and len(self.canvas.selected_shapes) == 1:
             shape = self.canvas.selected_shapes[0]
             if shape.points and len(shape.points) >= 2:
@@ -8721,12 +9238,17 @@ class LabelingWidget(QtWidgets.QWidget):
         # 重叠显示按钮
         self.btn_overlap = QtWidgets.QPushButton(self.tr("重叠"))
         self.btn_overlap.setCheckable(True)
-        self.btn_overlap.setChecked(True)  # 默认启用
+        # 从配置读取初始状态
+        show_overlap_initial = self._config.get("show_overlap", True)
+        self.btn_overlap.setChecked(show_overlap_initial)
         self.btn_overlap.setToolTip(self.tr("切换重叠区域显示"))
         def toggle_overlap():
             self.canvas.toggle_overlap_display()
             # 更新按钮状态以反映当前显示状态
             self.btn_overlap.setChecked(self.canvas.show_overlap)
+            # 保存到配置
+            self._config["show_overlap"] = self.canvas.show_overlap
+            save_config(self._config)
         self.btn_overlap.clicked.connect(toggle_overlap)
 
         # Set shortcuts from config
@@ -10411,8 +10933,8 @@ class LabelingWidget(QtWidgets.QWidget):
     def set_scroll(self, orientation, value):
         self.scroll_bars[orientation].setValue(round(value))
         self.scroll_values[orientation][self.filename] = value
-        # Update navigator viewport when scrolling
-        self.update_navigator_viewport()
+        # Update navigator viewport when scrolling (skip shapes update for performance)
+        self.update_navigator_viewport(skip_shapes=True)
 
     def on_navigator_request(self, x_ratio, y_ratio):
         """Handle navigation request from navigator widget"""
@@ -10432,7 +10954,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.set_scroll(Qt.Horizontal, target_x)
         self.set_scroll(Qt.Vertical, target_y)
     
-    def update_navigator_viewport(self):
+    def update_navigator_viewport(self, skip_shapes=False):
         """Update the viewport rectangle in the navigator"""
         if not hasattr(self, 'navigator_dialog') or not hasattr(self, 'image'):
             return
@@ -10461,8 +10983,9 @@ class LabelingWidget(QtWidgets.QWidget):
         # Update navigator viewport
         self.navigator_dialog.set_viewport(x_ratio, y_ratio, width_ratio, height_ratio)
         
-        # Also update shapes overlay
-        self.update_navigator_shapes()
+        # Also update shapes overlay (skip during panning for performance)
+        if not skip_shapes:
+            self.update_navigator_shapes()
         
     def update_navigator_shapes(self):
         """Update shapes overlay in navigator"""
@@ -10514,88 +11037,158 @@ class LabelingWidget(QtWidgets.QWidget):
         # Safety check: ensure image is loaded before processing zoom
         if not hasattr(self, 'image') or self.image.isNull():
             return
+        
+        # Set flag to prevent paint_canvas from centering scrollbars
+        self._zooming = True
+        
+        try:
+            # Handle mouse-centered zoom (from wheel events)
+            if mouse_pos is not None:
+                # Convert navigator mouse position to image coordinates (ratio-based)
+                image_pos = self._convert_navigator_pos_to_image_coords(mouse_pos)
+                if image_pos:
+                    old_scale = self.canvas.scale
+                    
+                    # Save scroll position BEFORE zoom
+                    sx = self.scroll_bars[Qt.Horizontal].value()
+                    sy = self.scroll_bars[Qt.Vertical].value()
+                    
+                    # Get viewport size before zoom
+                    scroll_area = self.canvas._get_scroll_area()
+                    viewport_w = scroll_area.viewport().width() if scroll_area else 0
+                    viewport_h = scroll_area.viewport().height() if scroll_area else 0
+                    
+                    # Apply zoom
+                    self.zoom_widget.blockSignals(True)
+                    self.zoom_widget.setValue(zoom_percentage)
+                    self.zoom_widget.blockSignals(False)
+                    self.zoom_mode = self.MANUAL_ZOOM
+                    self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
+                    self.paint_canvas()
+                    
+                    new_scale = self.canvas.scale
+                    
+                    # Calculate scale ratio
+                    if old_scale > 0:
+                        scale_ratio = new_scale / old_scale
+                    else:
+                        scale_ratio = 1.0
+                    
+                    # In PS pan mode, use the same logic as zoom_request
+                    if self.canvas.pan_ps_style and self.canvas.pixmap and scale_ratio != 1.0 and scroll_area:
+                        # image_pos is in original image pixel coordinates
+                        image_x = image_pos.x()
+                        image_y = image_pos.y()
+                        
+                        # Calculate where this image point was in canvas coordinates (before zoom)
+                        old_canvas_x = image_x * old_scale + viewport_w / 2
+                        old_canvas_y = image_y * old_scale + viewport_h / 2
+                        
+                        # After zoom, this image point should be at canvas position:
+                        new_viewport_w = scroll_area.viewport().width()
+                        new_viewport_h = scroll_area.viewport().height()
+                        
+                        new_canvas_x = image_x * new_scale + new_viewport_w / 2
+                        new_canvas_y = image_y * new_scale + new_viewport_h / 2
+                        
+                        # Mouse position relative to viewport (before zoom)
+                        mouse_viewport_x = old_canvas_x - sx
+                        mouse_viewport_y = old_canvas_y - sy
+                        
+                        # New scroll position to keep mouse at same viewport position
+                        new_sx = new_canvas_x - mouse_viewport_x
+                        new_sy = new_canvas_y - mouse_viewport_y
+                        
+                        self.set_scroll(Qt.Horizontal, int(round(new_sx)))
+                        self.set_scroll(Qt.Vertical, int(round(new_sy)))
+                    elif scale_ratio != 1.0:
+                        # Non-PS mode: use original logic
+                        # image_pos is in original image pixel coordinates
+                        image_x = image_pos.x()
+                        image_y = image_pos.y()
+                        
+                        # Calculate where this image point was in canvas coordinates (before zoom)
+                        old_canvas_x = image_x * old_scale
+                        old_canvas_y = image_y * old_scale
+                        
+                        # After zoom, this image point will be at new canvas position:
+                        new_canvas_x = image_x * new_scale
+                        new_canvas_y = image_y * new_scale
+                        
+                        # Mouse position relative to viewport (before zoom)
+                        mouse_viewport_x = old_canvas_x - sx
+                        mouse_viewport_y = old_canvas_y - sy
+                        
+                        # New scroll position to keep mouse at same viewport position
+                        new_sx = new_canvas_x - mouse_viewport_x
+                        new_sy = new_canvas_y - mouse_viewport_y
+                        
+                        self.set_scroll(Qt.Horizontal, int(round(new_sx)))
+                        self.set_scroll(Qt.Vertical, int(round(new_sy)))
+                    
+                    return
             
-        # Handle mouse-centered zoom (from wheel events)
-        if mouse_pos is not None:
-            # Convert mouse position from navigator to canvas coordinates
-            canvas_pos = self._convert_navigator_pos_to_canvas(mouse_pos)
-            if canvas_pos:
-                # Save old canvas dimensions for centering calculation
-                canvas_width_old = self.canvas.width()
-                canvas_height_old = self.canvas.height()
-                old_zoom = self.zoom_widget.value()
+            # Handle direct zoom changes (from slider/button controls)
+            # For slider/button zoom, center on the red rectangle center in navigator (like PS navigator)
+            if hasattr(self, 'canvas') and hasattr(self.canvas, 'width') and hasattr(self.canvas, 'height'):
+                # Get navigator viewport rectangle center - this is the red rectangle in navigator
+                if hasattr(self.navigator_dialog, 'navigator'):
+                    nav_widget = self.navigator_dialog.navigator
+                    if hasattr(nav_widget, 'viewport_rect') and not nav_widget.viewport_rect.isEmpty():
+                        # Calculate red rectangle center in navigator coordinates
+                        nav_rect_center_x = nav_widget.viewport_rect.center().x()
+                        nav_rect_center_y = nav_widget.viewport_rect.center().y()
+                        
+                        # Convert navigator red rectangle center to canvas coordinates
+                        canvas_pos = self._convert_navigator_pos_to_canvas(
+                            QtCore.QPoint(int(nav_rect_center_x), int(nav_rect_center_y))
+                        )
+                        
+                        if canvas_pos:
+                            # Save old dimensions
+                            canvas_width_old = self.canvas.width()
+                            canvas_height_old = self.canvas.height()
+                            
+                            # Apply zoom - block signals to prevent double paint_canvas
+                            self.zoom_widget.blockSignals(True)
+                            self.zoom_widget.setValue(zoom_percentage)
+                            self.zoom_widget.blockSignals(False)
+                            self.zoom_mode = self.MANUAL_ZOOM
+                            self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
+                            self.paint_canvas()
+                            
+                            # Calculate new dimensions and adjust scrollbars to keep red rectangle center fixed
+                            canvas_width_new = self.canvas.width()
+                            canvas_height_new = self.canvas.height()
+                            
+                            if canvas_width_old != canvas_width_new:
+                                canvas_scale_factor = canvas_width_new / canvas_width_old
+                                # Calculate how much to shift to keep red rectangle center point fixed
+                                x_shift = round(canvas_pos.x() * canvas_scale_factor - canvas_pos.x())
+                                y_shift = round(canvas_pos.y() * canvas_scale_factor - canvas_pos.y())
+                                # Adjust scrollbars to maintain red rectangle center
+                                self.set_scroll(QtCore.Qt.Horizontal, self.scroll_bars[QtCore.Qt.Horizontal].value() + x_shift)
+                                self.set_scroll(QtCore.Qt.Vertical, self.scroll_bars[QtCore.Qt.Vertical].value() + y_shift)
+                            return
                 
-                # Directly set the exact zoom value from navigator (1% precision)
+                # Fallback to simple zoom without centering if navigator info not available
+                self.zoom_widget.blockSignals(True)
                 self.zoom_widget.setValue(zoom_percentage)
+                self.zoom_widget.blockSignals(False)
                 self.zoom_mode = self.MANUAL_ZOOM
                 self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
                 self.paint_canvas()
-                
-                # Apply mouse-centered offset adjustment (copied from zoom_request logic)
-                canvas_width_new = self.canvas.width()
-                canvas_height_new = self.canvas.height()
-                
-                if canvas_width_old != canvas_width_new:
-                    canvas_scale_factor = canvas_width_new / canvas_width_old
-                    x_shift = round(canvas_pos.x() * canvas_scale_factor - canvas_pos.x())
-                    y_shift = round(canvas_pos.y() * canvas_scale_factor - canvas_pos.y())
-                    self.set_scroll(QtCore.Qt.Horizontal, self.scroll_bars[QtCore.Qt.Horizontal].value() + x_shift)
-                    self.set_scroll(QtCore.Qt.Vertical, self.scroll_bars[QtCore.Qt.Vertical].value() + y_shift)
-                
-                return
-        
-        # Handle direct zoom changes (from slider/button controls)
-        # For slider/button zoom, center on the red rectangle center in navigator (like PS navigator)
-        if hasattr(self, 'canvas') and hasattr(self.canvas, 'width') and hasattr(self.canvas, 'height'):
-            # Get navigator viewport rectangle center - this is the red rectangle in navigator
-            if hasattr(self.navigator_dialog, 'navigator'):
-                nav_widget = self.navigator_dialog.navigator
-                if hasattr(nav_widget, 'viewport_rect') and not nav_widget.viewport_rect.isEmpty():
-                    # Calculate red rectangle center in navigator coordinates
-                    nav_rect_center_x = nav_widget.viewport_rect.center().x()
-                    nav_rect_center_y = nav_widget.viewport_rect.center().y()
-                    
-                    # Convert navigator red rectangle center to canvas coordinates
-                    canvas_pos = self._convert_navigator_pos_to_canvas(
-                        QtCore.QPoint(int(nav_rect_center_x), int(nav_rect_center_y))
-                    )
-                    
-                    if canvas_pos:
-                        # Save old dimensions
-                        canvas_width_old = self.canvas.width()
-                        canvas_height_old = self.canvas.height()
-                        
-                        # Apply zoom
-                        self.zoom_widget.setValue(zoom_percentage)
-                        self.zoom_mode = self.MANUAL_ZOOM
-                        self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
-                        self.paint_canvas()
-                        
-                        # Calculate new dimensions and adjust scrollbars to keep red rectangle center fixed
-                        canvas_width_new = self.canvas.width()
-                        canvas_height_new = self.canvas.height()
-                        
-                        if canvas_width_old != canvas_width_new:
-                            canvas_scale_factor = canvas_width_new / canvas_width_old
-                            # Calculate how much to shift to keep red rectangle center point fixed
-                            x_shift = round(canvas_pos.x() * canvas_scale_factor - canvas_pos.x())
-                            y_shift = round(canvas_pos.y() * canvas_scale_factor - canvas_pos.y())
-                            # Adjust scrollbars to maintain red rectangle center
-                            self.set_scroll(QtCore.Qt.Horizontal, self.scroll_bars[QtCore.Qt.Horizontal].value() + x_shift)
-                            self.set_scroll(QtCore.Qt.Vertical, self.scroll_bars[QtCore.Qt.Vertical].value() + y_shift)
-                        return
-            
-            # Fallback to simple zoom without centering if navigator info not available
-            self.zoom_widget.setValue(zoom_percentage)
-            self.zoom_mode = self.MANUAL_ZOOM
-            self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
-            self.paint_canvas()
-        else:
-            # Fallback to simple zoom without centering
-            self.zoom_widget.setValue(zoom_percentage)
-            self.zoom_mode = self.MANUAL_ZOOM
-            self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
-            self.paint_canvas()
+            else:
+                # Fallback to simple zoom without centering
+                self.zoom_widget.blockSignals(True)
+                self.zoom_widget.setValue(zoom_percentage)
+                self.zoom_widget.blockSignals(False)
+                self.zoom_mode = self.MANUAL_ZOOM
+                self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
+                self.paint_canvas()
+        finally:
+            # Delay resetting _zooming to allow async scrollbar operations to complete
+            QtCore.QTimer.singleShot(10, lambda: setattr(self, '_zooming', False))
         
     def _convert_navigator_pos_to_canvas(self, navigator_pos: QtCore.QPoint) -> Optional[QtCore.QPoint]:
         """
@@ -10620,6 +11213,8 @@ class LabelingWidget(QtWidgets.QWidget):
             
         Note:
             Returns None if navigator is not visible or position is outside image bounds.
+            In PS pan mode, returns coordinates relative to the scaled image area,
+            not the full canvas widget (which includes viewport padding).
         """
         if not hasattr(self, 'navigator_dialog') or not self.navigator_dialog.isVisible():
             return None
@@ -10641,11 +11236,69 @@ class LabelingWidget(QtWidgets.QWidget):
         x_ratio = relative_x / navigator_widget.image_rect.width()
         y_ratio = relative_y / navigator_widget.image_rect.height()
         
-        # Convert to canvas coordinates
-        canvas_x = int(x_ratio * self.canvas.width())
-        canvas_y = int(y_ratio * self.canvas.height())
+        # In PS pan mode, convert to scaled image coordinates (not canvas widget coordinates)
+        # because canvas widget includes viewport padding
+        if self.canvas.pan_ps_style and self.canvas.pixmap:
+            # Get the actual scaled image size
+            scaled_image_w = self.canvas.scale * self.canvas.pixmap.width()
+            scaled_image_h = self.canvas.scale * self.canvas.pixmap.height()
+            canvas_x = int(x_ratio * scaled_image_w)
+            canvas_y = int(y_ratio * scaled_image_h)
+        else:
+            # Original mode: use canvas widget size
+            canvas_x = int(x_ratio * self.canvas.width())
+            canvas_y = int(y_ratio * self.canvas.height())
         
         return QtCore.QPoint(canvas_x, canvas_y)
+
+    def _convert_navigator_pos_to_image_coords(self, navigator_pos: QtCore.QPoint) -> Optional[QtCore.QPointF]:
+        """
+        Convert navigator mouse position to original image coordinates.
+
+        This method transforms a mouse position from navigator widget coordinates
+        to the corresponding position in the original image coordinate system
+        (before any scaling is applied).
+
+        Args:
+            navigator_pos (QtCore.QPoint): Mouse position in navigator widget coordinates.
+
+        Returns:
+            Optional[QtCore.QPointF]: Corresponding position in original image coordinates,
+                or None if conversion is not possible (e.g., navigator not visible,
+                position outside image bounds).
+
+        Note:
+            Returns coordinates in the original image pixel space, not scaled canvas space.
+            This is useful for zoom calculations that need to work with image coordinates.
+        """
+        if not hasattr(self, 'navigator_dialog') or not self.navigator_dialog.isVisible():
+            return None
+            
+        navigator_widget = self.navigator_dialog.navigator
+        if not navigator_widget.image_rect or navigator_widget.image_rect.isEmpty():
+            return None
+        
+        if not self.canvas.pixmap or self.canvas.pixmap.isNull():
+            return None
+            
+        # Convert navigator position to relative image coordinates
+        relative_x = navigator_pos.x() - navigator_widget.image_rect.x()
+        relative_y = navigator_pos.y() - navigator_widget.image_rect.y()
+        
+        # Check if position is within image bounds
+        if (relative_x < 0 or relative_x > navigator_widget.image_rect.width() or 
+            relative_y < 0 or relative_y > navigator_widget.image_rect.height()):
+            return None
+            
+        # Convert to ratio (0.0 to 1.0)
+        x_ratio = relative_x / navigator_widget.image_rect.width()
+        y_ratio = relative_y / navigator_widget.image_rect.height()
+        
+        # Convert ratio to original image pixel coordinates
+        image_x = x_ratio * self.canvas.pixmap.width()
+        image_y = y_ratio * self.canvas.pixmap.height()
+        
+        return QtCore.QPointF(image_x, image_y)
 
     def on_navigator_viewport_update_requested(self):
         """Handle viewport update request from navigator resize"""
@@ -10736,72 +11389,196 @@ class LabelingWidget(QtWidgets.QWidget):
         # Clamp zoom value to reasonable limits (e.g., 10% to 1000%)
         new_zoom = max(10, min(1000, new_zoom))
 
-        # Apply zoom and adjust scrollbars to keep mouse position centered
-        canvas_width_old = self.canvas.width()
+        # Set flag to prevent paint_canvas from centering scrollbars
+        self._zooming = True
         
-        self.set_zoom(new_zoom)
+        try:
+            # Save old scale and scroll position BEFORE zoom
+            old_scale = self.canvas.scale
+            sx = self.scroll_bars[Qt.Horizontal].value()
+            sy = self.scroll_bars[Qt.Vertical].value()
+            
+            # Get viewport size
+            scroll_area = self.canvas._get_scroll_area()
+            viewport_w = scroll_area.viewport().width() if scroll_area else 0
+            viewport_h = scroll_area.viewport().height() if scroll_area else 0
 
-        canvas_width_new = self.canvas.width()
-        
-        if canvas_width_old > 0 and canvas_width_old != canvas_width_new:
-            canvas_scale_factor = canvas_width_new / canvas_width_old
-            x_shift = round(canvas_mouse_pos.x() * canvas_scale_factor - canvas_mouse_pos.x())
-            y_shift = round(canvas_mouse_pos.y() * canvas_scale_factor - canvas_mouse_pos.y())
-
-            self.set_scroll(
-                Qt.Horizontal,
-                self.scroll_bars[Qt.Horizontal].value() + x_shift,
-            )
-            self.set_scroll(
-                Qt.Vertical,
-                self.scroll_bars[Qt.Vertical].value() + y_shift,
-            )
+            # Apply zoom
+            self.set_zoom(new_zoom)
+            
+            new_scale = self.canvas.scale
+            
+            # Calculate scale ratio
+            if old_scale > 0:
+                scale_ratio = new_scale / old_scale
+            else:
+                scale_ratio = 1.0
+            
+            if scale_ratio != 1.0 and scroll_area:
+                # In PS pan mode, use image-based calculation
+                if self.canvas.pan_ps_style and self.canvas.pixmap:
+                    mouse_canvas_x = canvas_mouse_pos.x()
+                    mouse_canvas_y = canvas_mouse_pos.y()
+                    
+                    # In PS mode, image is drawn at offset (viewport_w/2, viewport_h/2) in canvas
+                    # Image point under mouse (in image pixel coordinates)
+                    image_x = (mouse_canvas_x - viewport_w / 2) / old_scale
+                    image_y = (mouse_canvas_y - viewport_h / 2) / old_scale
+                    
+                    # After zoom, this image point should be at canvas position:
+                    new_viewport_w = scroll_area.viewport().width()
+                    new_viewport_h = scroll_area.viewport().height()
+                    
+                    new_mouse_canvas_x = image_x * new_scale + new_viewport_w / 2
+                    new_mouse_canvas_y = image_y * new_scale + new_viewport_h / 2
+                    
+                    # Mouse position relative to viewport (before zoom)
+                    mouse_viewport_x = mouse_canvas_x - sx
+                    mouse_viewport_y = mouse_canvas_y - sy
+                    
+                    # New scroll position to keep mouse at same viewport position
+                    new_sx = new_mouse_canvas_x - mouse_viewport_x
+                    new_sy = new_mouse_canvas_y - mouse_viewport_y
+                    
+                    self.set_scroll(Qt.Horizontal, int(round(new_sx)))
+                    self.set_scroll(Qt.Vertical, int(round(new_sy)))
+                else:
+                    # Non-PS mode: canvas size = scaled image size (no viewport padding)
+                    # Image point under mouse (in original image pixel coordinates)
+                    image_x = canvas_mouse_pos.x() / old_scale
+                    image_y = canvas_mouse_pos.y() / old_scale
+                    
+                    # After zoom, this image point will be at new canvas position:
+                    new_canvas_x = image_x * new_scale
+                    new_canvas_y = image_y * new_scale
+                    
+                    # Mouse position relative to viewport (before zoom)
+                    mouse_viewport_x = canvas_mouse_pos.x() - sx
+                    mouse_viewport_y = canvas_mouse_pos.y() - sy
+                    
+                    # New scroll position to keep mouse at same viewport position
+                    new_sx = new_canvas_x - mouse_viewport_x
+                    new_sy = new_canvas_y - mouse_viewport_y
+                    
+                    self.set_scroll(Qt.Horizontal, int(round(new_sx)))
+                    self.set_scroll(Qt.Vertical, int(round(new_sy)))
+        finally:
+            # Delay resetting _zooming to allow async scrollbar operations to complete
+            QtCore.QTimer.singleShot(10, lambda: setattr(self, '_zooming', False))
 
     def zoom_request(self, delta, pos):
-        canvas_width_old = self.canvas.width()
-        canvas_height_old = self.canvas.height()
+        """Handle zoom request from canvas wheel event.
         
-        old_zoom = self.zoom_widget.value()
+        pos is the mouse position relative to the canvas widget (not viewport!).
+        In Qt, wheelEvent.pos() returns position relative to the widget receiving the event.
         
-        units = 1.1
-        if delta < 0:
-            units = 0.9
-        self.add_zoom(units)
-
-        canvas_width_new = self.canvas.width()
-        canvas_height_new = self.canvas.height()
+        In PS pan mode, we need to keep the image point under the mouse cursor
+        fixed during zoom.
+        """
+        # Set flag to prevent paint_canvas from centering scrollbars
+        self._zooming = True
         
-        new_zoom = self.zoom_widget.value()
-        
-        # Only apply scroll adjustment if canvas size actually changed
-        # Remove the restrictive zoom threshold to fix centering at all zoom levels
-        if canvas_width_old != canvas_width_new:
+        try:
+            old_scale = self.canvas.scale
             
-            canvas_scale_factor = canvas_width_new / canvas_width_old
-
-            x_shift = round(pos.x() * canvas_scale_factor - pos.x())
-            y_shift = round(pos.y() * canvas_scale_factor - pos.y())
-
-            self.set_scroll(
-                Qt.Horizontal,
-                self.scroll_bars[Qt.Horizontal].value() + x_shift,
-            )
-            self.set_scroll(
-                Qt.Vertical,
-                self.scroll_bars[Qt.Vertical].value() + y_shift,
-            )
+            # Save scroll position BEFORE zoom (important!)
+            sx = self.scroll_bars[Qt.Horizontal].value()
+            sy = self.scroll_bars[Qt.Vertical].value()
+            
+            # Get viewport size before zoom
+            scroll_area = self.canvas._get_scroll_area()
+            viewport_w = scroll_area.viewport().width() if scroll_area else 0
+            viewport_h = scroll_area.viewport().height() if scroll_area else 0
+            
+            # Apply zoom
+            units = 1.1 if delta > 0 else 0.9
+            self.add_zoom(units)
+            
+            new_scale = self.canvas.scale
+            
+            # Calculate scale ratio
+            if old_scale > 0:
+                scale_ratio = new_scale / old_scale
+            else:
+                scale_ratio = 1.0
+            
+            # In PS pan mode, use scale ratio for accurate calculation
+            if self.canvas.pan_ps_style and self.canvas.pixmap and scale_ratio != 1.0 and scroll_area:
+                # pos is mouse position relative to canvas widget (NOT viewport!)
+                # pos is already in canvas coordinates
+                mouse_canvas_x = pos.x()
+                mouse_canvas_y = pos.y()
+                
+                # In PS mode, image is drawn at offset (viewport_w/2, viewport_h/2) in canvas
+                # Image point under mouse (in image pixel coordinates)
+                image_x = (mouse_canvas_x - viewport_w / 2) / old_scale
+                image_y = (mouse_canvas_y - viewport_h / 2) / old_scale
+                
+                # After zoom, this image point should be at canvas position:
+                new_viewport_w = scroll_area.viewport().width()
+                new_viewport_h = scroll_area.viewport().height()
+                
+                new_mouse_canvas_x = image_x * new_scale + new_viewport_w / 2
+                new_mouse_canvas_y = image_y * new_scale + new_viewport_h / 2
+                
+                # Mouse position relative to viewport (before zoom)
+                mouse_viewport_x = mouse_canvas_x - sx
+                mouse_viewport_y = mouse_canvas_y - sy
+                
+                # New scroll position to keep mouse at same viewport position
+                new_sx = new_mouse_canvas_x - mouse_viewport_x
+                new_sy = new_mouse_canvas_y - mouse_viewport_y
+                
+                self.set_scroll(Qt.Horizontal, int(round(new_sx)))
+                self.set_scroll(Qt.Vertical, int(round(new_sy)))
+            elif scale_ratio != 1.0:
+                # Non-PS mode: canvas size = scaled image size (no viewport padding)
+                # pos is mouse position relative to canvas widget
+                # In non-PS mode, pos directly represents the scaled image coordinates
+                
+                # Image point under mouse (in original image pixel coordinates)
+                image_x = pos.x() / old_scale
+                image_y = pos.y() / old_scale
+                
+                # After zoom, this image point will be at new canvas position:
+                new_canvas_x = image_x * new_scale
+                new_canvas_y = image_y * new_scale
+                
+                # Mouse position relative to viewport (before zoom)
+                mouse_viewport_x = pos.x() - sx
+                mouse_viewport_y = pos.y() - sy
+                
+                # New scroll position to keep mouse at same viewport position
+                new_sx = new_canvas_x - mouse_viewport_x
+                new_sy = new_canvas_y - mouse_viewport_y
+                
+                self.set_scroll(Qt.Horizontal, int(round(new_sx)))
+                self.set_scroll(Qt.Vertical, int(round(new_sy)))
+        finally:
+            self._zooming = False
 
     def set_fit_window(self, value=True):
         if value:
             self.actions.fit_width.setChecked(False)
         self.zoom_mode = self.FIT_WINDOW if value else self.MANUAL_ZOOM
         self.adjust_scale()
+        self._center_scroll_bars()
 
     def set_fit_width(self, value=True):
         if value:
             self.actions.fit_window.setChecked(False)
         self.zoom_mode = self.FIT_WIDTH if value else self.MANUAL_ZOOM
         self.adjust_scale()
+        self._center_scroll_bars()
+
+    def _center_scroll_bars(self):
+        """Center the scroll bars to show the image in the middle of the viewport."""
+        # Center horizontal scrollbar
+        h_bar = self.scroll_bars[Qt.Horizontal]
+        h_bar.setValue((h_bar.maximum() + h_bar.minimum()) // 2)
+        # Center vertical scrollbar
+        v_bar = self.scroll_bars[Qt.Vertical]
+        v_bar.setValue((v_bar.maximum() + v_bar.minimum()) // 2)
 
     def toggle_crosshair(self):
         """Toggle crosshair visibility."""
@@ -11220,12 +11997,13 @@ class LabelingWidget(QtWidgets.QWidget):
             self.set_zoom(self.zoom_values[self.filename][1])
         elif is_initial_load or not self._config["keep_prev_scale"]:
             self.adjust_scale(initial=True)
-        # set scroll values
-        for orientation in self.scroll_values:
-            if self.filename in self.scroll_values[orientation]:
-                self.set_scroll(
-                    orientation, self.scroll_values[orientation][self.filename]
-                )
+        # set scroll values (skip if PS-style panning is enabled, as paint_canvas will center it)
+        if not self.canvas.pan_ps_style:
+            for orientation in self.scroll_values:
+                if self.filename in self.scroll_values[orientation]:
+                    self.set_scroll(
+                        orientation, self.scroll_values[orientation][self.filename]
+                    )
         # set brightness contrast values
         self.brightness_contrast_dialog.update_image(
             utils.img_data_to_pil(self.image_data)
@@ -11342,13 +12120,40 @@ class LabelingWidget(QtWidgets.QWidget):
             self.adjust_scale()
         self.update_thumbnail_pixmap()
 
-    def paint_canvas(self):
+    def paint_canvas(self, center_scrollbars=True):
+        """Paint the canvas with current zoom level.
+        
+        Args:
+            center_scrollbars: If True and in PS pan mode, center the scrollbars.
+                              Set to False when zooming to preserve scroll position.
+        """
         assert not self.image.isNull(), "cannot paint null image"
         self.canvas.scale = 0.01 * self.zoom_widget.value()
         self.canvas.adjustSize()
         self.canvas.update()
+
+        # PS风格时，让图片居中显示（仅在需要时，且不是正在缩放）
+        if self.canvas.pan_ps_style and center_scrollbars and not getattr(self, '_zooming', False):
+            self.center_canvas_scrollbars()
+
         # Update navigator viewport after canvas changes
         self.update_navigator_viewport()
+
+    def center_canvas_scrollbars(self):
+        """Center the canvas scrollbars so the image is centered in viewport"""
+        # 等待 adjustSize 生效后再设置滚动条
+        QtCore.QTimer.singleShot(0, self._do_center_scrollbars)
+
+    def _do_center_scrollbars(self):
+        """Actually center the scrollbars"""
+        # Skip if currently zooming (to preserve scroll position set by zoom logic)
+        if getattr(self, '_zooming', False):
+            return
+        h_bar = self.scroll_bars[Qt.Horizontal]
+        v_bar = self.scroll_bars[Qt.Vertical]
+        # 设置到中间位置
+        h_bar.setValue((h_bar.maximum() + h_bar.minimum()) // 2)
+        v_bar.setValue((v_bar.maximum() + v_bar.minimum()) // 2)
 
     def adjust_scale(self, initial=False):
         value = self.scalers[self.FIT_WINDOW if initial else self.zoom_mode]()

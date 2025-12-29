@@ -88,12 +88,42 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.no_highlight_layout.addWidget(self.no_highlight_input)
         self.no_highlight_group.setLayout(self.no_highlight_layout)
 
+        # 画布内信息显示设置（移到左列）
+        self.canvas_overlay_group = QtWidgets.QGroupBox("画布内信息显示")
+        self.canvas_overlay_layout = QtWidgets.QVBoxLayout()
+        self.canvas_overlay_enabled_checkbox = QtWidgets.QCheckBox("启用画布内坐标显示")
+        self.canvas_overlay_enabled_checkbox.setToolTip("启用后，在画布角落显示鼠标坐标和选中矩形信息")
+        
+        # 位置选择
+        self.canvas_overlay_position_layout = QtWidgets.QHBoxLayout()
+        self.canvas_overlay_position_label = QtWidgets.QLabel("显示位置:")
+        self.canvas_overlay_position_combo = QtWidgets.QComboBox()
+        self.canvas_overlay_position_combo.addItem("左下角", "bottom_left")
+        self.canvas_overlay_position_combo.addItem("左上角", "top_left")
+        self.canvas_overlay_position_layout.addWidget(self.canvas_overlay_position_label)
+        self.canvas_overlay_position_layout.addWidget(self.canvas_overlay_position_combo)
+        self.canvas_overlay_position_layout.addStretch()
+        
+        self.canvas_overlay_layout.addWidget(self.canvas_overlay_enabled_checkbox)
+        self.canvas_overlay_layout.addLayout(self.canvas_overlay_position_layout)
+        self.canvas_overlay_group.setLayout(self.canvas_overlay_layout)
+
+        # 画布平移设置
+        self.canvas_pan_group = QtWidgets.QGroupBox("画布平移")
+        self.canvas_pan_layout = QtWidgets.QVBoxLayout()
+        self.canvas_pan_enabled_checkbox = QtWidgets.QCheckBox("启用PS风格画布平移")
+        self.canvas_pan_enabled_checkbox.setToolTip("启用后，图片的任意角落都可以拖到视口中央（类似Photoshop）\n禁用后，恢复原来的平移限制")
+        self.canvas_pan_layout.addWidget(self.canvas_pan_enabled_checkbox)
+        self.canvas_pan_group.setLayout(self.canvas_pan_layout)
+
         # 添加到左列
         self.left_column.addWidget(self.positive_group)
         self.left_column.addWidget(self.negative_group)
         self.left_column.addWidget(self.lock_group)
         self.left_column.addWidget(self.pin_group)
         self.left_column.addWidget(self.no_highlight_group)
+        self.left_column.addWidget(self.canvas_overlay_group)
+        self.left_column.addWidget(self.canvas_pan_group)
         self.left_column.addStretch()
 
         # ========== 右列内容 ==========
@@ -206,26 +236,6 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.overlap_layout.addLayout(self.overlap_threshold_layout)
         self.overlap_group.setLayout(self.overlap_layout)
 
-        # 画布内信息显示设置
-        self.canvas_overlay_group = QtWidgets.QGroupBox("画布内信息显示")
-        self.canvas_overlay_layout = QtWidgets.QVBoxLayout()
-        self.canvas_overlay_enabled_checkbox = QtWidgets.QCheckBox("启用画布内坐标显示")
-        self.canvas_overlay_enabled_checkbox.setToolTip("启用后，在画布角落显示鼠标坐标和选中矩形信息")
-        
-        # 位置选择
-        self.canvas_overlay_position_layout = QtWidgets.QHBoxLayout()
-        self.canvas_overlay_position_label = QtWidgets.QLabel("显示位置:")
-        self.canvas_overlay_position_combo = QtWidgets.QComboBox()
-        self.canvas_overlay_position_combo.addItem("左下角", "bottom_left")
-        self.canvas_overlay_position_combo.addItem("左上角", "top_left")
-        self.canvas_overlay_position_layout.addWidget(self.canvas_overlay_position_label)
-        self.canvas_overlay_position_layout.addWidget(self.canvas_overlay_position_combo)
-        self.canvas_overlay_position_layout.addStretch()
-        
-        self.canvas_overlay_layout.addWidget(self.canvas_overlay_enabled_checkbox)
-        self.canvas_overlay_layout.addLayout(self.canvas_overlay_position_layout)
-        self.canvas_overlay_group.setLayout(self.canvas_overlay_layout)
-
         # 添加到右列
         self.right_column.addWidget(self.mixed_mode_group)
         self.right_column.addWidget(self.default_highlight_group)
@@ -233,7 +243,6 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.right_column.addWidget(self.deselect_group)
         self.right_column.addWidget(self.invert_group)
         self.right_column.addWidget(self.overlap_group)
-        self.right_column.addWidget(self.canvas_overlay_group)
 
         # 右列底部添加弹簧
         self.right_column.addStretch()
@@ -293,6 +302,9 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.canvas_overlay_enabled_checkbox.stateChanged.connect(self._on_canvas_overlay_setting_changed)
         self.canvas_overlay_position_combo.currentIndexChanged.connect(self._on_canvas_overlay_setting_changed)
 
+        # 画布平移设置信号连接
+        self.canvas_pan_enabled_checkbox.stateChanged.connect(self._on_canvas_pan_setting_changed)
+
         self.load_settings()
 
     def load_settings(self):
@@ -327,6 +339,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.overlap_threshold_spin.valueChanged.disconnect(self._on_overlap_setting_changed)
             self.canvas_overlay_enabled_checkbox.stateChanged.disconnect(self._on_canvas_overlay_setting_changed)
             self.canvas_overlay_position_combo.currentIndexChanged.disconnect(self._on_canvas_overlay_setting_changed)
+            self.canvas_pan_enabled_checkbox.stateChanged.disconnect(self._on_canvas_pan_setting_changed)
 
             self.positive_input.setText(self._config.get("highlight_positive", ""))
             self.negative_input.setText(self._config.get("highlight_negative", ""))
@@ -375,6 +388,9 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             if index >= 0:
                 self.canvas_overlay_position_combo.setCurrentIndex(index)
 
+            # 画布平移设置
+            self.canvas_pan_enabled_checkbox.setChecked(self._config.get("canvas_pan_ps_style", True))
+
             self.positive_input.textChanged.connect(self._realtime_save_settings)
             self.negative_input.textChanged.connect(self._realtime_save_settings)
             self.lock_input.textChanged.connect(self._realtime_save_settings)
@@ -405,6 +421,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.overlap_threshold_spin.valueChanged.connect(self._on_overlap_setting_changed)
             self.canvas_overlay_enabled_checkbox.stateChanged.connect(self._on_canvas_overlay_setting_changed)
             self.canvas_overlay_position_combo.currentIndexChanged.connect(self._on_canvas_overlay_setting_changed)
+            self.canvas_pan_enabled_checkbox.stateChanged.connect(self._on_canvas_pan_setting_changed)
 
     def _realtime_save_settings(self):
         if self._config:
@@ -498,6 +515,15 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             # Update overlay position
             if self.parent() and hasattr(self.parent(), '_update_canvas_overlay_on_shape_change'):
                 self.parent()._update_canvas_overlay_on_shape_change()
+
+    def _on_canvas_pan_setting_changed(self, state=None):
+        if self._config:
+            is_enabled = self.canvas_pan_enabled_checkbox.isChecked()
+            self._config["canvas_pan_ps_style"] = is_enabled
+            save_config(self._config)
+            # Update canvas pan mode
+            if self.parent() and hasattr(self.parent(), 'canvas'):
+                self.parent().canvas.set_pan_ps_style(is_enabled)
 
     def showEvent(self, event):
         super().showEvent(event)

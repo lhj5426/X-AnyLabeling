@@ -197,8 +197,8 @@ class Canvas(
         
         # Initialize overlap color from configuration
         self.overlap_color = get_overlap_color(self._config)
-        # Initialize overlap display toggle (default: enabled)
-        self.show_overlap = True
+        # Initialize overlap display toggle from configuration (default: enabled)
+        self.show_overlap = self._config.get("show_overlap", True)
 
         # Initialize alignment tool colors and line widths from configuration
         shape_config = self._config.get("shape", {})
@@ -345,6 +345,9 @@ class Canvas(
         self.visible = {}
         self._hide_backround = False
         self.hide_backround = False
+        # PS风格画布平移（允许图片任意角落拖到视口中央）
+        self.pan_ps_style = self._config.get("canvas_pan_ps_style", True)
+        self._scroll_area_cache = None  # 缓存 scroll_area 引用，避免重复查找
         self.h_hape = None
         self.prev_h_shape = None
         self.h_vertex = None
@@ -356,7 +359,7 @@ class Canvas(
         self.snapping = True
         self.h_shape_is_selected = False
         self.h_shape_is_hovered = None
-        self.allowed_oop_shape_types = ["rotation"]
+        self.allowed_oop_shape_types = ["rotation"]  # Only rotation allows out of pixmap for editing
         self._painter = QtGui.QPainter()
         self._cursor = CURSOR_DEFAULT
         
@@ -378,6 +381,7 @@ class Canvas(
         self.show_attributes = True
         self.show_linking = True
         self.show_order = True
+        self.show_edge_direction = False  # 显示旋转矩形边方向标识
 
         # Set cross line options.
         self.cross_line_show = True
@@ -1095,8 +1099,9 @@ class Canvas(
             if (
                 self.out_off_pixmap(pos)
                 and self.create_mode not in self.allowed_oop_shape_types
+                and self.create_mode != "rectangle"  # Allow rectangle drawing outside, will be clamped on finalise
             ):
-                # Don't allow the user to draw outside the pixmap, except for rotation.
+                # Don't allow the user to draw outside the pixmap, except for rotation and rectangle.
                 # Project the point to the pixmap's edges.
                 pos = self.intersection_point(self.current[-1], pos)
             elif (
@@ -1327,7 +1332,7 @@ class Canvas(
                         Qt.Vertical,
                         1,
                     )
-                    self.repaint()
+                    # 不需要手动 repaint，滚动条变化会自动触发重绘
             return
 
         # 移除 is_move_editing 的鼠标移动逻辑
@@ -1793,9 +1798,9 @@ class Canvas(
                         self.update()
                 elif (
                     self.out_off_pixmap(pos)
-                    and self.create_mode in self.allowed_oop_shape_types
+                    and (self.create_mode in self.allowed_oop_shape_types or self.create_mode == "rectangle")
                 ):
-                    # Create new shape.
+                    # Create new shape (allow rectangle to start outside, will be clamped on finalise).
                     self.current = Shape(shape_type=self.create_mode)
                     self.current.add_point(pos)
                     self.line.points = [pos, pos]
@@ -3605,7 +3610,7 @@ class Canvas(
                     p.setPen(border_pen)
                     p.drawRect(bg_x, bg_y, bg_w, bg_h)
 
-                    # Draw text
+                    # Draw angle text
                     text_pen = QtGui.QPen(
                         QtGui.QColor("#FFFFFF"), 7, QtCore.Qt.SolidLine
                     )
@@ -3625,6 +3630,91 @@ class Canvas(
                     )
                     p.drawPath(cp)
                     p.fillPath(cp, QtGui.QColor(255, 153, 0, 255))
+        
+        # 绘制旋转矩形的边方向标识（圆球样式）
+        if self.show_edge_direction:
+            p.save()  # 保存画笔状态，避免污染后续绘制
+            for shape in self.shapes:
+                if not self.is_visible(shape) or shape.shape_type != 'rotation':
+                    continue
+                if len(shape.points) != 4:
+                    continue
+                
+                # 如果启用了"锁定后不显示宽高和角度"，且该shape被锁定，则跳过
+                if locked_hide_info and shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False):
+                    continue
+                
+                # 旋转矩形的点顺序: p0=左上, p1=右上, p2=右下, p3=左下
+                # 上边: p0-p1, 下边: p3-p2, 左边: p0-p3, 右边: p1-p2
+                p0, p1, p2, p3 = shape.points[0], shape.points[1], shape.points[2], shape.points[3]
+                
+                edge_labels = [
+                    ("上", p0, p1, QtGui.QColor(255, 100, 100)),   # 红色 - 上
+                    ("下", p3, p2, QtGui.QColor(100, 255, 100)),   # 绿色 - 下
+                    ("左", p0, p3, QtGui.QColor(100, 100, 255)),   # 蓝色 - 左
+                    ("右", p1, p2, QtGui.QColor(255, 200, 100)),   # 橙色 - 右
+                ]
+                
+                for label, pt1, pt2, color in edge_labels:
+                    # 边的中点
+                    mid_x = (pt1.x() + pt2.x()) / 2
+                    mid_y = (pt1.y() + pt2.y()) / 2
+                    
+                    # 边的方向向量
+                    edge_dx = pt2.x() - pt1.x()
+                    edge_dy = pt2.y() - pt1.y()
+                    edge_len = math.sqrt(edge_dx * edge_dx + edge_dy * edge_dy)
+                    if edge_len < 1:
+                        continue
+                    
+                    # 法向量（指向外侧）
+                    nx = -edge_dy / edge_len
+                    ny = edge_dx / edge_len
+                    
+                    # 根据边的类型调整法向量方向（指向外侧）
+                    if label == "上":
+                        if ny > 0:
+                            nx, ny = -nx, -ny
+                    elif label == "下":
+                        if ny < 0:
+                            nx, ny = -nx, -ny
+                    elif label == "左":
+                        if nx > 0:
+                            nx, ny = -nx, -ny
+                    elif label == "右":
+                        if nx < 0:
+                            nx, ny = -nx, -ny
+                    
+                    # 圆球位置：边中点 + 法向量方向偏移
+                    offset = max(15.0, 18.0 / Shape.scale)
+                    circle_x = mid_x + nx * offset
+                    circle_y = mid_y + ny * offset
+                    
+                    # 绘制圆球
+                    circle_radius = max(8.0, 10.0 / Shape.scale)
+                    p.setBrush(QtGui.QBrush(color))
+                    p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), max(1.5, 2.0 / Shape.scale)))
+                    p.drawEllipse(
+                        QtCore.QPointF(circle_x, circle_y),
+                        circle_radius, circle_radius
+                    )
+                    
+                    # 绘制文字
+                    font = QtGui.QFont("Arial", int(max(7.0, 9.0 / Shape.scale)))
+                    font.setBold(True)
+                    p.setFont(font)
+                    p.setPen(QtGui.QColor(255, 255, 255))
+                    
+                    fm = QtGui.QFontMetrics(font)
+                    text_width = fm.horizontalAdvance(label)
+                    text_height = fm.height()
+                    p.drawText(
+                        int(circle_x - text_width / 2),
+                        int(circle_y + text_height / 4),
+                        label
+                    )
+            p.restore()  # 恢复画笔状态
+            p.setBrush(QtCore.Qt.NoBrush)  # 确保清除填充
 
         # Draw Width/Height
         if self.show_wh:
@@ -5439,16 +5529,48 @@ class Canvas(
         return point / self.scale - self.offset_to_center()
 
     def offset_to_center(self):
-        """Calculate offset to the center"""
+        """Calculate offset to position the image in the canvas"""
         if self.pixmap is None:
             return QtCore.QPointF()
+
         s = self.scale
+
+        if self.pan_ps_style:
+            # PS风格：图片任意角落都可以拖到视口中央
+            scroll_area = self._get_scroll_area()
+            if scroll_area:
+                viewport_w = scroll_area.viewport().width()
+                viewport_h = scroll_area.viewport().height()
+                # Offset by half viewport size so image corners can reach viewport center
+                x = (viewport_w / 2) / s
+                y = (viewport_h / 2) / s
+                return QtCore.QPointF(x, y)
+
+        # 原始风格：当画布比图片大时居中，否则偏移为0
         area = super().size()
         w, h = self.pixmap.width() * s, self.pixmap.height() * s
         area_width, area_height = area.width(), area.height()
         x = (area_width - w) / (2 * s) if area_width > w else 0
         y = (area_height - h) / (2 * s) if area_height > h else 0
         return QtCore.QPointF(x, y)
+
+    def _get_scroll_area(self):
+        """Get the parent scroll area (cached for performance)"""
+        if self._scroll_area_cache is not None:
+            return self._scroll_area_cache
+        p = self.parentWidget()
+        while p:
+            if isinstance(p, QtWidgets.QScrollArea):
+                self._scroll_area_cache = p
+                return p
+            p = p.parentWidget()
+        return None
+
+    def set_pan_ps_style(self, enabled):
+        """Set PS-style canvas panning mode"""
+        self.pan_ps_style = enabled
+        self.adjustSize()
+        self.update()
 
     def out_off_pixmap(self, p):
         """Check if a position is out of pixmap"""
@@ -5468,6 +5590,11 @@ class Canvas(
         # TODO(vietanhdev): Temporrally fix. Need to refactor
         if self.current.label is None:
             self.current.label = ""
+        
+        # Clamp rectangle points to image boundaries
+        if self.current.shape_type == "rectangle" and self.pixmap and not self.pixmap.isNull():
+            self._clamp_shape_to_image_bounds(self.current)
+        
         self.current.close()
         self.shapes.append(self.current)
         self.store_shapes()
@@ -5477,6 +5604,24 @@ class Canvas(
         self.update()
         if self.is_auto_labeling:
             self.update_auto_labeling_marks()
+
+    def _clamp_shape_to_image_bounds(self, shape):
+        """Clamp shape points to image boundaries.
+        
+        For rectangle shapes, this ensures all points stay within the image bounds.
+        If a point is outside the image, it will be moved to the nearest edge.
+        """
+        if not self.pixmap or self.pixmap.isNull():
+            return
+        
+        img_width = self.pixmap.width()
+        img_height = self.pixmap.height()
+        
+        # Clamp each point to image bounds
+        for i, point in enumerate(shape.points):
+            new_x = max(0, min(img_width, point.x()))
+            new_y = max(0, min(img_height, point.y()))
+            shape.points[i] = QtCore.QPointF(new_x, new_y)
 
     def update_auto_labeling_marks(self):
         """Update the auto labeling marks"""
@@ -5611,8 +5756,23 @@ class Canvas(
 
     # QT Overload
     def minimumSizeHint(self):
-        """Get minimum size hint"""
+        """Get minimum size hint - canvas size depends on pan style"""
         if self.pixmap:
+            if self.pan_ps_style:
+                # PS风格：Canvas size = image size + viewport size
+                # This allows any corner of the image to be centered in the viewport
+                scaled_w = self.scale * self.pixmap.width()
+                scaled_h = self.scale * self.pixmap.height()
+
+                scroll_area = self._get_scroll_area()
+                if scroll_area:
+                    viewport_w = scroll_area.viewport().width()
+                    viewport_h = scroll_area.viewport().height()
+                    canvas_w = scaled_w + viewport_w
+                    canvas_h = scaled_h + viewport_h
+                    return QtCore.QSize(int(canvas_w), int(canvas_h))
+
+            # 原始风格：直接返回缩放后的图片大小
             return self.scale * self.pixmap.size()
         return super().minimumSizeHint()
 
@@ -5689,7 +5849,18 @@ class Canvas(
 
         # Default canvas scroll/zoom behavior
         if is_ctrl_pressed:
-            self.zoom_request.emit(delta.y(), ev.pos())
+            # In PS pan mode, pass the mouse position relative to viewport
+            # ev.pos() is relative to the widget, but we need viewport-relative position
+            if self.pan_ps_style:
+                scroll_area = self._get_scroll_area()
+                if scroll_area:
+                    # ev.pos() is already relative to viewport in QScrollArea
+                    # Just pass it directly
+                    self.zoom_request.emit(delta.y(), ev.pos())
+                else:
+                    self.zoom_request.emit(delta.y(), ev.pos())
+            else:
+                self.zoom_request.emit(delta.y(), ev.pos())
         else:
             self.scroll_request.emit(delta.x(), QtCore.Qt.Horizontal, 0)
             self.scroll_request.emit(delta.y(), QtCore.Qt.Vertical, 0)

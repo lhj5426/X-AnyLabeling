@@ -2,6 +2,36 @@
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 from datetime import datetime
+import os.path as osp
+import yaml
+
+
+def _load_alignment_settings():
+    """从用户配置文件加载对齐工具设置"""
+    config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
+    try:
+        if osp.exists(config_file):
+            with open(config_file, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+                return config.get("alignment_tool_settings", {})
+    except Exception:
+        pass
+    return {}
+
+
+def _save_alignment_settings(settings):
+    """保存对齐工具设置到用户配置文件"""
+    config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
+    try:
+        existing = {}
+        if osp.exists(config_file):
+            with open(config_file, "r", encoding="utf-8") as f:
+                existing = yaml.safe_load(f) or {}
+        existing["alignment_tool_settings"] = settings
+        with open(config_file, "w", encoding="utf-8") as f:
+            yaml.safe_dump(existing, f, allow_unicode=True)
+    except Exception:
+        pass
 
 
 class AlignmentButton(QtWidgets.QPushButton):
@@ -35,6 +65,8 @@ class AlignmentDialog(QtWidgets.QDialog):
     unify_height = QtCore.pyqtSignal(bool)
     unify_width = QtCore.pyqtSignal(bool)
     unify_angle = QtCore.pyqtSignal(bool)
+    fix_direction = QtCore.pyqtSignal(str)  # 修复方向信号，参数: "current", "selected", "range", "all"
+    fix_direction_range = QtCore.pyqtSignal(int, int)  # 修复方向范围信号: (起始索引, 结束索引)
     push_out = QtCore.pyqtSignal(bool)  # 矩形弹出/分离信号（依赖参照物）
     push_out_all = QtCore.pyqtSignal()  # 整页矩形弹出分离信号（独立功能）
     push_out_selected = QtCore.pyqtSignal()  # 选中矩形弹出分离信号（独立功能）
@@ -65,6 +97,7 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.resize(400, 450)
         
         self.init_ui()
+        self._load_settings()
         
 
 
@@ -223,26 +256,32 @@ class AlignmentDialog(QtWidgets.QDialog):
         unify_buttons_layout.addWidget(self.btn_unify_width)
         unify_layout.addLayout(unify_buttons_layout)
 
-        # 统一角度专用区域
+        # 统一角度专用区域 - 按钮在前，标签输入框在后
         angle_layout = QtWidgets.QHBoxLayout()
+        self.btn_unify_angle = AlignmentButton(self.tr("统一角度"))
+        self.btn_unify_angle.setToolTip(tooltip_text)
+        self.btn_unify_angle.setFixedHeight(self.btn_unify_height.sizeHint().height())  # 和统一高度按钮一样高
+        angle_layout.addWidget(self.btn_unify_angle)
+        
+        # 修复方向按钮（独立功能，只处理选中的旋转矩形）
+        self.btn_fix_direction = QtWidgets.QPushButton(self.tr("修复方向"))
+        self.btn_fix_direction.setToolTip(self.tr("用当前角度重建选中的旋转矩形，修复方向"))
+        self.btn_fix_direction.setFixedHeight(self.btn_unify_height.sizeHint().height())
+        angle_layout.addWidget(self.btn_fix_direction)
+        
         angle_layout.addWidget(QtWidgets.QLabel(self.tr("旋转标签:")))
         self.angle_label_input = QtWidgets.QLineEdit("shuqing, hengxie")
         self.angle_label_input.setPlaceholderText(self.tr("统一角度时只处理这些标签"))
         self.angle_label_input.setToolTip(self.tr("统一角度时只处理这些标签的旋转矩形"))
         angle_layout.addWidget(self.angle_label_input)
-
-        self.btn_unify_angle = AlignmentButton(self.tr("统一角度"))
-        self.btn_unify_angle.setToolTip(tooltip_text)
-        angle_layout.addWidget(self.btn_unify_angle)
-
         unify_layout.addLayout(angle_layout)
-        
+
         # 分隔线
         separator = QtWidgets.QFrame()
         separator.setFrameShape(QtWidgets.QFrame.HLine)
         separator.setFrameShadow(QtWidgets.QFrame.Sunken)
         unify_layout.addWidget(separator)
-        
+
         # 指定尺寸区域 - 标签选择列表（带复选框）
         label_select_layout = QtWidgets.QHBoxLayout()
         label_select_layout.addWidget(QtWidgets.QLabel(self.tr("选择标签:")))
@@ -256,6 +295,13 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_select_none_labels.clicked.connect(self._select_none_size_labels)
         label_select_layout.addWidget(self.btn_select_all_labels)
         label_select_layout.addWidget(self.btn_select_none_labels)
+        
+        # 应用于修复方向复选框
+        self.fix_direction_mode_checkbox = QtWidgets.QCheckBox(self.tr("应用于修复方向"))
+        self.fix_direction_mode_checkbox.setToolTip(self.tr("勾选后，下方按钮将执行修复方向功能而非指定尺寸"))
+        self.fix_direction_mode_checkbox.toggled.connect(self._on_fix_direction_mode_changed)
+        label_select_layout.addWidget(self.fix_direction_mode_checkbox)
+        
         label_select_layout.addStretch()
         unify_layout.addLayout(label_select_layout)
         
@@ -488,6 +534,9 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_unify_angle.left_clicked.connect(lambda: self.unify_angle.emit(True))
         self.btn_unify_angle.right_clicked.connect(lambda: self.unify_angle.emit(False))
 
+        # Connect fix direction button (只处理选中的旋转矩形)
+        self.btn_fix_direction.clicked.connect(lambda: self.fix_direction.emit("selected"))
+
         # Connect push out buttons (独立功能)
         self.btn_push_out_selected.clicked.connect(self.push_out_selected.emit)
         self.btn_push_out_all.clicked.connect(self.push_out_all.emit)
@@ -522,7 +571,13 @@ class AlignmentDialog(QtWidgets.QDialog):
             self.size_label_list.item(i).setCheckState(QtCore.Qt.Unchecked)
 
     def _emit_apply_size(self, scope):
-        """发送指定尺寸信号"""
+        """发送指定尺寸信号或修复方向信号（根据模式）"""
+        # 如果是修复方向模式
+        if self.fix_direction_mode_checkbox.isChecked():
+            self.fix_direction.emit(scope)
+            return
+        
+        # 原来的指定尺寸逻辑
         labels = self._get_selected_labels()
         if not labels:
             self.log(self.tr("请选择至少一个标签"))
@@ -535,7 +590,19 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.apply_specified_size.emit(labels, width, height, scope)
 
     def _emit_apply_size_range(self):
-        """发送指定尺寸范围信号"""
+        """发送指定尺寸范围信号或修复方向范围信号（根据模式）"""
+        start = self.size_start_spinbox.value() - 1  # 转为0索引
+        end = self.size_end_spinbox.value() - 1
+        if start > end:
+            self.log(self.tr("起始位置不能大于结束位置"))
+            return
+        
+        # 如果是修复方向模式
+        if self.fix_direction_mode_checkbox.isChecked():
+            self.fix_direction_range.emit(start, end)
+            return
+        
+        # 原来的指定尺寸逻辑
         labels = self._get_selected_labels()
         if not labels:
             self.log(self.tr("请选择至少一个标签"))
@@ -545,12 +612,64 @@ class AlignmentDialog(QtWidgets.QDialog):
         if width == 0 and height == 0:
             self.log(self.tr("宽度和高度不能都为0"))
             return
+        self.apply_specified_size_range.emit(labels, width, height, start, end)
+
+    def _emit_fix_direction_range(self):
+        """发送修复方向范围信号"""
         start = self.size_start_spinbox.value() - 1  # 转为0索引
         end = self.size_end_spinbox.value() - 1
         if start > end:
             self.log(self.tr("起始位置不能大于结束位置"))
             return
-        self.apply_specified_size_range.emit(labels, width, height, start, end)
+        self.fix_direction_range.emit(start, end)
+
+    def _on_fix_direction_mode_changed(self, checked):
+        """当修复方向模式复选框状态改变时更新UI"""
+        # 禁用/启用宽高输入框（修复方向不需要）
+        self.size_width_input.setEnabled(not checked)
+        self.size_height_input.setEnabled(not checked)
+        
+        # 更新按钮样式以区分模式
+        if checked:
+            # 修复方向模式 - 使用紫色系
+            fix_btn_style = """
+                QPushButton {
+                    background-color: #8e44ad;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 5px 0px;
+                }
+                QPushButton:hover {
+                    background-color: #9b59b6;
+                }
+            """
+            fix_range_style = fix_btn_style.replace("#8e44ad", "#3498db").replace("#9b59b6", "#5dade2")
+            fix_all_style = fix_btn_style.replace("#8e44ad", "#e67e22").replace("#9b59b6", "#f39c12")
+            self.btn_apply_size_current.setStyleSheet(fix_btn_style)
+            self.btn_apply_size_selected.setStyleSheet(fix_btn_style)
+            self.btn_apply_size_range.setStyleSheet(fix_range_style)
+            self.btn_apply_size_all.setStyleSheet(fix_all_style)
+        else:
+            # 指定尺寸模式 - 恢复原来的绿色系
+            apply_btn_style = """
+                QPushButton {
+                    background-color: #5cb85c;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 5px 0px;
+                }
+                QPushButton:hover {
+                    background-color: #4cae4c;
+                }
+            """
+            range_btn_style = apply_btn_style.replace("#5cb85c", "#5bc0de").replace("#4cae4c", "#46b8da")
+            all_btn_style = apply_btn_style.replace("#5cb85c", "#f0ad4e").replace("#4cae4c", "#ec971f")
+            self.btn_apply_size_current.setStyleSheet(apply_btn_style)
+            self.btn_apply_size_selected.setStyleSheet(apply_btn_style)
+            self.btn_apply_size_range.setStyleSheet(range_btn_style)
+            self.btn_apply_size_all.setStyleSheet(all_btn_style)
 
     def _on_exit_alignment_mode(self):
         """Handle exit alignment mode button click."""
@@ -636,7 +755,25 @@ class AlignmentDialog(QtWidgets.QDialog):
                 item.setBackground(color)
             self.size_label_list.addItem(item)
 
+    def _load_settings(self):
+        """从配置文件加载设置"""
+        settings = _load_alignment_settings()
+        if settings:
+            if "label_filter" in settings:
+                self.label_filter_input.setText(settings["label_filter"])
+            if "angle_labels" in settings:
+                self.angle_label_input.setText(settings["angle_labels"])
+
+    def _save_settings(self):
+        """保存设置到配置文件"""
+        settings = {
+            "label_filter": self.label_filter_input.text(),
+            "angle_labels": self.angle_label_input.text(),
+        }
+        _save_alignment_settings(settings)
+
     def closeEvent(self, event):
         """Emit a closing signal when the dialog is closed."""
+        self._save_settings()
         self.closing.emit()
         super(AlignmentDialog, self).closeEvent(event)
