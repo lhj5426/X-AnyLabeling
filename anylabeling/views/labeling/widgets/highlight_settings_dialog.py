@@ -435,6 +435,12 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["no_highlight_labels"] = self.no_highlight_input.text()
             self._config["highlight_mixed_mode"] = self.mixed_mode_checkbox.isChecked()
             save_config(self._config)
+            
+            # 直接更新Shape类的锁定标签集合，确保实时生效
+            from ..shape import Shape
+            locked_labels_str = self._config.get("locked_labels", "")
+            Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
+            
             if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
                 self.parent().apply_handle_display_settings()
 

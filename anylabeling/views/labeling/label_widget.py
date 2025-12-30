@@ -1409,11 +1409,19 @@ class LabelingWidget(QtWidgets.QWidget):
             enabled=self._config["system_clipboard"],
         )
         cancel_paste_preview = action(
-            self.tr("Cancel Paste Preview"),
+            self.tr("取消粘贴预览"),
             self.cancel_paste_preview,
             "Ctrl+D",
+            "cancel",
+            self.tr("取消粘贴预览模式"),
+            enabled=True,
+        )
+        refresh_canvas = action(
+            self.tr("刷新画布"),
+            self.refresh_canvas,
             None,
-            self.tr("Cancel paste preview mode"),
+            "resetall",
+            self.tr("重新加载当前页面，重置解锁状态"),
             enabled=True,
         )
         undo_last_point = action(
@@ -1810,7 +1818,7 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         zoom_org = action(
             self.tr("&Original size"),
-            functools.partial(self.set_zoom, 100),
+            lambda _: self.set_zoom(100, scroll_to_top_left=True),
             shortcuts["zoom_to_original"],
             "zoom",
             self.tr("Zoom to original size"),
@@ -2474,6 +2482,7 @@ class LabelingWidget(QtWidgets.QWidget):
             copy=copy,
             paste=paste,
             cancel_paste_preview=cancel_paste_preview,
+            refresh_canvas=refresh_canvas,
             undo_last_point=undo_last_point,
             undo=undo,
             remove_point=remove_point,
@@ -2652,6 +2661,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 undo,
                 undo_last_point,
                 remove_point,
+                None,
+                refresh_canvas,
                 horizontal_viewer_tool,
                 vertical_viewer_tool,
                 thumbnail_viewer_tool,
@@ -9128,13 +9139,26 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # 只在创建新图形时检测置顶
         if is_new_shape:
-            pin_labels_str = self._config.get("pin_labels", "")
+            # 直接从配置获取最新值，确保实时生效
+            current_config = get_config()
+            pin_labels_str = current_config.get("pin_labels", "")
             pin_labels = {label.strip() for label in pin_labels_str.split(',') if label.strip()}
             if text in pin_labels:
-                # 置顶：插入到第一个位置
-                self.label_list.model().insertRow(0, label_list_item)
+                # 置顶：先添加到末尾，再移动到第一个位置
+                self.label_list.addItem(label_list_item)
+                # 获取刚添加的行索引
+                last_row = self.label_list.model().rowCount() - 1
+                if last_row > 0:
+                    # 取出刚添加的item
+                    item = self.label_list.model().takeRow(last_row)
+                    # 插入到第一行
+                    self.label_list.model().insertRow(0, item)
+                # 滚动到顶部显示新添加的项
+                self.label_list.scrollToTop()
             else:
                 self.label_list.addItem(label_list_item)
+                # 滚动到底部显示新添加的项
+                self.label_list.scrollToBottom()
         else:
             self.label_list.addItem(label_list_item)
         
@@ -9752,6 +9776,26 @@ class LabelingWidget(QtWidgets.QWidget):
         """取消粘贴预览模式"""
         if self.canvas.paste_preview_mode:
             self.canvas.disable_paste_preview()
+
+    def refresh_canvas(self):
+        """刷新画布，重置所有图形的会话解锁状态"""
+        # 重置所有图形的会话解锁状态
+        for shape in self.canvas.shapes:
+            shape.is_session_unlocked = False
+        
+        # 更新画布
+        self.canvas.update()
+        
+        # 更新右侧对象列表显示
+        self.label_list.viewport().update()
+        
+        # 显示Popup提示
+        popup = Popup(
+            "✅ " + self.tr("画布已刷新，锁定状态已重置"),
+            self,
+            msec=2000
+        )
+        popup.show_popup(self, position="center")
 
     def toggle_system_clipboard(self, system_clipboard):
         self._config["system_clipboard"] = system_clipboard
@@ -11343,15 +11387,25 @@ class LabelingWidget(QtWidgets.QWidget):
         except Exception as e:
             print(f"Failed to save navigator visibility: {e}")
 
-    def set_zoom(self, value):
+    def set_zoom(self, value, scroll_to_top_left=True):
         self.actions.fit_width.setChecked(False)
         self.actions.fit_window.setChecked(False)
         self.zoom_mode = self.MANUAL_ZOOM
+        # 设置标志，防止paint_canvas中的center_canvas_scrollbars覆盖滚动位置
+        # 必须在zoom_widget.setValue之前设置，因为setValue会触发paint_canvas
+        if scroll_to_top_left:
+            self._manual_zoom_pending = True
         self.zoom_widget.setValue(value)
         self.zoom_values[self.filename] = (self.zoom_mode, value)
         # Update navigator zoom controls
         if hasattr(self, 'navigator_dialog'):
             self.navigator_dialog.set_zoom_value(value)
+        # 只有明确要求时才滚动到左上角（用户手动点击100%按钮时）
+        if scroll_to_top_left:
+            if self.canvas.pan_ps_style:
+                QtCore.QTimer.singleShot(50, self._scroll_to_ps_top_left)
+            else:
+                QtCore.QTimer.singleShot(50, self._scroll_to_min)
 
     def add_zoom(self, increment=1.1):
         zoom_value = self.zoom_widget.value() * increment
@@ -11359,7 +11413,7 @@ class LabelingWidget(QtWidgets.QWidget):
             zoom_value = math.ceil(zoom_value)
         else:
             zoom_value = math.floor(zoom_value)
-        self.set_zoom(zoom_value)
+        self.set_zoom(zoom_value, scroll_to_top_left=False)
 
     def zoom_at_mouse_shortcut_triggered(self):
         """
@@ -11404,7 +11458,7 @@ class LabelingWidget(QtWidgets.QWidget):
             viewport_h = scroll_area.viewport().height() if scroll_area else 0
 
             # Apply zoom
-            self.set_zoom(new_zoom)
+            self.set_zoom(new_zoom, scroll_to_top_left=False)
             
             new_scale = self.canvas.scale
             
@@ -11561,15 +11615,81 @@ class LabelingWidget(QtWidgets.QWidget):
         if value:
             self.actions.fit_width.setChecked(False)
         self.zoom_mode = self.FIT_WINDOW if value else self.MANUAL_ZOOM
-        self.adjust_scale()
-        self._center_scroll_bars()
+        
+        if value:
+            # 进入适应窗口模式：居中显示
+            self.adjust_scale()
+            if self.canvas.pan_ps_style:
+                self._center_scroll_bars()
+            else:
+                self._scroll_to_min()
+        else:
+            # 退出适应窗口模式（切换到100%）：显示左上角
+            # 设置标志防止paint_canvas中的center_canvas_scrollbars覆盖
+            self._manual_zoom_pending = True
+            self.adjust_scale()
+            if self.canvas.pan_ps_style:
+                QtCore.QTimer.singleShot(10, self._scroll_to_ps_top_left)
+            else:
+                QtCore.QTimer.singleShot(10, self._scroll_to_min)
 
     def set_fit_width(self, value=True):
         if value:
             self.actions.fit_window.setChecked(False)
         self.zoom_mode = self.FIT_WIDTH if value else self.MANUAL_ZOOM
-        self.adjust_scale()
-        self._center_scroll_bars()
+        
+        if value:
+            # 进入适应宽度模式：显示左上角
+            # 设置标志防止paint_canvas中的center_canvas_scrollbars覆盖
+            self._manual_zoom_pending = True
+            self.adjust_scale()
+            if self.canvas.pan_ps_style:
+                QtCore.QTimer.singleShot(10, self._scroll_to_ps_top_left)
+            else:
+                QtCore.QTimer.singleShot(10, self._scroll_to_min)
+        else:
+            # 退出适应宽度模式（切换到100%）：显示左上角
+            self._manual_zoom_pending = True
+            self.adjust_scale()
+            if self.canvas.pan_ps_style:
+                QtCore.QTimer.singleShot(10, self._scroll_to_ps_top_left)
+            else:
+                QtCore.QTimer.singleShot(10, self._scroll_to_min)
+
+    def _scroll_to_min(self):
+        """Scroll to minimum position (top-left) for non-PS mode."""
+        # 清除标志
+        self._manual_zoom_pending = False
+        
+        h_bar = self.scroll_bars[Qt.Horizontal]
+        v_bar = self.scroll_bars[Qt.Vertical]
+        h_bar.setValue(h_bar.minimum())
+        v_bar.setValue(v_bar.minimum())
+
+    def _scroll_to_ps_top_left(self):
+        """Scroll to show image top-left corner at viewport top-left in PS mode.
+        
+        In PS mode, image is drawn at (viewport_w/2, viewport_h/2) in canvas coordinates.
+        To show image top-left at viewport top-left, scrollbar should be at viewport/2.
+        """
+        # 清除标志
+        self._manual_zoom_pending = False
+        
+        scroll_area = self._central_widget
+        if not scroll_area:
+            return
+        
+        viewport_w = scroll_area.viewport().width()
+        viewport_h = scroll_area.viewport().height()
+        
+        h_bar = self.scroll_bars[Qt.Horizontal]
+        v_bar = self.scroll_bars[Qt.Vertical]
+        
+        target_h = int(viewport_w / 2)
+        target_v = int(viewport_h / 2)
+        
+        h_bar.setValue(min(target_h, h_bar.maximum()))
+        v_bar.setValue(min(target_v, v_bar.maximum()))
 
     def _center_scroll_bars(self):
         """Center the scroll bars to show the image in the middle of the viewport."""
@@ -11994,7 +12114,7 @@ class LabelingWidget(QtWidgets.QWidget):
         is_initial_load = not self.zoom_values
         if self.filename in self.zoom_values:
             self.zoom_mode = self.zoom_values[self.filename][0]
-            self.set_zoom(self.zoom_values[self.filename][1])
+            self.set_zoom(self.zoom_values[self.filename][1], scroll_to_top_left=False)
         elif is_initial_load or not self._config["keep_prev_scale"]:
             self.adjust_scale(initial=True)
         # set scroll values (skip if PS-style panning is enabled, as paint_canvas will center it)
@@ -12126,14 +12246,21 @@ class LabelingWidget(QtWidgets.QWidget):
         Args:
             center_scrollbars: If True and in PS pan mode, center the scrollbars.
                               Set to False when zooming to preserve scroll position.
+                              Note: When called from zoom_widget.valueChanged signal,
+                              this receives the zoom value (int), so we convert to bool.
         """
+        # 处理从valueChanged信号传来的int值
+        if isinstance(center_scrollbars, int) and center_scrollbars > 1:
+            center_scrollbars = True
+        
         assert not self.image.isNull(), "cannot paint null image"
         self.canvas.scale = 0.01 * self.zoom_widget.value()
         self.canvas.adjustSize()
         self.canvas.update()
 
-        # PS风格时，让图片居中显示（仅在需要时，且不是正在缩放）
-        if self.canvas.pan_ps_style and center_scrollbars and not getattr(self, '_zooming', False):
+        # PS风格时，让图片居中显示（仅在需要时，且不是正在缩放，且不是手动设置缩放）
+        manual_pending = getattr(self, '_manual_zoom_pending', False)
+        if self.canvas.pan_ps_style and center_scrollbars and not getattr(self, '_zooming', False) and not manual_pending:
             self.center_canvas_scrollbars()
 
         # Update navigator viewport after canvas changes
@@ -12148,6 +12275,8 @@ class LabelingWidget(QtWidgets.QWidget):
         """Actually center the scrollbars"""
         # Skip if currently zooming (to preserve scroll position set by zoom logic)
         if getattr(self, '_zooming', False):
+            return
+        if getattr(self, '_manual_zoom_pending', False):
             return
         h_bar = self.scroll_bars[Qt.Horizontal]
         v_bar = self.scroll_bars[Qt.Vertical]

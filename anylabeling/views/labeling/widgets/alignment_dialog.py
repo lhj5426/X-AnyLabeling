@@ -96,6 +96,9 @@ class AlignmentDialog(QtWidgets.QDialog):
         )
         self.resize(400, 450)
         
+        self._saved_position = None  # 保存的窗口位置
+        self._position_restored = False  # 是否已恢复位置
+        
         self.init_ui()
         self._load_settings()
         
@@ -763,17 +766,48 @@ class AlignmentDialog(QtWidgets.QDialog):
                 self.label_filter_input.setText(settings["label_filter"])
             if "angle_labels" in settings:
                 self.angle_label_input.setText(settings["angle_labels"])
+            # 保存窗口位置，在showEvent中恢复
+            if "window_x" in settings and "window_y" in settings:
+                self._saved_position = (settings["window_x"], settings["window_y"])
 
     def _save_settings(self):
         """保存设置到配置文件"""
+        pos = self.pos()
         settings = {
             "label_filter": self.label_filter_input.text(),
             "angle_labels": self.angle_label_input.text(),
+            "window_x": pos.x(),
+            "window_y": pos.y(),
         }
         _save_alignment_settings(settings)
+
+    def showEvent(self, event):
+        """窗口显示时恢复位置"""
+        super(AlignmentDialog, self).showEvent(event)
+        # 只在第一次显示或有保存位置时恢复
+        if self._saved_position and not self._position_restored:
+            x, y = self._saved_position
+            # 确保窗口在屏幕可见范围内
+            screen = QtWidgets.QApplication.primaryScreen()
+            if screen:
+                screen_rect = screen.availableGeometry()
+                if 0 <= x <= screen_rect.width() - 100 and 0 <= y <= screen_rect.height() - 100:
+                    self.move(x, y)
+            self._position_restored = True
+
+    def hideEvent(self, event):
+        """窗口隐藏时保存位置"""
+        self._save_settings()
+        # 更新保存的位置，下次显示时使用
+        pos = self.pos()
+        self._saved_position = (pos.x(), pos.y())
+        self._position_restored = False
+        super(AlignmentDialog, self).hideEvent(event)
 
     def closeEvent(self, event):
         """Emit a closing signal when the dialog is closed."""
         self._save_settings()
+        # 重置标记，下次打开时可以再次恢复位置
+        self._position_restored = False
         self.closing.emit()
         super(AlignmentDialog, self).closeEvent(event)

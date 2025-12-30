@@ -915,6 +915,7 @@ class Shape:
             path = QtGui.QPainterPath(self.points[0])
             for p in self.points[1:]:
                 path.lineTo(p)
+            path.closeSubpath()  # 闭合路径，确保重叠检测正确
         elif self.shape_type == "circle":
             path = QtGui.QPainterPath()
             if len(self.points) == 2:
@@ -924,6 +925,7 @@ class Shape:
             path = QtGui.QPainterPath(self.points[0])
             for p in self.points[1:]:
                 path.lineTo(p)
+            path.closeSubpath()  # 闭合路径，确保重叠检测正确
         return path
 
     def bounding_rect(self):
