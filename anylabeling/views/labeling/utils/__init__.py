@@ -77,5 +77,7 @@ from .upload import (
     upload_ballontranslator_annotation,
     upload_imagetrans_annotation,
     upload_labelplus_annotation,
+    upload_manga_translator_folder_annotation,
+    export_manga_translator_folder_annotation,
 )
 from .video import open_video_file

@@ -2,7 +2,7 @@ import json
 import jsonlines
 import os
 import os.path as osp
-from anylabeling.services.importers import convert_itp_to_anylabel
+from anylabeling.services.importers import convert_itp_to_anylabel, convert_manga_translator_folder_to_anylabel, convert_anylabel_folder_to_manga_translator
 import time
 import yaml
 
@@ -2099,3 +2099,238 @@ def upload_labelplus_annotation(self):
         )
         popup.show_popup(self, position="center")
 
+
+def upload_manga_translator_folder_annotation(self):
+    """批量导入 manga-translator-ui 的 JSON 标注文件夹"""
+    if not _check_filename_exist(self):
+        return
+
+    # 选择输入文件夹
+    input_folder = QtWidgets.QFileDialog.getExistingDirectory(
+        self,
+        self.tr("选择 manga-translator-ui JSON 文件夹"),
+        "",
+    )
+
+    if not input_folder:
+        return
+
+    # 输出直接到当前图片文件夹
+    output_folder = osp.dirname(self.filename)
+
+    # 创建文本导入模式选择对话框
+    dialog = QtWidgets.QDialog(self)
+    dialog.setWindowTitle(self.tr("Manga Translator 文本导入选项"))
+    dialog.setMinimumWidth(400)
+    dialog.setStyleSheet(get_export_option_style())
+
+    layout = QVBoxLayout()
+    layout.setContentsMargins(24, 24, 24, 24)
+    layout.setSpacing(16)
+
+    # 说明文字
+    info_label = QtWidgets.QLabel(
+        self.tr("请选择要导入的文本内容：")
+    )
+    info_label.setWordWrap(True)
+    layout.addWidget(info_label)
+
+    # 单选按钮组
+    text_mode_group = QtWidgets.QButtonGroup(dialog)
+    
+    source_radio = QtWidgets.QRadioButton(
+        self.tr("仅原文 (text 字段)")
+    )
+    source_radio.setToolTip(self.tr("只导入原文内容"))
+    
+    target_radio = QtWidgets.QRadioButton(
+        self.tr("仅译文 (translation 字段)")
+    )
+    target_radio.setToolTip(self.tr("只导入译文内容"))
+    
+    both_radio = QtWidgets.QRadioButton(
+        self.tr("原文/译文 (推荐)")
+    )
+    both_radio.setToolTip(self.tr("导入格式：原文/译文"))
+    both_radio.setChecked(True)  # 默认选中
+    
+    text_mode_group.addButton(source_radio, 0)
+    text_mode_group.addButton(target_radio, 1)
+    text_mode_group.addButton(both_radio, 2)
+
+    layout.addWidget(source_radio)
+    layout.addWidget(target_radio)
+    layout.addWidget(both_radio)
+
+    layout.addStretch()
+
+    # 按钮
+    button_layout = QHBoxLayout()
+    
+    cancel_button = QtWidgets.QPushButton(self.tr("取消"))
+    cancel_button.clicked.connect(dialog.reject)
+    cancel_button.setStyleSheet(get_cancel_btn_style())
+
+    ok_button = QtWidgets.QPushButton(self.tr("确定"))
+    ok_button.clicked.connect(dialog.accept)
+    ok_button.setStyleSheet(get_ok_btn_style())
+
+    button_layout.addStretch()
+    button_layout.addWidget(cancel_button)
+    button_layout.addWidget(ok_button)
+    layout.addLayout(button_layout)
+
+    dialog.setLayout(layout)
+    
+    # 显示对话框
+    if dialog.exec_() != QtWidgets.QDialog.Accepted:
+        return
+
+    # 获取选择的模式
+    selected_id = text_mode_group.checkedId()
+    text_mode_map = {0: 'source', 1: 'target', 2: 'both'}
+    text_mode = text_mode_map.get(selected_id, 'both')
+
+    try:
+        success_count, fail_count, output_files = convert_manga_translator_folder_to_anylabel(
+            input_folder, 
+            output_folder=output_folder,
+            text_mode=text_mode
+        )
+        
+        if success_count > 0:
+            # 刷新文件列表和UI
+            self.import_image_folder(output_folder, load=True)
+
+            mode_names = {
+                'source': self.tr("原文"),
+                'target': self.tr("译文"),
+                'both': self.tr("原文/译文")
+            }
+            popup = Popup(
+                self.tr(f"成功导入 Manga Translator 标注！\n导入模式：{mode_names[text_mode]}\n成功：{success_count}，失败：{fail_count}"),
+                self,
+                icon=new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self, popup_height=80, position="center")
+        else:
+            popup = Popup(
+                self.tr(f"未找到有效的标注数据。\n失败：{fail_count}"),
+                self,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self, position="center")
+
+    except Exception as e:
+        message = f"导入标注时发生错误: {str(e)}"
+        logger.error(message)
+        popup = Popup(
+            message,
+            self,
+            icon=new_icon_path("error", "svg"),
+        )
+        popup.show_popup(self, position="center")
+
+
+def export_manga_translator_folder_annotation(self):
+    """批量导出当前文件夹的标注为 manga-translator-ui 的 JSON 格式"""
+    if not _check_filename_exist(self):
+        return
+
+    # 获取当前图片所在文件夹
+    current_folder = osp.dirname(self.filename)
+    
+    # 在图片文件夹的上一级目录创建 MTUIJSON 文件夹
+    parent_folder = osp.dirname(current_folder)
+    output_folder = osp.join(parent_folder, "MTUIJSON")
+    
+    # 检查输出文件夹是否已存在
+    if osp.exists(output_folder):
+        # 检查文件夹是否有内容
+        existing_files = [f for f in os.listdir(output_folder) if f.endswith('.json')]
+        if existing_files:
+            # 弹出对话框询问用户
+            msg_box = QtWidgets.QMessageBox(self)
+            msg_box.setWindowTitle(self.tr("文件夹已存在"))
+            msg_box.setText(self.tr(f"MTUIJSON 文件夹已存在，包含 {len(existing_files)} 个 JSON 文件。\n请选择操作："))
+            
+            overwrite_btn = msg_box.addButton(self.tr("覆盖"), QtWidgets.QMessageBox.YesRole)
+            rename_btn = msg_box.addButton(self.tr("新建文件夹"), QtWidgets.QMessageBox.NoRole)
+            cancel_btn = msg_box.addButton(self.tr("取消"), QtWidgets.QMessageBox.RejectRole)
+            
+            msg_box.exec_()
+            
+            clicked = msg_box.clickedButton()
+            if clicked == cancel_btn:
+                return
+            elif clicked == rename_btn:
+                # 生成新的文件夹名 MTUIJSON_1, MTUIJSON_2, ...
+                counter = 1
+                while osp.exists(osp.join(parent_folder, f"MTUIJSON_{counter}")):
+                    counter += 1
+                output_folder = osp.join(parent_folder, f"MTUIJSON_{counter}")
+            # 如果是覆盖，继续使用原文件夹
+    
+    # 确保输出文件夹存在
+    if not osp.exists(output_folder):
+        os.makedirs(output_folder)
+
+    # 1. 选择标签文件
+    filter = "Label Files (*.txt);;All Files (*)"
+    classes_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+        self,
+        self.tr("选择标签文件（可取消跳过）"),
+        "",
+        filter,
+    )
+    
+    excluded_labels = []
+    if classes_file:
+        # 2. 读取标签
+        with open(classes_file, 'r', encoding='utf-8') as f:
+            unique_labels = [line.strip() for line in f.readlines() if line.strip()]
+        
+        # 3. 显示排除对话框
+        if unique_labels:
+            from .export import LabelExclusionDialog
+            exclusion_dialog = LabelExclusionDialog(unique_labels, self)
+            if exclusion_dialog.exec_() == QtWidgets.QDialog.Accepted:
+                excluded_labels = exclusion_dialog.get_excluded_labels()
+            else:
+                return  # 用户取消
+
+    # 直接导出，使用 'both' 模式解析 description
+    text_mode = 'both'
+
+    try:
+        success_count, fail_count, output_files = convert_anylabel_folder_to_manga_translator(
+            current_folder,
+            output_folder=output_folder,
+            text_mode=text_mode,
+            excluded_labels=excluded_labels
+        )
+        
+        if success_count > 0:
+            popup = Popup(
+                self.tr(f"成功导出 Manga Translator 标注！\n输出目录：MTUIJSON\n成功：{success_count}，失败：{fail_count}"),
+                self,
+                icon=new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self, popup_height=80, position="center")
+        else:
+            popup = Popup(
+                self.tr(f"导出失败，未找到有效的标注数据。\n失败：{fail_count}"),
+                self,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self, position="center")
+
+    except Exception as e:
+        message = f"导出标注时发生错误: {str(e)}"
+        logger.error(message)
+        popup = Popup(
+            message,
+            self,
+            icon=new_icon_path("error", "svg"),
+        )
+        popup.show_popup(self, position="center")
