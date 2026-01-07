@@ -9841,6 +9841,11 @@ class LabelingWidget(QtWidgets.QWidget):
         # 刷新显示
         self.label_list.update()
         self.canvas.update()
+        
+        # 更新标签页管理器显示（如果打开的话）
+        if hasattr(self, 'object_manager_dialog') and self.object_manager_dialog:
+            self.object_manager_dialog.list_widget.viewport().update()
+        
         self.set_dirty()
 
     def paste_selected_shape(self):
@@ -9922,6 +9927,10 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # 更新右侧对象列表显示
         self.label_list.viewport().update()
+        
+        # 更新标签页管理器显示（如果打开的话）
+        if hasattr(self, 'object_manager_dialog') and self.object_manager_dialog:
+            self.object_manager_dialog.list_widget.viewport().update()
         
         # 显示Popup提示
         popup = Popup(

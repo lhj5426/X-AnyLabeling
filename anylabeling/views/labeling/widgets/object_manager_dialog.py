@@ -26,14 +26,17 @@ class TrafficLightDelegate(QtWidgets.QStyledItemDelegate):
         dot_y = option.rect.center().y()
         
         # Define fixed positions for each dot from right to left
-        # Position 1 (Rightmost): Selected
+        # Position 1 (Rightmost): Selected (红色)
         pos1_x = option.rect.right() - dot_radius - 5
         
-        # Position 2 (Middle): Locked/Unlocked
+        # Position 2: Locked/Unlocked (黄色/蓝色)
         pos2_x = pos1_x - (dot_diameter + spacing)
         
-        # Position 3 (Leftmost): Edited
+        # Position 3: Edited (绿色)
         pos3_x = pos2_x - (dot_diameter + spacing)
+        
+        # Position 4 (Leftmost): Difficult (紫色)
+        pos4_x = pos3_x - (dot_diameter + spacing)
         
         shape = index.data(Qt.UserRole)
         
@@ -48,14 +51,27 @@ class TrafficLightDelegate(QtWidgets.QStyledItemDelegate):
             painter.restore()
         
         # 2. Draw Locked/Unlocked dot (Position 2)
-        if shape:
-            locked_labels_str = self.config.get('locked_labels', '')
-            locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
+        if shape and self.parent_widget:
+            # 使用shape的is_label_locked()方法来判断是否锁定
+            is_locked = shape.is_label_locked()
             
-            if shape.label in locked_labels:
+            # 只有被锁定过的标签才显示锁定状态灯
+            if is_locked or (hasattr(shape, 'is_session_unlocked') and shape.is_session_unlocked):
                 painter.save()
                 painter.setRenderHint(QtGui.QPainter.Antialiasing)
-                color_rgb = self.config.get("traffic_light_colors", {}).get("unlocked", [0, 0, 255]) if shape.is_session_unlocked else self.config.get("traffic_light_colors", {}).get("locked", [255, 255, 0])
+                
+                if is_locked:
+                    # 当前锁定状态
+                    if hasattr(shape, 'is_session_unlocked') and shape.is_session_unlocked:
+                        # Session解锁：显示蓝色
+                        color_rgb = self.config.get("traffic_light_colors", {}).get("unlocked", [0, 0, 255])
+                    else:
+                        # 完全锁定：显示黄色
+                        color_rgb = self.config.get("traffic_light_colors", {}).get("locked", [255, 255, 0])
+                else:
+                    # 曾经锁定，现在解锁：显示蓝色
+                    color_rgb = self.config.get("traffic_light_colors", {}).get("unlocked", [0, 0, 255])
+                
                 color = QtGui.QColor(*color_rgb)
                 painter.setBrush(QtGui.QBrush(color))
                 painter.setPen(Qt.NoPen)
@@ -70,6 +86,16 @@ class TrafficLightDelegate(QtWidgets.QStyledItemDelegate):
             painter.setBrush(QtGui.QBrush(QtGui.QColor(*edited_color_rgb)))
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(QtCore.QPointF(pos3_x, dot_y), dot_radius, dot_radius)
+            painter.restore()
+        
+        # 4. Draw Difficult dot (Position 4 - Leftmost)
+        if shape and hasattr(shape, 'difficult') and shape.difficult:
+            painter.save()
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            difficult_color_rgb = self.config.get("traffic_light_colors", {}).get("difficult", [128, 0, 128])
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(*difficult_color_rgb)))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QtCore.QPointF(pos4_x, dot_y), dot_radius, dot_radius)
             painter.restore()
 
 
@@ -275,15 +301,23 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         h_button_layout_5.addWidget(self.btn_move_bottom)
         v_layout_middle.addLayout(h_button_layout_5)
 
-        # 第6排：应用到全部 和 展开/收起属性面板按钮
+        # 第6排：锁定标签 | 解锁标签
+        self.btn_lock_labels = QtWidgets.QPushButton(self.tr("锁定标签"))
+        self.btn_unlock_labels = QtWidgets.QPushButton(self.tr("解锁标签"))
         h_button_layout_6 = QtWidgets.QHBoxLayout()
+        h_button_layout_6.addWidget(self.btn_lock_labels)
+        h_button_layout_6.addWidget(self.btn_unlock_labels)
+        v_layout_middle.addLayout(h_button_layout_6)
+
+        # 第7排：应用到全部 和 展开/收起属性面板按钮
+        h_button_layout_7 = QtWidgets.QHBoxLayout()
         self.btn_toggle_properties = QtWidgets.QPushButton(self.tr("▶"))  # 默认隐藏，箭头向右
         self.btn_toggle_properties.setFixedWidth(24)
         self.btn_toggle_properties.clicked.connect(self._toggle_properties_panel)
-        h_button_layout_6.addWidget(self.btn_toggle_properties)
-        h_button_layout_6.addWidget(self.apply_all_checkbox)
-        h_button_layout_6.addStretch()
-        v_layout_middle.addLayout(h_button_layout_6)
+        h_button_layout_7.addWidget(self.btn_toggle_properties)
+        h_button_layout_7.addWidget(self.apply_all_checkbox)
+        h_button_layout_7.addStretch()
+        v_layout_middle.addLayout(h_button_layout_7)
         v_layout_middle.addStretch()
 
         # 最右侧：对象列表
@@ -315,6 +349,8 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_top.clicked.connect(self.move_to_top)
         self.btn_move_bottom.clicked.connect(self.move_to_bottom)
         self.btn_edit_label.clicked.connect(self.edit_requested.emit)
+        self.btn_lock_labels.clicked.connect(self.lock_selected_labels)
+        self.btn_unlock_labels.clicked.connect(self.unlock_selected_labels)
 
         # 实时更新连接
         self.x_spinbox.valueChanged.connect(self._on_position_changed)
@@ -567,6 +603,8 @@ class ObjectManagerDialog(QtWidgets.QDialog):
         self.btn_move_bottom.setEnabled(has_selection)
         self.btn_delete_selected.setEnabled(has_selection)
         self.btn_edit_label.setEnabled(has_selection)
+        self.btn_lock_labels.setEnabled(has_selection)
+        self.btn_unlock_labels.setEnabled(has_selection)
 
         if has_selection:
             selected_rows = [self.list_widget.row(item) for item in self.list_widget.selectedItems()]
@@ -1087,3 +1125,50 @@ class ObjectManagerDialog(QtWidgets.QDialog):
                 self.rotation_spinbox.setValue(angle_degrees)
 
         self._updating_from_shape = False
+
+    def lock_selected_labels(self):
+        """锁定选中的标签"""
+        selected_items = self.list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        # 锁定所有选中的shape
+        for item in selected_items:
+            shape = item.data(QtCore.Qt.UserRole)
+            if shape:
+                # 设置手动锁定标记
+                shape.is_manually_locked = True
+                # 清除会话解锁标记（如果有）
+                if hasattr(shape, 'is_session_unlocked'):
+                    shape.is_session_unlocked = False
+
+        # 更新画布和列表显示
+        if self.main_window and hasattr(self.main_window, 'canvas'):
+            self.main_window.canvas.update()
+            self.main_window.set_dirty()
+
+        # 刷新列表以显示锁定状态的信号灯
+        self.list_widget.viewport().update()
+
+    def unlock_selected_labels(self):
+        """解锁选中的标签"""
+        selected_items = self.list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        # 解锁所有选中的shape
+        for item in selected_items:
+            shape = item.data(QtCore.Qt.UserRole)
+            if shape:
+                # 清除手动锁定标记
+                shape.is_manually_locked = False
+                # 设置会话解锁标记（用于显示蓝色信号灯）
+                shape.is_session_unlocked = True
+
+        # 更新画布和列表显示
+        if self.main_window and hasattr(self.main_window, 'canvas'):
+            self.main_window.canvas.update()
+            self.main_window.set_dirty()
+
+        # 刷新列表以显示解锁状态的信号灯
+        self.list_widget.viewport().update()
