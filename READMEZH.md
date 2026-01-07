@@ -650,6 +650,25 @@ https://github.com/user-attachments/assets/5cf31f45-2266-43c7-b78e-36fde706dd76
 
 https://github.com/user-attachments/assets/8f5bfc91-13f8-485f-97f5-49aba8e64b12
 
+131.文件过滤增加过滤困难标志状态
+
+132.红绿灯增加困难标志灯 以及清除困难标记状态
+
+133.高亮与锁定设置 增加 锁定困难标志
+
+134.文件总览增加困难标志统计以及困难标志过滤
+
+131-1134视频演示
+
+https://github.com/user-attachments/assets/7f4c19db-ba64-4d43-b417-da3463c5a75c
+
+135.瀑布流缩略图支持显示困难标志
+
+<img width="1329" height="846" alt="image" src="https://github.com/user-attachments/assets/d94575ca-912f-45ca-83e8-a5973758172a" />
+
+136.增加独立自由锁定标签快捷键ALT+K并增加快捷键管理器设置
+
+<img width="1009" height="652" alt="image" src="https://github.com/user-attachments/assets/9b33409b-456e-4594-b6a3-c3208c17ad9a" />
 
 
 
