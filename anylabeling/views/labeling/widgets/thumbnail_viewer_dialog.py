@@ -56,13 +56,14 @@ class ThumbnailItem(QtWidgets.QWidget):
     need_reload = QtCore.pyqtSignal(object)  # 需要重新加载
     toggle_edited = QtCore.pyqtSignal(object)  # 切换已编辑状态
     
-    def __init__(self, image_path, thumbnail_width=200, border_radius=8, edited_color="#FFA500", border_width=0, label_color_getter=None, parent=None, index=0):
+    def __init__(self, image_path, thumbnail_width=200, border_radius=8, edited_color="#FFA500", border_width=0, label_color_getter=None, difficult_color="#800080", parent=None, index=0):
         super().__init__(parent)
         self.image_path = image_path
         self.thumbnail_width = thumbnail_width
         self.thumbnail_height = thumbnail_width  # 横向模式用
         self.border_radius = border_radius
         self.edited_color = edited_color  # 手动编辑颜色
+        self.difficult_color = difficult_color  # 困难标记颜色
         self.border_width = border_width  # 边框宽度
         self.label_color_getter = label_color_getter  # 获取标签颜色的回调函数
         self.pixmap = None
@@ -95,6 +96,12 @@ class ThumbnailItem(QtWidgets.QWidget):
         if self.is_manually_edited:
             self.update()
     
+    def set_difficult_color(self, color):
+        """设置困难标记颜色"""
+        self.difficult_color = color
+        if self.difficult_count > 0:
+            self.update()
+    
     def set_border_width(self, width):
         """设置边框宽度"""
         self.border_width = width
@@ -115,16 +122,20 @@ class ThumbnailItem(QtWidgets.QWidget):
         json_path = os.path.splitext(self.image_path)[0] + ".json"
         self.label_stats = {}  # 标签统计
         self.total_labels = 0  # 总标签数
+        self.difficult_count = 0  # 困难标记数量
         if os.path.exists(json_path):
             try:
                 with open(json_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.is_manually_edited = data.get("manually_edited", False)
-                    # 统计标签
+                    # 统计标签和困难标记
                     shapes = data.get("shapes", [])
                     for shape in shapes:
                         label = shape.get("label", "unknown")
                         self.label_stats[label] = self.label_stats.get(label, 0) + 1
+                        # 统计困难标记
+                        if shape.get("difficult", False):
+                            self.difficult_count += 1
                     self.total_labels = len(shapes)
             except Exception:
                 pass
@@ -331,6 +342,12 @@ class ThumbnailItem(QtWidgets.QWidget):
                 if self.is_manually_edited:
                     painter.setPen(QtGui.QColor(self.edited_color))
                     painter.drawText(margin, y_offset + line_height * current_line, "[已编辑]")
+                    current_line += 1
+                
+                # 显示困难标记数量
+                if self.difficult_count > 0:
+                    painter.setPen(QtGui.QColor(self.difficult_color))
+                    painter.drawText(margin, y_offset + line_height * current_line, f"[困难标记: {self.difficult_count}]")
                     current_line += 1
                 
                 # 显示标签统计
@@ -1030,6 +1047,17 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 return QtGui.QColor(color_value)
         return QtGui.QColor(default_color)
     
+    def _get_difficult_color(self):
+        """获取困难标记颜色配置"""
+        default_color = [128, 0, 128]  # 默认紫色
+        if self.labeling_widget and hasattr(self.labeling_widget, '_config'):
+            traffic_light_colors = self.labeling_widget._config.get("traffic_light_colors", {})
+            color_value = traffic_light_colors.get("difficult", default_color)
+            if isinstance(color_value, (list, tuple)):
+                # RGB列表或元组格式
+                return QtGui.QColor(*color_value[:3])
+        return QtGui.QColor(*default_color)
+    
     def _get_label_color(self, label):
         """获取标签颜色（从主界面同步）"""
         if self.labeling_widget and hasattr(self.labeling_widget, '_get_rgb_by_label'):
@@ -1039,11 +1067,12 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     def create_thumbnail_items(self):
         """创建所有缩略图项"""
         edited_color = self._get_manually_edited_color().name()
+        difficult_color = self._get_difficult_color().name()
         for idx, path in enumerate(self.image_list, start=1):
             item = ThumbnailItem(
                 path, self.thumbnail_width, self.border_radius, 
                 edited_color, self.border_width, self._get_label_color,
-                index=idx
+                difficult_color, index=idx
             )
             item.clicked.connect(self.on_thumbnail_clicked)
             item.request_horizontal_viewer.connect(self.open_horizontal_viewer.emit)
@@ -1182,12 +1211,16 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # 更新item的状态
         item.is_manually_edited = data.get("manually_edited", False)
-        # 更新标签统计
+        # 更新标签统计和困难标记
         shapes = data.get("shapes", [])
         item.label_stats = {}
+        item.difficult_count = 0
         for shape in shapes:
             label = shape.get("label", "unknown")
             item.label_stats[label] = item.label_stats.get(label, 0) + 1
+            # 统计困难标记
+            if shape.get("difficult", False):
+                item.difficult_count += 1
         item.total_labels = len(shapes)
         item.update()
         
@@ -1310,6 +1343,12 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         new_color = self._get_manually_edited_color().name()
         for item in self.masonry_widget.items:
             item.set_edited_color(new_color)
+    
+    def update_difficult_color(self):
+        """更新困难标记颜色（当红绿灯设置修改颜色时调用）"""
+        new_color = self._get_difficult_color().name()
+        for item in self.masonry_widget.items:
+            item.set_difficult_color(new_color)
     
     def closeEvent(self, event):
         if hasattr(self, 'load_timer'):

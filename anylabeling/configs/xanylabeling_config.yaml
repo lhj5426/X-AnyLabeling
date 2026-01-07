@@ -195,6 +195,7 @@ shortcuts:
   open_video: Ctrl+O
   open_vqa: null
   paste_polygon: Ctrl+V
+  toggle_lock: Alt+K
   quit: Ctrl+Q
   remove_selected_point: Backspace
   save: Ctrl+S

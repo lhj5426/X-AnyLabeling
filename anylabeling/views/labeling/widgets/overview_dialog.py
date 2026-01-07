@@ -212,6 +212,7 @@ class OverviewDialog(QtWidgets.QDialog):
             self.tr("描述"),
             self.tr("类型"),
             self.tr("组ID"),
+            self.tr("困难"),
         ])
         self.field_combo.currentIndexChanged.connect(self.on_field_changed)
         self.field_combo.setFixedWidth(100)
@@ -482,7 +483,11 @@ class OverviewDialog(QtWidgets.QDialog):
                     label_infos[label] = dict(
                         zip(self.supported_shape, initial_nums)
                     )
+                    label_infos[label]["difficult_count"] = 0  # 添加困难标记计数
                 label_infos[label][shape_type] += 1
+                # 统计困难标记
+                if difficult:
+                    label_infos[label]["difficult_count"] += 1
                 current_shape = dict(
                     filename=filename,
                     label=label,
@@ -515,14 +520,16 @@ class OverviewDialog(QtWidgets.QDialog):
             self.shape_type_translation.get(shape, shape)
             for shape in self.supported_shape
         ]
-        total_infos = [[self.tr("标签")] + translated_shapes + [self.tr("总计")]]
-        shape_counter = [0 for _ in range(len(self.supported_shape) + 1)]
+        total_infos = [[self.tr("标签")] + translated_shapes + [self.tr("困难")] + [self.tr("总计")]]
+        shape_counter = [0 for _ in range(len(self.supported_shape) + 2)]  # +2 for difficult and total
 
         for label, infos in label_infos.items():
             counter = [
                 infos[shape_type] for shape_type in self.supported_shape
             ]
-            counter.append(sum(counter))
+            difficult_count = infos.get("difficult_count", 0)
+            counter.append(difficult_count)  # 添加困难标记数量
+            counter.append(sum(counter[:-1]))  # 总计不包括困难标记数量
             row = [label] + counter
             total_infos.append(row)
             shape_counter = [x + y for x, y in zip(counter, shape_counter)]
@@ -592,8 +599,11 @@ class OverviewDialog(QtWidgets.QDialog):
             # 应用搜索过滤
             # 注意："为空"和"不为空"条件不需要搜索文本，也要执行过滤
             condition = self.condition_combo.currentText()
+            original_count = len(shape_infos)
+            
             if self.search_text or condition in [self.tr("为空"), self.tr("不为空")]:
                 shape_infos = self.filter_shapes(shape_infos, self.search_text)
+                logger.info(f"搜索过滤: 原始{original_count}条 -> 过滤后{len(shape_infos)}条")
             
             # 保存当前显示的shape数据（用于跳转定位）
             self.displayed_shape_infos = shape_infos
@@ -610,11 +620,13 @@ class OverviewDialog(QtWidgets.QDialog):
             label_count = len(shape_infos)
             display_text = f"{file_count}|{label_count}"
             self.search_input.count_label.setText(display_text)
+            logger.info(f"搜索结果统计: {file_count}个文件, {label_count}个标签")
             
             # 更新窗口标题
             self.update_window_title()
             
             headers, table_data = self.get_shape_infos_table(shape_infos)
+            logger.info(f"表格数据行数: {len(table_data)}")
             self.table.setRowCount(len(table_data))
             self.table.setColumnCount(len(headers))
             self.table.setHorizontalHeaderLabels(headers)
@@ -778,13 +790,25 @@ class OverviewDialog(QtWidgets.QDialog):
             self.tr("描述"): "description",
             self.tr("类型"): "shape_type",
             self.tr("组ID"): "group_id",
+            self.tr("困难"): "difficult",
         }
         
         current_field_name = self.field_combo.currentText()
         search_field = field_map.get(current_field_name, "filename")
         
+        logger.info(f"搜索条件: 字段={current_field_name}, 条件={condition}, 搜索文本='{search_text}'")
+        
         for shape in shape_infos:
-            field_value = str(shape.get(search_field, ""))
+            # 获取原始字段值
+            raw_value = shape.get(search_field, "")
+            
+            # 对于困难字段，特殊处理布尔值
+            if search_field == "difficult":
+                # 布尔值转字符串: True -> "True", False -> "False"
+                field_value = str(raw_value)
+            else:
+                field_value = str(raw_value)
+            
             match = False
             
             # 根据条件进行匹配
@@ -821,13 +845,15 @@ class OverviewDialog(QtWidgets.QDialog):
             if match:
                 filtered.append(shape)
         
+        logger.info(f"过滤结果: 匹配{len(filtered)}条记录")
         return filtered
     
     def perform_search(self):
         """
         执行搜索（按回车键触发）
         """
-        self.search_text = self.search_input.text()
+        self.search_text = self.search_input.text().strip()
+        logger.info(f"执行搜索: search_text='{self.search_text}'")
         if not self.showing_label_infos:  # 只在Shape视图时搜索
             # 重新加载指定范围的数据并应用搜索
             self.populate_table(self.start_index, self.end_index)

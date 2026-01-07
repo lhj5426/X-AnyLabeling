@@ -47,6 +47,7 @@ class Shape:
         "description",
         "attributes",
         "is_edited", # Added for edited status dot
+        "is_manually_locked", # Added for manual lock status
     ]
 
     # The following class variables influence the drawing of all shape objects.
@@ -77,6 +78,7 @@ class Shape:
     locked_show_point = False  # 锁定后显示点
     locked_show_square = False  # 锁定后显示块
     locked_labels = set()  # 锁定的标签集合
+    lock_difficult = False  # 锁定困难标记
     # Base line width
     line_width = 2.0
     # Additional configurable line widths for different interaction states
@@ -106,6 +108,7 @@ class Shape:
         self.difficult = difficult
         self.is_edited = False # Initialize edited status
         self.is_session_unlocked = False # Initialize session unlock status
+        self.is_manually_locked = False # Initialize manual lock status (for individual shape locking)
         self.kie_linking = kie_linking
         self.points = []
         self.fill = True
@@ -202,6 +205,7 @@ class Shape:
             "attributes": self.attributes,
             "kie_linking": self.kie_linking,
             "is_edited": self.is_edited, # Add is_edited to dict
+            "is_manually_locked": getattr(self, "is_manually_locked", False), # Add is_manually_locked to dict
         }
         if self.shape_type == "rotation":
             dictData["direction"] = self.direction
@@ -262,6 +266,7 @@ class Shape:
         self.attributes = data.get("attributes", {})
         self.kie_linking = data.get("kie_linking", [])
         self.is_edited = data.get("is_edited", False) # Load is_edited, default to False
+        self.is_manually_locked = data.get("is_manually_locked", False) # Load is_manually_locked, default to False
         if self.shape_type == "rotation":
             self.direction = data.get("direction", 0)
         self.other_data = {k: v for k, v in data.items() if k not in self.KEYS}
@@ -298,15 +303,26 @@ class Shape:
         ]
 
     def is_label_locked(self):
-        """检查当前 shape 的标签是否在锁定列表中
+        """检查当前 shape 的标签是否在锁定列表中，或者是否为困难标记且启用了锁定困难标记
         注意：如果 shape 已被会话解锁（is_session_unlocked=True），则不视为锁定
         """
-        if not self.label or not Shape.locked_labels:
-            return False
         # 如果已被会话解锁，则不视为锁定
         if getattr(self, "is_session_unlocked", False):
             return False
-        return self.label.strip() in Shape.locked_labels
+        
+        # 检查是否手动锁定了这个shape
+        if getattr(self, "is_manually_locked", False):
+            return True
+        
+        # 检查是否启用了锁定困难标记，且当前shape是困难标记
+        if Shape.lock_difficult and getattr(self, "difficult", False):
+            return True
+        
+        # 检查标签是否在锁定列表中
+        if self.label and Shape.locked_labels:
+            return self.label.strip() in Shape.locked_labels
+        
+        return False
 
     def should_draw_point(self):
         """判断是否应该绘制圆形控制点（顶点）"""

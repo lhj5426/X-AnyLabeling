@@ -50,6 +50,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_layout = QtWidgets.QVBoxLayout()
         self.lock_label = QtWidgets.QLabel("需要锁定的标签 (英文逗号分隔):")
         self.lock_input = QtWidgets.QLineEdit()
+        self.lock_difficult_checkbox = QtWidgets.QCheckBox("锁定困难标记")
+        self.lock_difficult_checkbox.setToolTip("启用后，所有标记为困难（difficult: true）的标注都会被锁定")
         self.lock_highlight_checkbox = QtWidgets.QCheckBox("锁定后仍可高亮")
         self.lock_highlight_checkbox.setToolTip("启用后，锁定的标签也能参与高亮/反向高亮功能")
         self.lock_hide_info_checkbox = QtWidgets.QCheckBox("锁定后不显示宽高和角度")
@@ -63,6 +65,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_show_square_checkbox.setToolTip("启用后，锁定的标签显示方形控制柄")
         self.lock_layout.addWidget(self.lock_label)
         self.lock_layout.addWidget(self.lock_input)
+        self.lock_layout.addWidget(self.lock_difficult_checkbox)
         self.lock_layout.addWidget(self.lock_highlight_checkbox)
         self.lock_layout.addWidget(self.lock_hide_info_checkbox)
         self.lock_layout.addWidget(self.lock_hide_order_checkbox)
@@ -267,6 +270,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.positive_input.textChanged.connect(self._realtime_save_settings)
         self.negative_input.textChanged.connect(self._realtime_save_settings)
         self.lock_input.textChanged.connect(self._realtime_save_settings)
+        self.lock_difficult_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.lock_highlight_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.lock_hide_info_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.lock_hide_order_checkbox.stateChanged.connect(self._realtime_save_settings)
@@ -312,6 +316,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.positive_input.textChanged.disconnect(self._realtime_save_settings)
             self.negative_input.textChanged.disconnect(self._realtime_save_settings)
             self.lock_input.textChanged.disconnect(self._realtime_save_settings)
+            self.lock_difficult_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.lock_highlight_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.lock_hide_info_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.lock_hide_order_checkbox.stateChanged.disconnect(self._realtime_save_settings)
@@ -344,6 +349,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.positive_input.setText(self._config.get("highlight_positive", ""))
             self.negative_input.setText(self._config.get("highlight_negative", ""))
             self.lock_input.setText(self._config.get("locked_labels", ""))
+            self.lock_difficult_checkbox.setChecked(self._config.get("lock_difficult", False))
             self.lock_highlight_checkbox.setChecked(self._config.get("locked_can_highlight", False))
             self.lock_hide_info_checkbox.setChecked(self._config.get("locked_hide_info", False))
             self.lock_hide_order_checkbox.setChecked(self._config.get("locked_hide_order", True))
@@ -394,6 +400,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.positive_input.textChanged.connect(self._realtime_save_settings)
             self.negative_input.textChanged.connect(self._realtime_save_settings)
             self.lock_input.textChanged.connect(self._realtime_save_settings)
+            self.lock_difficult_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.lock_highlight_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.lock_hide_info_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.lock_hide_order_checkbox.stateChanged.connect(self._realtime_save_settings)
@@ -428,6 +435,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["highlight_positive"] = self.positive_input.text()
             self._config["highlight_negative"] = self.negative_input.text()
             self._config["locked_labels"] = self.lock_input.text()
+            self._config["lock_difficult"] = self.lock_difficult_checkbox.isChecked()
             self._config["locked_can_highlight"] = self.lock_highlight_checkbox.isChecked()
             self._config["locked_hide_info"] = self.lock_hide_info_checkbox.isChecked()
             self._config["locked_hide_order"] = self.lock_hide_order_checkbox.isChecked()
@@ -436,10 +444,11 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["highlight_mixed_mode"] = self.mixed_mode_checkbox.isChecked()
             save_config(self._config)
             
-            # 直接更新Shape类的锁定标签集合，确保实时生效
+            # 直接更新Shape类的锁定标签集合和困难标记锁定，确保实时生效
             from ..shape import Shape
             locked_labels_str = self._config.get("locked_labels", "")
             Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
+            Shape.lock_difficult = self._config.get("lock_difficult", False)
             
             if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
                 self.parent().apply_handle_display_settings()

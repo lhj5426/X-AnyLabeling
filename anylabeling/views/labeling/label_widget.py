@@ -268,6 +268,74 @@ class ClearEditedThread(QtCore.QThread):
         self.finished.emit(summary_message, current_filename_modified, modified_file_paths) # Emit the list
 
 
+class ClearDifficultThread(QtCore.QThread):
+    progress = QtCore.pyqtSignal(int, int, str) # current, total, message
+    finished_signal = QtCore.pyqtSignal(str, bool, list) # summary_message, current_filename_modified, modified_file_paths
+    error = QtCore.pyqtSignal(str)
+
+    def __init__(self, image_list, output_dir, current_filename, parent=None):
+        super().__init__(parent)
+        self.image_list = image_list
+        self.output_dir = output_dir
+        self.current_filename = current_filename
+        self._is_interruption_requested = False
+
+    def requestInterruption(self):
+        self._is_interruption_requested = True
+
+    def run(self):
+        processed_files = 0
+        modified_files = 0
+        current_filename_modified = False
+        total_files = len(self.image_list)
+
+        modified_file_paths = [] # List to store paths of modified files
+
+        for i, image_path in enumerate(self.image_list):
+            if self._is_interruption_requested:
+                self.finished_signal.emit("操作被用户取消。", False, [])
+                return
+
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+            if not osp.exists(label_file_path):
+                self.progress.emit(i + 1, total_files, f"跳过 {osp.basename(image_path)}: 标签文件不存在。")
+                continue
+
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                # Clear shape-level 'difficult' flag
+                shapes_modified = False
+                if "shapes" in data:
+                    for shape_dict in data["shapes"]:
+                        if shape_dict.get("difficult", False):
+                            shape_dict["difficult"] = False
+                            shapes_modified = True
+                
+                if shapes_modified:
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    self.progress.emit(i + 1, total_files, f"✅ 已清除 {osp.basename(image_path)} 的困难标记。")
+                    modified_files += 1
+                    if image_path == self.current_filename:
+                        current_filename_modified = True
+                    modified_file_paths.append(label_file_path)
+                else:
+                    self.progress.emit(i + 1, total_files, f"跳过 {osp.basename(image_path)}: 未标记为困难。")
+                processed_files += 1
+
+            except Exception as e:
+                self.progress.emit(i + 1, total_files, f"❌ 处理 {osp.basename(image_path)} 失败: {e}")
+                self.error.emit(f"处理文件 {osp.basename(image_path)} 时发生错误: {e}")
+
+        summary_message = f"清除操作完成。共处理 {processed_files} 个文件，修改 {modified_files} 个文件。"
+        self.finished_signal.emit(summary_message, current_filename_modified, modified_file_paths)
+
+
 class LabelingWidget(QtWidgets.QWidget):
     """The main widget for labeling images"""
 
@@ -407,6 +475,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # Locked shape handle display settings
         Shape.locked_show_point = self._config.get("locked_show_point", False)
         Shape.locked_show_square = self._config.get("locked_show_square", False)
+        Shape.lock_difficult = self._config.get("lock_difficult", False)
         locked_labels_str = self._config.get("locked_labels", "")
         Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
 
@@ -1407,6 +1476,14 @@ class LabelingWidget(QtWidgets.QWidget):
             "paste",
             self.tr("Paste copied polygons"),
             enabled=self._config["system_clipboard"],
+        )
+        toggle_lock = action(
+            self.tr("Lock Label"),
+            self.toggle_selected_shapes_lock,
+            shortcuts.get("toggle_lock", "Alt+K"),
+            None,
+            self.tr("Lock selected shapes"),
+            enabled=False,
         )
         cancel_paste_preview = action(
             self.tr("取消粘贴预览"),
@@ -2497,6 +2574,7 @@ class LabelingWidget(QtWidgets.QWidget):
             edit=edit,
             copy=copy,
             paste=paste,
+            toggle_lock=toggle_lock,
             cancel_paste_preview=cancel_paste_preview,
             refresh_canvas=refresh_canvas,
             undo_last_point=undo_last_point,
@@ -2647,6 +2725,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 delete,
                 copy,
                 paste,
+                toggle_lock,
                 cancel_paste_preview,
                 None,
                 undo,
@@ -6330,6 +6409,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # 锁定标签的控制柄显示设置
         Shape.locked_show_point = self._config.get("locked_show_point", False)
         Shape.locked_show_square = self._config.get("locked_show_square", False)
+        Shape.lock_difficult = self._config.get("lock_difficult", False)
         # 更新锁定标签集合
         locked_labels_str = self._config.get("locked_labels", "")
         Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
@@ -7789,6 +7869,7 @@ class LabelingWidget(QtWidgets.QWidget):
             "edit_polygon": self.actions.edit_mode,
             "copy_polygon": self.actions.copy,
             "paste_polygon": self.actions.paste,
+            "toggle_lock": self.actions.toggle_lock,
             "cancel_paste_preview": self.actions.cancel_paste_preview,
             "delete_polygon": self.actions.delete,
             "undo": self.actions.undo,
@@ -9020,6 +9101,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.actions.delete.setEnabled(n_selected)
         self.actions.copy.setEnabled(n_selected)
         self.actions.edit.setEnabled(n_selected >= 1 and same_type)
+        self.actions.toggle_lock.setEnabled(n_selected)
         self.actions.union_selection.setEnabled(
             not all(value > 0 for value in allow_merge_shape_type.values())
             and (
@@ -9727,6 +9809,38 @@ class LabelingWidget(QtWidgets.QWidget):
         self.label_list.clearSelection()
         for shape in added_shapes:
             self.add_label(shape)
+        self.set_dirty()
+
+    def toggle_selected_shapes_lock(self):
+        """切换选中标签的锁定状态"""
+        if not self.canvas.selected_shapes:
+            return
+        
+        # 检查选中的shapes中是否有已锁定的
+        has_locked = any(shape.is_label_locked() for shape in self.canvas.selected_shapes)
+        
+        if has_locked:
+            # 如果有锁定的，则解锁所有选中的shapes
+            for shape in self.canvas.selected_shapes:
+                if shape.is_label_locked():
+                    # 设置session解锁标记
+                    shape.is_session_unlocked = True
+                    # 清除手动锁定标记
+                    shape.is_manually_locked = False
+        else:
+            # 如果都没锁定，则锁定所有选中的shapes
+            for shape in self.canvas.selected_shapes:
+                # 设置手动锁定标记（只锁定这个shape，不影响其他同名标签）
+                shape.is_manually_locked = True
+                # 清除session解锁标记
+                shape.is_session_unlocked = False
+            
+            # 锁定后取消选中
+            self.canvas.deselect_shape()
+        
+        # 刷新显示
+        self.label_list.update()
+        self.canvas.update()
         self.set_dirty()
 
     def paste_selected_shape(self):
@@ -13237,6 +13351,28 @@ class LabelingWidget(QtWidgets.QWidget):
             elif value == 'no_text':
                 return not has_text
         
+        # 困难标记过滤
+        if mode == 'difficult':
+            shapes = data.get("shapes", [])
+            filter_labels = filter_config.get('filter_labels', [])
+            
+            # 如果指定了标签过滤，只检查这些标签的shapes
+            if filter_labels:
+                target_shapes = [s for s in shapes if s.get("label") in filter_labels]
+            else:
+                target_shapes = shapes
+            
+            # 如果没有目标shapes，返回False
+            if not target_shapes:
+                return False
+            
+            if value == 'difficult':
+                # 仅困难标记：至少有一个目标shape的difficult为true
+                return any(s.get("difficult", False) for s in target_shapes)
+            elif value == 'not_difficult':
+                # 仅非困难标记：至少有一个目标shape的difficult为false
+                return any(not s.get("difficult", False) for s in target_shapes)
+        
         # 标签过滤
         if mode == 'labels':
             # 兼容旧格式（直接是标签列表）和新格式（包含match_mode的字典）
@@ -14270,6 +14406,10 @@ class LabelingWidget(QtWidgets.QWidget):
             self.traffic_light_dialog = TrafficLightDialog(self, config=self._config)
             self.traffic_light_dialog.clear_all_edited.connect(self.on_clear_all_edited_traffic_lights)
             self.traffic_light_dialog.clear_current_page_edited.connect(self.on_clear_current_page_edited_traffic_lights)
+            self.traffic_light_dialog.clear_all_difficult.connect(self.on_clear_all_difficult_traffic_lights)
+            self.traffic_light_dialog.clear_current_page_difficult.connect(self.on_clear_current_page_difficult_traffic_lights)
+            self.traffic_light_dialog.clear_all_manual_lock.connect(self.on_clear_all_manual_lock_traffic_lights)
+            self.traffic_light_dialog.clear_current_page_manual_lock.connect(self.on_clear_current_page_manual_lock_traffic_lights)
             self.traffic_light_dialog.color_changed.connect(self._on_traffic_light_color_changed)
             self.traffic_light_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
 
@@ -14436,7 +14576,7 @@ class LabelingWidget(QtWidgets.QWidget):
             return
 
         self.traffic_light_dialog.log_display.clear()
-        self.traffic_light_dialog.log_message('开始清除本页的"已编辑"状态...')
+        self.traffic_light_dialog.log_message('开始清除本页的已编辑状态...')
 
         if not self.filename:
             self.traffic_light_dialog.log_message("没有打开任何图像文件。")
@@ -14471,23 +14611,219 @@ class LabelingWidget(QtWidgets.QWidget):
             if file_edited_flag_cleared or shapes_modified:
                 with open(label_file_path, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=2, ensure_ascii=False)
-                self.traffic_light_dialog.log_message('✅ 已清除本页的"已编辑"状态。')
+                self.traffic_light_dialog.log_message('✅ 已清除本页的已编辑状态。')
                 
                 # Reload the current file to update the display
                 self.traffic_light_dialog.log_message("正在刷新当前文件以更新显示状态...")
                 self.load_file(self.filename)
                 self.traffic_light_dialog.log_message("当前文件刷新完成。")
             else:
-                self.traffic_light_dialog.log_message('本页未标记为"已编辑"。')
+                self.traffic_light_dialog.log_message('本页未标记为已编辑。')
 
         except Exception as e:
             error_msg = f"处理文件时发生错误: {e}"
             self.traffic_light_dialog.log_message(f"❌ {error_msg}")
             QtWidgets.QMessageBox.critical(self, "错误", error_msg)
 
+    def on_clear_all_difficult_traffic_lights(self):
+        """Handle the 'Clear All Difficult' signal from the TrafficLightDialog."""
+        if not self.traffic_light_dialog:
+            return
 
+        self.traffic_light_dialog.log_display.clear()
+        self.traffic_light_dialog.log_message('开始清除全部困难标记...')
 
+        if not self.image_list:
+            self.traffic_light_dialog.log_message("没有加载任何图像文件。")
+            return
 
+        # Create and show progress dialog
+        self.progress_dialog = QtWidgets.QProgressDialog(
+            "正在清除困难标记...", "取消", 0, len(self.image_list), self
+        )
+        self.progress_dialog.setWindowTitle("清除困难标记")
+        self.progress_dialog.setWindowModality(QtCore.Qt.WindowModal)
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.setValue(0)
+        self.progress_dialog.show()
+
+        # Create and start the worker thread
+        self.clear_difficult_thread = ClearDifficultThread(
+            self.image_list, self.output_dir, self.filename
+        )
+        self.clear_difficult_thread.progress.connect(self._on_clear_difficult_progress)
+        self.clear_difficult_thread.finished_signal.connect(self._on_clear_difficult_finished)
+        self.clear_difficult_thread.error.connect(self._on_clear_difficult_error)
+        self.clear_difficult_thread.start()
+
+    def _on_clear_difficult_progress(self, current, total, message):
+        """Slot to update progress dialog and log messages."""
+        self.progress_dialog.setValue(current)
+        self.traffic_light_dialog.log_message(message)
+
+    def _on_clear_difficult_finished(self, summary_message, current_filename_modified, modified_file_paths):
+        """Slot to handle completion of the clear difficult operation."""
+        self.progress_dialog.close()
+        self.traffic_light_dialog.log_message(summary_message)
+
+        # If the current file was modified, reload it
+        if current_filename_modified:
+            self.traffic_light_dialog.log_message("正在刷新当前文件以更新显示状态...")
+            self.load_file(self.filename)
+            self.traffic_light_dialog.log_message("当前文件刷新完成。")
+        
+        self.clear_difficult_thread = None
+
+    def _on_clear_difficult_error(self, error_message):
+        """Slot to log errors from the clear difficult thread."""
+        self.traffic_light_dialog.log_message(f"错误: {error_message}")
+
+    def on_clear_current_page_difficult_traffic_lights(self):
+        """Handle the 'Clear Current Page Difficult' signal from the TrafficLightDialog."""
+        if not self.traffic_light_dialog:
+            return
+
+        self.traffic_light_dialog.log_display.clear()
+        self.traffic_light_dialog.log_message('开始清除本页的困难标记...')
+
+        if not self.filename:
+            self.traffic_light_dialog.log_message("没有打开任何图像文件。")
+            return
+
+        label_file_path = osp.splitext(self.filename)[0] + ".json"
+        if self.output_dir:
+            label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+        if not osp.exists(label_file_path):
+            self.traffic_light_dialog.log_message(f"标签文件不存在: {label_file_path}")
+            return
+
+        try:
+            with open(label_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Clear shape-level 'difficult' flag
+            shapes_modified = False
+            if "shapes" in data:
+                for shape_dict in data["shapes"]:
+                    if shape_dict.get("difficult", False):
+                        shape_dict["difficult"] = False
+                        shapes_modified = True
+            
+            if shapes_modified:
+                with open(label_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                self.traffic_light_dialog.log_message('✅ 已清除本页的困难标记。')
+                
+                # Reload the current file to update the display
+                self.traffic_light_dialog.log_message("正在刷新当前文件以更新显示状态...")
+                self.load_file(self.filename)
+                self.traffic_light_dialog.log_message("当前文件刷新完成。")
+            else:
+                self.traffic_light_dialog.log_message('本页未标记为困难。')
+
+        except Exception as e:
+            error_msg = f"处理文件时发生错误: {e}"
+            self.traffic_light_dialog.log_message(f"❌ {error_msg}")
+            QtWidgets.QMessageBox.critical(self, "错误", error_msg)
+
+    def on_clear_all_manual_lock_traffic_lights(self):
+        """Handle the 'Clear All Manual Lock' signal from the TrafficLightDialog."""
+        if not self.traffic_light_dialog:
+            return
+
+        self.traffic_light_dialog.log_display.clear()
+        self.traffic_light_dialog.log_message('开始清除所有手动锁定状态...')
+
+        if not self.image_list:
+            self.traffic_light_dialog.log_message("没有图像文件。")
+            return
+
+        cleared_count = 0
+        total_files = len(self.image_list)
+
+        for i, image_path in enumerate(self.image_list):
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+            if not osp.exists(label_file_path):
+                continue
+
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                shapes_modified = False
+                if "shapes" in data:
+                    for shape_dict in data["shapes"]:
+                        if shape_dict.get("is_manually_locked", False):
+                            shape_dict["is_manually_locked"] = False
+                            shapes_modified = True
+
+                if shapes_modified:
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    cleared_count += 1
+
+            except Exception as e:
+                self.traffic_light_dialog.log_message(f"❌ 处理文件 {osp.basename(image_path)} 时出错: {e}")
+
+        self.traffic_light_dialog.log_message(f'✅ 已清除 {cleared_count}/{total_files} 个文件的手动锁定状态。')
+        
+        # Reload current file
+        if self.filename:
+            self.traffic_light_dialog.log_message("正在刷新当前文件...")
+            self.load_file(self.filename)
+            self.traffic_light_dialog.log_message("刷新完成。")
+
+    def on_clear_current_page_manual_lock_traffic_lights(self):
+        """Handle the 'Clear Current Page Manual Lock' signal from the TrafficLightDialog."""
+        if not self.traffic_light_dialog:
+            return
+
+        self.traffic_light_dialog.log_display.clear()
+        self.traffic_light_dialog.log_message('开始清除本页的手动锁定状态...')
+
+        if not self.filename:
+            self.traffic_light_dialog.log_message("没有打开任何图像文件。")
+            return
+
+        label_file_path = osp.splitext(self.filename)[0] + ".json"
+        if self.output_dir:
+            label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+
+        if not osp.exists(label_file_path):
+            self.traffic_light_dialog.log_message(f"标签文件不存在: {label_file_path}")
+            return
+
+        try:
+            with open(label_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            shapes_modified = False
+            if "shapes" in data:
+                for shape_dict in data["shapes"]:
+                    if shape_dict.get("is_manually_locked", False):
+                        shape_dict["is_manually_locked"] = False
+                        shapes_modified = True
+            
+            if shapes_modified:
+                with open(label_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                self.traffic_light_dialog.log_message('✅ 已清除本页的手动锁定状态。')
+                
+                # Reload the current file to update the display
+                self.traffic_light_dialog.log_message("正在刷新当前文件以更新显示状态...")
+                self.load_file(self.filename)
+                self.traffic_light_dialog.log_message("当前文件刷新完成。")
+            else:
+                self.traffic_light_dialog.log_message('本页没有手动锁定的标签。')
+
+        except Exception as e:
+            error_msg = f"处理文件时发生错误: {e}"
+            self.traffic_light_dialog.log_message(f"❌ {error_msg}")
+            QtWidgets.QMessageBox.critical(self, "错误", error_msg)
 
     def open_horizontal_viewer(self, target_filename=None):
         if not self.image_list:

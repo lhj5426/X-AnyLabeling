@@ -84,6 +84,20 @@ class FileFilterDialog(QDialog):
         text_group.setLayout(text_layout)
         layout.addWidget(text_group)
         
+        # 困难标记过滤
+        difficult_group = QGroupBox("困难标记")
+        difficult_layout = QVBoxLayout()
+        
+        self.difficult_only = QRadioButton("仅困难标记")
+        self.difficult_not_only = QRadioButton("仅非困难标记")
+        self.filter_group.addButton(self.difficult_only)
+        self.filter_group.addButton(self.difficult_not_only)
+        
+        difficult_layout.addWidget(self.difficult_only)
+        difficult_layout.addWidget(self.difficult_not_only)
+        difficult_group.setLayout(difficult_layout)
+        layout.addWidget(difficult_group)
+        
         # 标签过滤
         label_group = QGroupBox("标签过滤")
         label_layout = QVBoxLayout()
@@ -196,7 +210,7 @@ class FileFilterDialog(QDialog):
     def get_filter_config(self):
         """获取当前过滤配置"""
         config = {
-            'mode': 'none',  # none, status, edit, text, labels
+            'mode': 'none',  # none, status, edit, text, difficult, labels
             'value': None
         }
         
@@ -219,6 +233,28 @@ class FileFilterDialog(QDialog):
         elif self.text_no_text.isChecked():
             config['mode'] = 'text'
             config['value'] = 'no_text'
+        elif self.difficult_only.isChecked():
+            config['mode'] = 'difficult'
+            config['value'] = 'difficult'
+            # 获取勾选的标签（用于联动）
+            checked_labels = []
+            for i in range(self.label_list.count()):
+                item = self.label_list.item(i)
+                if item.checkState() == Qt.Checked:
+                    checked_labels.append(item.text())
+            if checked_labels:
+                config['filter_labels'] = checked_labels
+        elif self.difficult_not_only.isChecked():
+            config['mode'] = 'difficult'
+            config['value'] = 'not_difficult'
+            # 获取勾选的标签（用于联动）
+            checked_labels = []
+            for i in range(self.label_list.count()):
+                item = self.label_list.item(i)
+                if item.checkState() == Qt.Checked:
+                    checked_labels.append(item.text())
+            if checked_labels:
+                config['filter_labels'] = checked_labels
         elif self.filter_by_label.isChecked():
             config['mode'] = 'labels'
             # 获取所有勾选的标签

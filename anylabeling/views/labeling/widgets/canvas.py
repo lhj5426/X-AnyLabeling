@@ -1351,12 +1351,9 @@ class Canvas(
         for shape in self.shapes:
             shape.is_hovered = False
 
-        locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
-            
         for shape in reversed([s for s in self.shapes if self.is_visible(s)]):
             # Do not interact with locked shapes on hover
-            is_locked = shape.label in locked_labels and not shape.is_session_unlocked
-            if is_locked:
+            if shape.is_label_locked():
                 continue
 
             # Look for a nearby vertex to highlight. If that fails,
@@ -1938,10 +1935,9 @@ class Canvas(
 
         # Find shapes that intersect with the selection box AND are visible
         newly_selected = []
-        locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
         for shape in self.shapes:
             # Do not select locked shapes with the selection box
-            if shape.label in locked_labels:
+            if shape.is_label_locked():
                 continue
             # Only select visible shapes
             if shape.visible and self.shape_intersects_rect(shape, selection_rect):
@@ -2134,9 +2130,8 @@ class Canvas(
 
         # --- Label Lock Override ---
         # If a locked shape is selected with the path tool, unlock it for the session.
-        locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
         for shape in self.selected_shapes:
-            if shape.label in locked_labels:
+            if shape.is_label_locked():
                 shape.is_session_unlocked = True
         
         self.selection_changed.emit(self.selected_shapes)
@@ -2615,7 +2610,6 @@ class Canvas(
             return
 
         else:
-            locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
             for shape in reversed(self.shapes):
                 if (
                     self.is_visible(shape)
@@ -2623,8 +2617,7 @@ class Canvas(
                     and shape.contains_point(point)
                 ):
                     # Do not select locked shapes by clicking
-                    is_locked = shape.label in locked_labels and not shape.is_session_unlocked
-                    if is_locked:
+                    if shape.is_label_locked():
                         continue
 
                     self.set_hiding()

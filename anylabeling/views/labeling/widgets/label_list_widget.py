@@ -64,14 +64,17 @@ class HTMLDelegate(QtWidgets.QStyledItemDelegate):
         dot_y = option.rect.center().y()
 
         # Define fixed positions for each dot from right to left
-        # Position 1 (Rightmost): Selected
+        # Position 1 (Rightmost): Selected (红色)
         pos1_x = option.rect.right() - dot_radius - 5
 
-        # Position 2 (Middle): Locked/Unlocked
+        # Position 2: Locked/Unlocked (黄色/蓝色)
         pos2_x = pos1_x - (dot_diameter + spacing)
 
-        # Position 3 (Leftmost): Edited
+        # Position 3: Edited (绿色)
         pos3_x = pos2_x - (dot_diameter + spacing)
+        
+        # Position 4 (Leftmost): Difficult (紫色)
+        pos4_x = pos3_x - (dot_diameter + spacing)
 
         shape = index.data(Qt.UserRole)
 
@@ -86,14 +89,29 @@ class HTMLDelegate(QtWidgets.QStyledItemDelegate):
             painter.restore()
 
         # 2. Draw Locked/Unlocked dot (Position 2)
+        # 只有被锁定过的标签才显示锁定状态灯
         if shape and self.parent and hasattr(self.parent, '_config'):
-            locked_labels_str = self.parent._config.get('locked_labels', '')
-            locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
-
-            if shape.label in locked_labels:
+            # 检查是否被锁定，或者是否有session_unlocked标记（表示曾经被锁定过）
+            is_locked = shape.is_label_locked()
+            has_been_locked = hasattr(shape, 'is_session_unlocked') and shape.is_session_unlocked
+            
+            # 只有当前锁定或曾经被锁定过才显示灯
+            if is_locked or has_been_locked:
                 painter.save()
                 painter.setRenderHint(QtGui.QPainter.Antialiasing)
-                color_rgb = self.parent._config.get("traffic_light_colors", {}).get("unlocked", [0, 0, 255]) if shape.is_session_unlocked else self.parent._config.get("traffic_light_colors", {}).get("locked", [255, 255, 0])
+                
+                if is_locked:
+                    # 当前锁定状态
+                    if has_been_locked:
+                        # Session解锁：显示蓝色
+                        color_rgb = self.parent._config.get("traffic_light_colors", {}).get("unlocked", [0, 0, 255])
+                    else:
+                        # 完全锁定：显示黄色
+                        color_rgb = self.parent._config.get("traffic_light_colors", {}).get("locked", [255, 255, 0])
+                else:
+                    # 曾经锁定，现在解锁：显示蓝色
+                    color_rgb = self.parent._config.get("traffic_light_colors", {}).get("unlocked", [0, 0, 255])
+                
                 color = QtGui.QColor(*color_rgb)
                 painter.setBrush(QtGui.QBrush(color))
                 painter.setPen(Qt.NoPen)
@@ -108,6 +126,16 @@ class HTMLDelegate(QtWidgets.QStyledItemDelegate):
             painter.setBrush(QtGui.QBrush(QtGui.QColor(*edited_color_rgb)))
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(QtCore.QPointF(pos3_x, dot_y), dot_radius, dot_radius)
+            painter.restore()
+        
+        # 4. Draw Difficult dot (Position 4 - Leftmost)
+        if shape and hasattr(shape, 'difficult') and shape.difficult:
+            painter.save()
+            painter.setRenderHint(QtGui.QPainter.Antialiasing)
+            difficult_color_rgb = self.parent._config.get("traffic_light_colors", {}).get("difficult", [128, 0, 128])
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(*difficult_color_rgb)))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QtCore.QPointF(pos4_x, dot_y), dot_radius, dot_radius)
             painter.restore()
 
     # QT Overload

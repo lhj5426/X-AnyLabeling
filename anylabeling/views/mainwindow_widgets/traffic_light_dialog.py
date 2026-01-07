@@ -22,6 +22,14 @@ class TrafficLightDialog(QDialog):
     clear_all_edited = pyqtSignal()
     # Signal to emit when "Clear Current Page Edited" button is clicked
     clear_current_page_edited = pyqtSignal()
+    # Signal to emit when "Clear All Difficult" button is clicked
+    clear_all_difficult = pyqtSignal()
+    # Signal to emit when "Clear Current Page Difficult" button is clicked
+    clear_current_page_difficult = pyqtSignal()
+    # Signal to emit when "Clear All Manual Lock" button is clicked
+    clear_all_manual_lock = pyqtSignal()
+    # Signal to emit when "Clear Current Page Manual Lock" button is clicked
+    clear_current_page_manual_lock = pyqtSignal()
     # Signal to emit when a traffic light color is changed
     color_changed = pyqtSignal(str, QColor) # light_name, new_color
 
@@ -36,6 +44,7 @@ class TrafficLightDialog(QDialog):
         self.key_to_display_name = {
             "selected": "已选中",
             "edited": "已编辑",
+            "difficult": "困难标记",
             "locked": "已锁定",
             "unlocked": "已解锁",
         }
@@ -46,6 +55,7 @@ class TrafficLightDialog(QDialog):
         default_colors_rgb = {
             "selected": [255, 0, 0],  # Red
             "edited": [0, 255, 0],  # Green
+            "difficult": [128, 0, 128],  # Purple
             "locked": [255, 255, 0],  # Yellow
             "unlocked": [0, 0, 255],  # Blue
         }
@@ -65,12 +75,15 @@ class TrafficLightDialog(QDialog):
 
         # Traffic Light Color Settings Group
         color_group_box = QGroupBox("信号灯颜色")
-        color_grid_layout = QtWidgets.QGridLayout() # Use QGridLayout for 2x2 arrangement
+        color_grid_layout = QtWidgets.QGridLayout() # Use QGridLayout for grid arrangement
         color_grid_layout.setContentsMargins(10, 10, 10, 10) # Add some padding
         color_grid_layout.setSpacing(10) # Add spacing between items
 
-        # Define the order for the 2x2 grid
-        grid_order_keys = ["selected", "edited", "locked", "unlocked"]
+        # Define the order for the grid (3 rows x 2 columns)
+        # Row 0: selected, edited
+        # Row 1: difficult, locked
+        # Row 2: unlocked
+        grid_order_keys = ["selected", "edited", "difficult", "locked", "unlocked"]
 
         for i, key in enumerate(grid_order_keys):
             display_name = self.key_to_display_name[key]
@@ -96,15 +109,44 @@ class TrafficLightDialog(QDialog):
         color_group_box.setLayout(color_grid_layout)
         main_layout.addWidget(color_group_box)
 
-        # Clear All Edited Button
-        self.clear_button = QPushButton("清除全部已编辑")
-        self.clear_button.clicked.connect(self._on_clear_all_edited)
-        main_layout.addWidget(self.clear_button)
+        # Clear Buttons - 2 columns x 3 rows layout
+        buttons_grid_layout = QtWidgets.QGridLayout()
+        buttons_grid_layout.setContentsMargins(10, 10, 10, 10)
+        buttons_grid_layout.setSpacing(10)
 
-        # Clear Current Page Edited Button
+        # Left column: Clear current page
+        # Row 0: Clear current page edited
         self.clear_current_page_button = QPushButton("清除本页已编辑")
         self.clear_current_page_button.clicked.connect(self._on_clear_current_page_edited)
-        main_layout.addWidget(self.clear_current_page_button)
+        buttons_grid_layout.addWidget(self.clear_current_page_button, 0, 0)
+
+        # Row 1: Clear current page difficult
+        self.clear_current_page_difficult_button = QPushButton("清除本页困难标记")
+        self.clear_current_page_difficult_button.clicked.connect(self._on_clear_current_page_difficult)
+        buttons_grid_layout.addWidget(self.clear_current_page_difficult_button, 1, 0)
+
+        # Row 2: Clear current page manual lock
+        self.clear_current_page_manual_lock_button = QPushButton("清除本页手动锁定")
+        self.clear_current_page_manual_lock_button.clicked.connect(self._on_clear_current_page_manual_lock)
+        buttons_grid_layout.addWidget(self.clear_current_page_manual_lock_button, 2, 0)
+
+        # Right column: Clear all
+        # Row 0: Clear all edited
+        self.clear_button = QPushButton("清除全部已编辑")
+        self.clear_button.clicked.connect(self._on_clear_all_edited)
+        buttons_grid_layout.addWidget(self.clear_button, 0, 1)
+
+        # Row 1: Clear all difficult
+        self.clear_all_difficult_button = QPushButton("清除全部困难标记")
+        self.clear_all_difficult_button.clicked.connect(self._on_clear_all_difficult)
+        buttons_grid_layout.addWidget(self.clear_all_difficult_button, 1, 1)
+
+        # Row 2: Clear all manual lock
+        self.clear_all_manual_lock_button = QPushButton("清除全部手动锁定")
+        self.clear_all_manual_lock_button.clicked.connect(self._on_clear_all_manual_lock)
+        buttons_grid_layout.addWidget(self.clear_all_manual_lock_button, 2, 1)
+
+        main_layout.addLayout(buttons_grid_layout)
 
         # Log Display
         log_group_box = QGroupBox("日志")
@@ -134,6 +176,22 @@ class TrafficLightDialog(QDialog):
     def _on_clear_current_page_edited(self):
         self.log_message('"清除本页已编辑"按钮被点击。')
         self.clear_current_page_edited.emit()  # Emit signal for parent to handle
+
+    def _on_clear_all_difficult(self):
+        self.log_message('"清除全部困难标记"按钮被点击。')
+        self.clear_all_difficult.emit()  # Emit signal for parent to handle
+
+    def _on_clear_current_page_difficult(self):
+        self.log_message('"清除本页困难标记"按钮被点击。')
+        self.clear_current_page_difficult.emit()  # Emit signal for parent to handle
+
+    def _on_clear_all_manual_lock(self):
+        self.log_message('"清除全部手动锁定"按钮被点击。')
+        self.clear_all_manual_lock.emit()  # Emit signal for parent to handle
+
+    def _on_clear_current_page_manual_lock(self):
+        self.log_message('"清除本页手动锁定"按钮被点击。')
+        self.clear_current_page_manual_lock.emit()  # Emit signal for parent to handle
 
     def log_message(self, message):
         self.log_display.appendPlainText(message)
