@@ -670,8 +670,9 @@ https://github.com/user-attachments/assets/7f4c19db-ba64-4d43-b417-da3463c5a75c
 
 <img width="1009" height="652" alt="image" src="https://github.com/user-attachments/assets/9b33409b-456e-4594-b6a3-c3208c17ad9a" />
 
+137.标签页管理器添加 困难标记红绿灯 添加锁定 解锁标签按 
 
-
+<img width="357" height="484" alt="image" src="https://github.com/user-attachments/assets/d7c8e1e9-3585-4e91-8f70-95cb4cffe0bc" />
 
 
 
