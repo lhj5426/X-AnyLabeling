@@ -14484,6 +14484,11 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.update() # Generic update for now
             self.label_list.viewport().update() # Force repaint of label list to update unlocked dots
         
+        elif light_name_english == "difficult":
+            # Update difficult color in thumbnail viewer if it's open
+            if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog:
+                self.thumbnail_viewer_dialog.update_difficult_color()
+        
         # Generic canvas update for any shape-related color changes
         self.canvas.update()
 
