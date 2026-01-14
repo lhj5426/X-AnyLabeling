@@ -580,6 +580,7 @@ class LabelingWidget(QtWidgets.QWidget):
             exclude_locked = self._config.get("deselect_exclude_locked", True)
             deselect_even = self._config.get("deselect_even", False)
             deselect_odd = self._config.get("deselect_odd", False)
+            deselect_edited = self._config.get("deselect_edited", False)
             
             # 获取锁定的标签
             locked_labels = set()
@@ -597,7 +598,7 @@ class LabelingWidget(QtWidgets.QWidget):
                         return True
                 return False
             
-            # 根据偶数/奇数设置决定取消哪些项（按原始列表序号）
+            # 根据偶数/奇数/已编辑设置决定取消哪些项
             if deselect_even:
                 # 按偶数取消（2, 4, 6...）- 按原始列表序号
                 for i, item in enumerate(self.label_list):
@@ -613,6 +614,15 @@ class LabelingWidget(QtWidgets.QWidget):
                         shape = item.shape()
                         if should_skip_locked(shape):
                             continue
+                        item.setCheckState(Qt.Unchecked)
+            elif deselect_edited:
+                # 按已编辑取消 - 隐藏有绿色信号灯的项目，保留未编辑的
+                for item in self.label_list:
+                    shape = item.shape()
+                    if should_skip_locked(shape):
+                        continue
+                    # 只隐藏明确有 is_edited=True 的（有绿灯的）
+                    if shape and hasattr(shape, "is_edited") and shape.is_edited:
                         item.setCheckState(Qt.Unchecked)
             else:
                 # 正常取消所有（排除锁定且未解锁的）
@@ -4812,6 +4822,9 @@ class LabelingWidget(QtWidgets.QWidget):
             self.alignment_dialog.log(self.tr("错误: 没有选中任何需要对齐的矩形。"))
             return
 
+        # 获取对齐模式：True=伸缩对齐，False=移动对齐
+        is_stretch_mode = self.alignment_dialog.is_stretch_align_mode()
+
         # 统一角度使用专门的标签过滤，其他操作使用通用标签过滤
         if mode == 'unify_angle':
             target_labels = self.alignment_dialog.get_angle_target_labels()
@@ -4831,18 +4844,30 @@ class LabelingWidget(QtWidgets.QWidget):
             'unify_angle': self.tr('统一角度'),
         }
         display_mode = mode_display_map.get(mode, mode)
-        self.alignment_dialog.log(self.tr("开始执行: {mode}").format(mode=display_mode))
+        align_mode_text = self.tr("伸缩对齐") if is_stretch_mode else self.tr("移动对齐")
+        self.alignment_dialog.log(self.tr("开始执行: {mode} ({align_mode})").format(mode=display_mode, align_mode=align_mode_text))
         if target_labels:
             self.alignment_dialog.log(self.tr("目标标签: {labels}").format(labels=target_labels))
 
         ref_rect = self.reference_shape.bounding_rect()
-        # 对于普通矩形，获取其边界位置
-        ref_left_x = self._get_shape_edge_x(self.reference_shape, 'left')
-        ref_right_x = self._get_shape_edge_x(self.reference_shape, 'right')
-        ref_top_y = self._get_shape_edge_y(self.reference_shape, 'top')
-        ref_bottom_y = self._get_shape_edge_y(self.reference_shape, 'bottom')
-        ref_center_x = (ref_left_x + ref_right_x) / 2
-        ref_center_y = (ref_top_y + ref_bottom_y) / 2
+        
+        # 根据对齐模式选择不同的参照边界
+        if is_stretch_mode:
+            # 伸缩对齐模式：使用 bounding box 边界
+            ref_left_x = ref_rect.left()
+            ref_right_x = ref_rect.right()
+            ref_top_y = ref_rect.top()
+            ref_bottom_y = ref_rect.bottom()
+            ref_center_x = ref_rect.center().x()
+            ref_center_y = ref_rect.center().y()
+        else:
+            # 移动对齐模式：使用实际边界（旋转矩形用边共线）
+            ref_left_x = self._get_shape_edge_x(self.reference_shape, 'left')
+            ref_right_x = self._get_shape_edge_x(self.reference_shape, 'right')
+            ref_top_y = self._get_shape_edge_y(self.reference_shape, 'top')
+            ref_bottom_y = self._get_shape_edge_y(self.reference_shape, 'bottom')
+            ref_center_x = (ref_left_x + ref_right_x) / 2
+            ref_center_y = (ref_top_y + ref_bottom_y) / 2
         
         # 检查参照物是否是旋转矩形
         ref_is_rotation = (self.reference_shape.shape_type == 'rotation' and 
@@ -4870,40 +4895,216 @@ class LabelingWidget(QtWidgets.QWidget):
             delta = QtCore.QPointF(0, 0)
             action_taken = False
             
-            # 如果参照物和目标都是旋转矩形，使用边共线对齐
-            if ref_is_rotation and shape_is_rotation and mode in ['left', 'right', 'top', 'bottom']:
-                delta = self._calculate_rotation_alignment_delta(
-                    self.reference_shape, shape, mode
-                )
-                self.alignment_dialog.log(
-                    f"处理形状: {shape.label}, 旋转矩形边对齐 delta=({delta.x():.2f}, {delta.y():.2f})"
-                )
-            else:
-                # 普通矩形对齐逻辑
-                if mode == 'left':
-                    self.alignment_dialog.log(f"处理形状: {shape.label}, 左边X={shape_left_x:.2f}, 参照左边X={ref_left_x:.2f}")
-                    delta.setX(ref_left_x - shape_left_x)
-                    self.alignment_dialog.log(f"左对齐 delta.x={delta.x():.2f}")
-                elif mode == 'right':
-                    self.alignment_dialog.log(f"处理形状: {shape.label}, 右边X={shape_right_x:.2f}, 参照右边X={ref_right_x:.2f}")
-                    delta.setX(ref_right_x - shape_right_x)
-                    self.alignment_dialog.log(f"右对齐 delta.x={delta.x():.2f}")
-                elif mode == 'h_center':
-                    delta.setX(ref_center_x - shape_center_x)
-                elif mode == 'top':
-                    self.alignment_dialog.log(f"处理形状: {shape.label}, 上边Y={shape_top_y:.2f}, 参照上边Y={ref_top_y:.2f}")
-                    delta.setY(ref_top_y - shape_top_y)
-                elif mode == 'bottom':
-                    self.alignment_dialog.log(f"处理形状: {shape.label}, 下边Y={shape_bottom_y:.2f}, 参照下边Y={ref_bottom_y:.2f}")
-                    delta.setY(ref_bottom_y - shape_bottom_y)
-                elif mode == 'v_center':
-                    delta.setY(ref_center_y - shape_center_y)
-            
             # 对齐操作：只要是对齐模式就算处理过（即使delta为0也表示已经对齐）
             if mode in ['left', 'right', 'h_center', 'top', 'bottom', 'v_center']:
-                if not delta.isNull():
-                    shape.move_by(delta)
-                action_taken = True
+                if is_stretch_mode:
+                    # 伸缩对齐模式：通过调整矩形大小来对齐
+                    if shape.shape_type == 'rectangle':
+                        target_rect = shape.bounding_rect()
+                        new_left = target_rect.left()
+                        new_right = target_rect.right()
+                        new_top = target_rect.top()
+                        new_bottom = target_rect.bottom()
+                        
+                        if mode == 'left':
+                            # 左对齐：调整左边到参照位置，右边不变
+                            new_left = ref_left_x
+                            self.alignment_dialog.log(f"伸缩对齐: {shape.label}, 左边从 {target_rect.left():.2f} 调整到 {new_left:.2f}")
+                        elif mode == 'right':
+                            # 右对齐：调整右边到参照位置，左边不变
+                            new_right = ref_right_x
+                            self.alignment_dialog.log(f"伸缩对齐: {shape.label}, 右边从 {target_rect.right():.2f} 调整到 {new_right:.2f}")
+                        elif mode == 'h_center':
+                            # 水平居中：保持宽度，调整中心位置
+                            width = target_rect.width()
+                            new_left = ref_center_x - width / 2
+                            new_right = ref_center_x + width / 2
+                        elif mode == 'top':
+                            # 上对齐：调整上边到参照位置，下边不变
+                            new_top = ref_top_y
+                            self.alignment_dialog.log(f"伸缩对齐: {shape.label}, 上边从 {target_rect.top():.2f} 调整到 {new_top:.2f}")
+                        elif mode == 'bottom':
+                            # 下对齐：调整下边到参照位置，上边不变
+                            new_bottom = ref_bottom_y
+                            self.alignment_dialog.log(f"伸缩对齐: {shape.label}, 下边从 {target_rect.bottom():.2f} 调整到 {new_bottom:.2f}")
+                        elif mode == 'v_center':
+                            # 垂直居中：保持高度，调整中心位置
+                            height = target_rect.height()
+                            new_top = ref_center_y - height / 2
+                            new_bottom = ref_center_y + height / 2
+                        
+                        # 应用新的矩形坐标
+                        shape.points = [
+                            QtCore.QPointF(new_left, new_top),
+                            QtCore.QPointF(new_right, new_top),
+                            QtCore.QPointF(new_right, new_bottom),
+                            QtCore.QPointF(new_left, new_bottom),
+                        ]
+                    elif shape.shape_type == 'rotation':
+                        # 旋转矩形的伸缩对齐 - 把指定的边拉伸到参照物的对应边位置，另一边保持不变
+                        # 旋转矩形点顺序: p0=左上, p1=右上, p2=右下, p3=左下
+                        p0, p1, p2, p3 = shape.points[0], shape.points[1], shape.points[2], shape.points[3]
+                        
+                        # 获取当前的内在尺寸和角度
+                        current_width = utils.distance(p1 - p0)
+                        current_height = utils.distance(p2 - p1)
+                        angle = shape.direction
+                        
+                        cos_a = math.cos(angle)
+                        sin_a = math.sin(angle)
+                        
+                        # 计算当前矩形各边的中点
+                        left_mid = QtCore.QPointF((p0.x() + p3.x()) / 2, (p0.y() + p3.y()) / 2)
+                        right_mid = QtCore.QPointF((p1.x() + p2.x()) / 2, (p1.y() + p2.y()) / 2)
+                        top_mid = QtCore.QPointF((p0.x() + p1.x()) / 2, (p0.y() + p1.y()) / 2)
+                        bottom_mid = QtCore.QPointF((p3.x() + p2.x()) / 2, (p3.y() + p2.y()) / 2)
+                        
+                        # 用实际的边向量计算方向（更准确）
+                        # 宽度方向：从左边中点到右边中点
+                        width_vec_x = right_mid.x() - left_mid.x()
+                        width_vec_y = right_mid.y() - left_mid.y()
+                        width_len = math.sqrt(width_vec_x**2 + width_vec_y**2)
+                        if width_len > 0.001:
+                            width_dir_x = width_vec_x / width_len
+                            width_dir_y = width_vec_y / width_len
+                        else:
+                            width_dir_x, width_dir_y = cos_a, sin_a
+                        
+                        # 高度方向：从上边中点到下边中点
+                        height_vec_x = bottom_mid.x() - top_mid.x()
+                        height_vec_y = bottom_mid.y() - top_mid.y()
+                        height_len = math.sqrt(height_vec_x**2 + height_vec_y**2)
+                        if height_len > 0.001:
+                            height_dir_x = height_vec_x / height_len
+                            height_dir_y = height_vec_y / height_len
+                        else:
+                            height_dir_x, height_dir_y = -sin_a, cos_a
+                        
+                        # 获取参照物的边中点
+                        if self.reference_shape.shape_type == 'rotation':
+                            rp0, rp1, rp2, rp3 = self.reference_shape.points
+                            ref_left_mid = QtCore.QPointF((rp0.x() + rp3.x()) / 2, (rp0.y() + rp3.y()) / 2)
+                            ref_right_mid = QtCore.QPointF((rp1.x() + rp2.x()) / 2, (rp1.y() + rp2.y()) / 2)
+                            ref_top_mid = QtCore.QPointF((rp0.x() + rp1.x()) / 2, (rp0.y() + rp1.y()) / 2)
+                            ref_bottom_mid = QtCore.QPointF((rp3.x() + rp2.x()) / 2, (rp3.y() + rp2.y()) / 2)
+                        else:
+                            ref_left_mid = QtCore.QPointF(ref_left_x, (ref_top_y + ref_bottom_y) / 2)
+                            ref_right_mid = QtCore.QPointF(ref_right_x, (ref_top_y + ref_bottom_y) / 2)
+                            ref_top_mid = QtCore.QPointF((ref_left_x + ref_right_x) / 2, ref_top_y)
+                            ref_bottom_mid = QtCore.QPointF((ref_left_x + ref_right_x) / 2, ref_bottom_y)
+                        
+                        new_width = current_width
+                        new_height = current_height
+                        new_center_x = (p0.x() + p1.x() + p2.x() + p3.x()) / 4.0
+                        new_center_y = (p0.y() + p1.y() + p2.y() + p3.y()) / 4.0
+                        
+                        if mode == 'left':
+                            # 左对齐：把左边拉伸到参照物左边位置，右边保持不变
+                            diff_x = ref_left_mid.x() - left_mid.x()
+                            diff_y = ref_left_mid.y() - left_mid.y()
+                            proj = diff_x * width_dir_x + diff_y * width_dir_y
+                            new_width = current_width - proj
+                            new_center_x = right_mid.x() - (new_width / 2) * width_dir_x
+                            new_center_y = right_mid.y() - (new_width / 2) * width_dir_y
+                            self.alignment_dialog.log(f"伸缩对齐: {shape.label}, 左边对齐, 宽度 {current_width:.2f} → {new_width:.2f}")
+                        
+                        elif mode == 'right':
+                            # 右对齐：把右边拉伸到参照物右边位置，左边保持不变
+                            diff_x = ref_right_mid.x() - right_mid.x()
+                            diff_y = ref_right_mid.y() - right_mid.y()
+                            proj = diff_x * width_dir_x + diff_y * width_dir_y
+                            new_width = current_width + proj
+                            new_center_x = left_mid.x() + (new_width / 2) * width_dir_x
+                            new_center_y = left_mid.y() + (new_width / 2) * width_dir_y
+                            self.alignment_dialog.log(f"伸缩对齐: {shape.label}, 右边对齐, 宽度 {current_width:.2f} → {new_width:.2f}")
+                        
+                        elif mode == 'top':
+                            # 上对齐：把上边拉伸到参照物上边位置，下边保持不变
+                            diff_x = ref_top_mid.x() - top_mid.x()
+                            diff_y = ref_top_mid.y() - top_mid.y()
+                            proj = diff_x * height_dir_x + diff_y * height_dir_y
+                            new_height = current_height - proj
+                            new_center_x = bottom_mid.x() - (new_height / 2) * height_dir_x
+                            new_center_y = bottom_mid.y() - (new_height / 2) * height_dir_y
+                            self.alignment_dialog.log(f"伸缩对齐: {shape.label}, 上边对齐, 高度 {current_height:.2f} → {new_height:.2f}")
+                        
+                        elif mode == 'bottom':
+                            # 下对齐：把下边拉伸到参照物下边位置，上边保持不变
+                            diff_x = ref_bottom_mid.x() - bottom_mid.x()
+                            diff_y = ref_bottom_mid.y() - bottom_mid.y()
+                            proj = diff_x * height_dir_x + diff_y * height_dir_y
+                            new_height = current_height + proj
+                            new_center_x = top_mid.x() + (new_height / 2) * height_dir_x
+                            new_center_y = top_mid.y() + (new_height / 2) * height_dir_y
+                            self.alignment_dialog.log(f"伸缩对齐: {shape.label}, 下边对齐, 高度 {current_height:.2f} → {new_height:.2f}")
+                        
+                        elif mode == 'h_center':
+                            ref_center = QtCore.QPointF((ref_left_mid.x() + ref_right_mid.x()) / 2, (ref_left_mid.y() + ref_right_mid.y()) / 2)
+                            new_center_x = ref_center.x()
+                            new_center_y = ref_center.y()
+                        
+                        elif mode == 'v_center':
+                            ref_center = QtCore.QPointF((ref_top_mid.x() + ref_bottom_mid.x()) / 2, (ref_top_mid.y() + ref_bottom_mid.y()) / 2)
+                            new_center_x = ref_center.x()
+                            new_center_y = ref_center.y()
+                        
+                        if new_width < 1:
+                            new_width = 1
+                        if new_height < 1:
+                            new_height = 1
+                        
+                        # 重建旋转矩形
+                        half_w = new_width / 2.0
+                        half_h = new_height / 2.0
+                        
+                        p0_local = QtCore.QPointF(-half_w, -half_h)
+                        p1_local = QtCore.QPointF(half_w, -half_h)
+                        p2_local = QtCore.QPointF(half_w, half_h)
+                        p3_local = QtCore.QPointF(-half_w, half_h)
+                        
+                        def rot(pt):
+                            return QtCore.QPointF(
+                                pt.x() * cos_a - pt.y() * sin_a + new_center_x,
+                                pt.x() * sin_a + pt.y() * cos_a + new_center_y,
+                            )
+                        
+                        shape.points = [rot(p0_local), rot(p1_local), rot(p2_local), rot(p3_local)]
+                    action_taken = True
+                else:
+                    # 移动对齐模式：通过移动矩形位置来对齐
+                    # 计算移动距离delta
+                    # 如果参照物和目标都是旋转矩形，使用边共线对齐
+                    if ref_is_rotation and shape_is_rotation and mode in ['left', 'right', 'top', 'bottom']:
+                        delta = self._calculate_rotation_alignment_delta(
+                            self.reference_shape, shape, mode
+                        )
+                        self.alignment_dialog.log(
+                            f"处理形状: {shape.label}, 旋转矩形边对齐 delta=({delta.x():.2f}, {delta.y():.2f})"
+                        )
+                    else:
+                        # 普通矩形对齐逻辑
+                        if mode == 'left':
+                            self.alignment_dialog.log(f"处理形状: {shape.label}, 左边X={shape_left_x:.2f}, 参照左边X={ref_left_x:.2f}")
+                            delta.setX(ref_left_x - shape_left_x)
+                            self.alignment_dialog.log(f"左对齐 delta.x={delta.x():.2f}")
+                        elif mode == 'right':
+                            self.alignment_dialog.log(f"处理形状: {shape.label}, 右边X={shape_right_x:.2f}, 参照右边X={ref_right_x:.2f}")
+                            delta.setX(ref_right_x - shape_right_x)
+                            self.alignment_dialog.log(f"右对齐 delta.x={delta.x():.2f}")
+                        elif mode == 'h_center':
+                            delta.setX(ref_center_x - shape_center_x)
+                        elif mode == 'top':
+                            self.alignment_dialog.log(f"处理形状: {shape.label}, 上边Y={shape_top_y:.2f}, 参照上边Y={ref_top_y:.2f}")
+                            delta.setY(ref_top_y - shape_top_y)
+                        elif mode == 'bottom':
+                            self.alignment_dialog.log(f"处理形状: {shape.label}, 下边Y={shape_bottom_y:.2f}, 参照下边Y={ref_bottom_y:.2f}")
+                            delta.setY(ref_bottom_y - shape_bottom_y)
+                        elif mode == 'v_center':
+                            delta.setY(ref_center_y - shape_center_y)
+                    
+                    if not delta.isNull():
+                        shape.move_by(delta)
+                    action_taken = True
             
             # Unify size
             if mode == 'unify_width' or mode == 'unify_height':
@@ -5071,6 +5272,8 @@ class LabelingWidget(QtWidgets.QWidget):
 
             if action_taken:
                 processed_count += 1
+                # 标记为已编辑（添加绿灯）
+                shape.is_edited = True
 
         self.set_dirty()
         self.canvas.repaint()

@@ -192,9 +192,12 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.deselect_even_checkbox.setToolTip("勾选后，只取消偶数位置的项目（2, 4, 6...）")
         self.deselect_odd_checkbox = QtWidgets.QCheckBox("按奇数取消")
         self.deselect_odd_checkbox.setToolTip("勾选后，只取消奇数位置的项目（1, 3, 5...）")
+        self.deselect_edited_checkbox = QtWidgets.QCheckBox("按已编辑取消")
+        self.deselect_edited_checkbox.setToolTip("勾选后，只取消已编辑（绿色信号灯）的项目")
         self.deselect_layout.addWidget(self.deselect_exclude_locked_checkbox)
         self.deselect_layout.addWidget(self.deselect_even_checkbox)
         self.deselect_layout.addWidget(self.deselect_odd_checkbox)
+        self.deselect_layout.addWidget(self.deselect_edited_checkbox)
         self.deselect_group.setLayout(self.deselect_layout)
 
         # 反选功能增强设置
@@ -291,8 +294,10 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.deselect_exclude_locked_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
         self.deselect_even_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
         self.deselect_odd_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
-        self.deselect_even_checkbox.stateChanged.connect(self._on_even_odd_exclusive)
-        self.deselect_odd_checkbox.stateChanged.connect(self._on_even_odd_exclusive)
+        self.deselect_edited_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
+        self.deselect_even_checkbox.stateChanged.connect(self._on_even_odd_edited_exclusive)
+        self.deselect_odd_checkbox.stateChanged.connect(self._on_even_odd_edited_exclusive)
+        self.deselect_edited_checkbox.stateChanged.connect(self._on_even_odd_edited_exclusive)
         
         self.invert_exclude_locked_checkbox.stateChanged.connect(self._on_invert_setting_changed)
         
@@ -335,8 +340,10 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.deselect_exclude_locked_checkbox.stateChanged.disconnect(self._on_deselect_setting_changed)
             self.deselect_even_checkbox.stateChanged.disconnect(self._on_deselect_setting_changed)
             self.deselect_odd_checkbox.stateChanged.disconnect(self._on_deselect_setting_changed)
-            self.deselect_even_checkbox.stateChanged.disconnect(self._on_even_odd_exclusive)
-            self.deselect_odd_checkbox.stateChanged.disconnect(self._on_even_odd_exclusive)
+            self.deselect_edited_checkbox.stateChanged.disconnect(self._on_deselect_setting_changed)
+            self.deselect_even_checkbox.stateChanged.disconnect(self._on_even_odd_edited_exclusive)
+            self.deselect_odd_checkbox.stateChanged.disconnect(self._on_even_odd_edited_exclusive)
+            self.deselect_edited_checkbox.stateChanged.disconnect(self._on_even_odd_edited_exclusive)
             self.invert_exclude_locked_checkbox.stateChanged.disconnect(self._on_invert_setting_changed)
             self.overlap_enabled_checkbox.stateChanged.disconnect(self._on_overlap_setting_changed)
             self.overlap_exclude_locked_checkbox.stateChanged.disconnect(self._on_overlap_setting_changed)
@@ -370,13 +377,19 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.deselect_exclude_locked_checkbox.setChecked(self._config.get("deselect_exclude_locked", True))
             deselect_even = self._config.get("deselect_even", False)
             deselect_odd = self._config.get("deselect_odd", False)
-            if deselect_even and deselect_odd:
+            deselect_edited = self._config.get("deselect_edited", False)
+            # 确保偶数、奇数、已编辑三个选项互斥
+            checked_count = sum([deselect_even, deselect_odd, deselect_edited])
+            if checked_count > 1:
                 deselect_even = False
                 deselect_odd = False
+                deselect_edited = False
                 self._config["deselect_even"] = False
                 self._config["deselect_odd"] = False
+                self._config["deselect_edited"] = False
             self.deselect_even_checkbox.setChecked(deselect_even)
             self.deselect_odd_checkbox.setChecked(deselect_odd)
+            self.deselect_edited_checkbox.setChecked(deselect_edited)
             
             self.invert_exclude_locked_checkbox.setChecked(self._config.get("invert_exclude_locked", True))
             
@@ -419,8 +432,10 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.deselect_exclude_locked_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
             self.deselect_even_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
             self.deselect_odd_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
-            self.deselect_even_checkbox.stateChanged.connect(self._on_even_odd_exclusive)
-            self.deselect_odd_checkbox.stateChanged.connect(self._on_even_odd_exclusive)
+            self.deselect_edited_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
+            self.deselect_even_checkbox.stateChanged.connect(self._on_even_odd_edited_exclusive)
+            self.deselect_odd_checkbox.stateChanged.connect(self._on_even_odd_edited_exclusive)
+            self.deselect_edited_checkbox.stateChanged.connect(self._on_even_odd_edited_exclusive)
             self.invert_exclude_locked_checkbox.stateChanged.connect(self._on_invert_setting_changed)
             self.overlap_enabled_checkbox.stateChanged.connect(self._on_overlap_setting_changed)
             self.overlap_exclude_locked_checkbox.stateChanged.connect(self._on_overlap_setting_changed)
@@ -456,8 +471,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
     def _on_default_highlight_changed(self, state):
         if self._config:
             is_enabled = self.default_highlight_checkbox.isChecked()
-            self._config["highlight_enabled_by_default"] = is_enabled
-            save_config(self._config)
+            self._config["highlight_enabled_by_default"] = is_enabledave_config(self._config)
             if self.parent() and hasattr(self.parent(), 'apply_default_highlight_setting'):
                 self.parent().apply_default_highlight_setting(is_enabled)
 
@@ -493,6 +507,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["deselect_exclude_locked"] = self.deselect_exclude_locked_checkbox.isChecked()
             self._config["deselect_even"] = self.deselect_even_checkbox.isChecked()
             self._config["deselect_odd"] = self.deselect_odd_checkbox.isChecked()
+            self._config["deselect_edited"] = self.deselect_edited_checkbox.isChecked()
             save_config(self._config)
 
     def _on_invert_setting_changed(self, state):
@@ -500,17 +515,30 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["invert_exclude_locked"] = self.invert_exclude_locked_checkbox.isChecked()
             save_config(self._config)
 
-    def _on_even_odd_exclusive(self, state):
+    def _on_even_odd_edited_exclusive(self, state):
         sender = self.sender()
         if state == QtCore.Qt.Checked:
             if sender == self.deselect_even_checkbox:
                 self.deselect_odd_checkbox.blockSignals(True)
                 self.deselect_odd_checkbox.setChecked(False)
                 self.deselect_odd_checkbox.blockSignals(False)
+                self.deselect_edited_checkbox.blockSignals(True)
+                self.deselect_edited_checkbox.setChecked(False)
+                self.deselect_edited_checkbox.blockSignals(False)
             elif sender == self.deselect_odd_checkbox:
                 self.deselect_even_checkbox.blockSignals(True)
                 self.deselect_even_checkbox.setChecked(False)
                 self.deselect_even_checkbox.blockSignals(False)
+                self.deselect_edited_checkbox.blockSignals(True)
+                self.deselect_edited_checkbox.setChecked(False)
+                self.deselect_edited_checkbox.blockSignals(False)
+            elif sender == self.deselect_edited_checkbox:
+                self.deselect_even_checkbox.blockSignals(True)
+                self.deselect_even_checkbox.setChecked(False)
+                self.deselect_even_checkbox.blockSignals(False)
+                self.deselect_odd_checkbox.blockSignals(True)
+                self.deselect_odd_checkbox.setChecked(False)
+                self.deselect_odd_checkbox.blockSignals(False)
 
     def _on_overlap_setting_changed(self, state=None):
         if self._config:

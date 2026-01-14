@@ -215,6 +215,15 @@ class AlignmentDialog(QtWidgets.QDialog):
         alignment_group = QtWidgets.QGroupBox(self.tr("对齐"))
         alignment_layout = QtWidgets.QGridLayout(alignment_group)
 
+        # 对齐模式选择复选框
+        alignment_mode_layout = QtWidgets.QHBoxLayout()
+        self.stretch_align_checkbox = QtWidgets.QCheckBox(self.tr("伸缩对齐模式"))
+        self.stretch_align_checkbox.setToolTip(self.tr("勾选: 通过调整矩形大小来对齐\n不勾选: 通过移动矩形位置来对齐"))
+        self.stretch_align_checkbox.setChecked(False)  # 默认使用移动对齐
+        alignment_mode_layout.addWidget(self.stretch_align_checkbox)
+        alignment_mode_layout.addStretch()
+        alignment_layout.addLayout(alignment_mode_layout, 0, 0, 1, 3)  # 占据第一行的3列
+
         tooltip_text = self.tr("左键: 执行后自动退出模式\n右键: 执行后保持模式")
 
         self.btn_align_left = AlignmentButton(self.tr("左对齐"))
@@ -235,12 +244,12 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_align_bottom = AlignmentButton(self.tr("下对齐"))
         self.btn_align_bottom.setToolTip(tooltip_text)
 
-        alignment_layout.addWidget(self.btn_align_left, 0, 0)
-        alignment_layout.addWidget(self.btn_align_h_center, 0, 1)
-        alignment_layout.addWidget(self.btn_align_right, 0, 2)
-        alignment_layout.addWidget(self.btn_align_top, 1, 0)
-        alignment_layout.addWidget(self.btn_align_v_center, 1, 1)
-        alignment_layout.addWidget(self.btn_align_bottom, 1, 2)
+        alignment_layout.addWidget(self.btn_align_left, 1, 0)
+        alignment_layout.addWidget(self.btn_align_h_center, 1, 1)
+        alignment_layout.addWidget(self.btn_align_right, 1, 2)
+        alignment_layout.addWidget(self.btn_align_top, 2, 0)
+        alignment_layout.addWidget(self.btn_align_v_center, 2, 1)
+        alignment_layout.addWidget(self.btn_align_bottom, 2, 2)
         main_layout.addWidget(alignment_group)
 
         # --- Unify Size buttons ---
@@ -718,6 +727,14 @@ class AlignmentDialog(QtWidgets.QDialog):
     def is_connect_edges_enabled(self):
         """获取是否启用弹出后连接边缘"""
         return self.connect_edges_checkbox.isChecked()
+
+    def is_stretch_align_mode(self):
+        """获取是否使用伸缩对齐模式
+        
+        Returns:
+            bool: True表示伸缩对齐（调整大小），False表示移动对齐（移动位置）
+        """
+        return self.stretch_align_checkbox.isChecked()
 
     def get_push_direction(self):
         """获取弹出方向设置
