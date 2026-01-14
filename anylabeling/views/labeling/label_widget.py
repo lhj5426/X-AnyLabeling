@@ -10154,7 +10154,10 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.disable_paste_preview()
 
     def refresh_canvas(self):
-        """刷新画布，重置所有图形的会话解锁状态"""
+        """刷新画布，重置所有图形的会话解锁状态，并取消所有选中"""
+        # 取消所有选中的图形
+        self.canvas.deselect_shape()
+        
         # 重置所有图形的会话解锁状态
         for shape in self.canvas.shapes:
             shape.is_session_unlocked = False
