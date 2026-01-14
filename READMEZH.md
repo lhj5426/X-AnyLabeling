@@ -678,5 +678,14 @@ https://github.com/user-attachments/assets/7f4c19db-ba64-4d43-b417-da3463c5a75c
 
 https://github.com/user-attachments/assets/e7fd3ef0-1cbf-4bb6-992b-413f403e8991
 
+139. 高亮与锁定设置 取消功能增强 添加 按已编辑 绿灯隐藏 取消选择隐藏
+
+https://github.com/user-attachments/assets/0f34b275-f03f-4687-8453-aab1009bc637
+
+140.矩形对齐工具 增加伸缩对对齐模式 同时支持旋转矩形
+
+https://github.com/user-attachments/assets/744e0a00-321d-406f-9831-4e8c3e158d58
+
+
 
 
