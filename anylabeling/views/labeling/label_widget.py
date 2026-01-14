@@ -9849,6 +9849,40 @@ class LabelingWidget(QtWidgets.QWidget):
         self.set_dirty()
 
     def paste_selected_shape(self):
+        # 先检查剪贴板是否有图片或图片文件
+        clipboard = QtWidgets.QApplication.clipboard()
+        mime_data = clipboard.mimeData()
+        
+        has_image = mime_data.hasImage()
+        has_image_file = False
+        
+        # 检查是否有图片文件路径
+        if mime_data.hasUrls():
+            urls = mime_data.urls()
+            if urls:
+                file_path = urls[0].toLocalFile()
+                image_extensions = [
+                    f".{fmt.data().decode().lower()}"
+                    for fmt in QtGui.QImageReader.supportedImageFormats()
+                ]
+                has_image_file = any(file_path.lower().endswith(ext) for ext in image_extensions)
+        
+        # 如果没有URL，检查文本是否是文件路径
+        if not has_image_file and mime_data.hasText():
+            text = mime_data.text().strip()
+            if osp.exists(text) and osp.isfile(text):
+                image_extensions = [
+                    f".{fmt.data().decode().lower()}"
+                    for fmt in QtGui.QImageReader.supportedImageFormats()
+                ]
+                has_image_file = any(text.lower().endswith(ext) for ext in image_extensions)
+        
+        # 如果剪贴板有图片或图片文件，执行图片粘贴
+        # 不再限制必须是未加载文件或时间戳文件夹
+        if has_image or has_image_file:
+            self.paste_image_from_clipboard()
+            return
+        
         # 检查配置中是否启用了虚影粘贴模式
         # 注意：这里检查的是配置开关，而不是当前是否有虚影显示
         # 即使按了 Ctrl+D 取消虚影，只要配置开关是启用的，仍然粘贴到鼠标位置
@@ -9964,6 +9998,200 @@ class LabelingWidget(QtWidgets.QWidget):
             if self._config.get('smart_guides_paste_preview_enabled', True):
                 self.canvas.enable_paste_preview(self._copied_shapes)
 
+    def paste_image_from_clipboard(self):
+        """从剪贴板粘贴图片并保存到时间戳命名的文件夹"""
+        clipboard = QtWidgets.QApplication.clipboard()
+        mime_data = clipboard.mimeData()
+        
+        # 收集所有要粘贴的图片（支持批量）
+        images_to_paste = []  # [(image, original_filename), ...]
+        
+        # 优先处理文件URL（支持多文件）
+        if mime_data.hasUrls():
+            urls = mime_data.urls()
+            image_extensions = [
+                f".{fmt.data().decode().lower()}"
+                for fmt in QtGui.QImageReader.supportedImageFormats()
+            ]
+            
+            for url in urls:
+                file_path = url.toLocalFile()
+                if any(file_path.lower().endswith(ext) for ext in image_extensions):
+                    image = QtGui.QImage(file_path)
+                    if not image.isNull():
+                        # 保持原文件名
+                        original_filename = osp.basename(file_path)
+                        images_to_paste.append((image, original_filename))
+        
+        # 如果没有文件URL，尝试获取图片数据
+        if not images_to_paste and mime_data.hasImage():
+            image = clipboard.image()
+            if not image.isNull():
+                images_to_paste.append((image, None))  # None 表示需要生成文件名
+        
+        # 如果还是没有，尝试从文本路径加载
+        if not images_to_paste and mime_data.hasText():
+            text = mime_data.text().strip()
+            if osp.exists(text) and osp.isfile(text):
+                image_extensions = [
+                    f".{fmt.data().decode().lower()}"
+                    for fmt in QtGui.QImageReader.supportedImageFormats()
+                ]
+                if any(text.lower().endswith(ext) for ext in image_extensions):
+                    image = QtGui.QImage(text)
+                    if not image.isNull():
+                        original_filename = osp.basename(text)
+                        images_to_paste.append((image, original_filename))
+        
+        # 如果没有找到任何图片
+        if not images_to_paste:
+            self.status(self.tr("剪贴板中没有图片或图片文件"))
+            return
+        
+        # 创建时间戳文件夹
+        from datetime import datetime
+        import time
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 确定保存文件夹
+        if self.last_open_dir:
+            # 如果已经打开了文件夹，直接使用当前文件夹
+            folder_path = self.last_open_dir
+        else:
+            # 如果没有打开文件夹，在软件执行目录下创建时间戳文件夹
+            import sys
+            if getattr(sys, 'frozen', False):
+                # 打包后的可执行文件
+                base_dir = osp.dirname(sys.executable)
+            else:
+                # 开发环境
+                base_dir = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))
+            
+            folder_path = osp.join(base_dir, timestamp)
+            if not osp.exists(folder_path):
+                os.makedirs(folder_path)
+        
+        # 批量保存图片
+        saved_files = []
+        failed_count = 0
+        
+        for idx, (image, original_filename) in enumerate(images_to_paste):
+            # 确定文件名
+            if original_filename:
+                # 使用原文件名
+                filename = original_filename
+                file_path = osp.join(folder_path, filename)
+                
+                # 如果文件已存在，添加序号避免覆盖
+                if osp.exists(file_path):
+                    name, ext = osp.splitext(filename)
+                    counter = 1
+                    while osp.exists(file_path):
+                        filename = f"{name}_{counter}{ext}"
+                        file_path = osp.join(folder_path, filename)
+                        counter += 1
+            else:
+                # 生成新文件名：YYMMDD_HHMMSS_序号
+                current_time = datetime.now()
+                date_time_str = current_time.strftime('%y%m%d_%H%M%S')
+                
+                # 查找当前文件夹中所有图片文件，确定序号
+                existing_files = []
+                if osp.exists(folder_path):
+                    for f in os.listdir(folder_path):
+                        if '_' in f and len(f.split('_')) >= 3:
+                            existing_files.append(f)
+                
+                sequence = len(existing_files) + len(saved_files) + 1
+                base_filename = f"{date_time_str}_{sequence:02d}"
+                
+                # 检测图片格式
+                image_format = None
+                file_extension = None
+                
+                # 尝试多种格式
+                formats_to_try = [
+                    ('WEBP', '.webp'),
+                    ('PNG', '.png'),
+                    ('JPEG', '.jpg')
+                ]
+                
+                # 尝试保存
+                saved = False
+                for fmt, ext in formats_to_try:
+                    filename = base_filename + ext
+                    file_path = osp.join(folder_path, filename)
+                    try:
+                        if image.save(file_path, fmt):
+                            saved = True
+                            break
+                    except Exception as e:
+                        logger.debug(f"Failed to save as {fmt}: {e}")
+                        continue
+                
+                if not saved:
+                    failed_count += 1
+                    continue
+            
+            # 如果有原文件名，直接保存（保持原格式）
+            if original_filename:
+                # 从扩展名推断格式
+                ext = osp.splitext(original_filename)[1].lower()
+                format_map = {
+                    '.webp': 'WEBP',
+                    '.png': 'PNG',
+                    '.jpg': 'JPEG',
+                    '.jpeg': 'JPEG',
+                    '.bmp': 'BMP',
+                    '.gif': 'GIF'
+                }
+                fmt = format_map.get(ext, 'PNG')
+                
+                try:
+                    if image.save(file_path, fmt):
+                        saved_files.append(file_path)
+                    else:
+                        failed_count += 1
+                except Exception as e:
+                    logger.debug(f"Failed to save {filename}: {e}")
+                    failed_count += 1
+            else:
+                saved_files.append(file_path)
+        
+        # 显示结果
+        if saved_files:
+            if len(saved_files) == 1:
+                self.status(self.tr("图片已保存到: %s") % folder_path)
+            else:
+                self.status(self.tr("已保存 %d 张图片到: %s") % (len(saved_files), folder_path))
+            
+            # 如果是新文件夹或需要刷新，重新加载
+            if not self.image_list or self.last_open_dir != folder_path:
+                self.import_image_folder(folder_path, load=True)
+            else:
+                # 刷新文件列表
+                self.import_image_folder(folder_path, load=False)
+            
+            # 加载第一张粘贴的图片
+            if saved_files[0] in self.fn_to_index:
+                self.file_list_widget.setCurrentRow(self.fn_to_index[saved_files[0]])
+        
+        if failed_count > 0:
+            self.error_message(
+                self.tr("部分图片保存失败"),
+                self.tr("成功: %d, 失败: %d") % (len(saved_files), failed_count)
+            )
+
+    def _is_timestamp_folder(self):
+        """检查当前文件夹是否是时间戳命名的文件夹（格式：YYYYMMDD_HHMMSS）"""
+        if not self.last_open_dir:
+            return False
+        
+        import re
+        folder_name = osp.basename(self.last_open_dir)
+        # 匹配格式：YYYYMMDD_HHMMSS
+        pattern = r'^\d{8}_\d{6}$'
+        return bool(re.match(pattern, folder_name))
 
     def update_label_visibility(self, label, is_visible):
         """标签区勾选同步到对象区，并同步可见性"""
