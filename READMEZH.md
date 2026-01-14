@@ -674,5 +674,9 @@ https://github.com/user-attachments/assets/7f4c19db-ba64-4d43-b417-da3463c5a75c
 
 <img width="357" height="484" alt="image" src="https://github.com/user-attachments/assets/d7c8e1e9-3585-4e91-8f70-95cb4cffe0bc" />
 
+138.增加粘贴图片自动添加
+
+https://github.com/user-attachments/assets/e7fd3ef0-1cbf-4bb6-992b-413f403e8991
+
 
 
