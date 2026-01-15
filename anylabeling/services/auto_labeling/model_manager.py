@@ -183,6 +183,7 @@ class ModelManager(QObject):
             self.new_model_status.emit(
                 self.tr("Error in loading custom model: Invalid path.")
             )
+            self.model_loaded.emit({})
             return False
 
         # Check config file content
@@ -199,6 +200,7 @@ class ModelManager(QObject):
             self.new_model_status.emit(
                 self.tr("Error in loading custom model: Invalid config file.")
             )
+            self.model_loaded.emit({})
             return False
 
         if (
@@ -304,6 +306,7 @@ class ModelManager(QObject):
             self.new_model_status.emit(
                 self.tr("Error in loading model: Invalid model name.")
             )
+            self.model_loaded.emit({})
             return
 
         self.model_download_thread = QThread()
@@ -1802,6 +1805,26 @@ class ModelManager(QObject):
 
             try:
                 model_config["model"] = YOLO12(
+                    model_config, on_message=self.new_model_status.emit
+                )
+                self.auto_segmentation_model_unselected.emit()
+                logger.info(
+                    f"✅ Model loaded successfully: {model_config['type']}"
+                )
+            except Exception as e:  # noqa
+                template = "Error in loading model: {error_message}"
+                translated_template = self.tr(template)
+                error_text = translated_template.format(error_message=str(e))
+                self.new_model_status.emit(error_text)
+                logger.error(
+                    f"❌ Error in loading model: {model_config['type']} with error: {str(e)}"
+                )
+                return
+        elif model_config["type"] == "yolo26":
+            from .yolo26 import YOLO26
+
+            try:
+                model_config["model"] = YOLO26(
                     model_config, on_message=self.new_model_status.emit
                 )
                 self.auto_segmentation_model_unselected.emit()

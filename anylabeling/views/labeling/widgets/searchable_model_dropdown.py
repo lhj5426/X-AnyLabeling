@@ -141,12 +141,14 @@ class ProviderSection(QFrame):
 class ModelItem(QFrame):
     clicked = pyqtSignal(str)
     favoriteToggled = pyqtSignal(str, bool)
+    deleteRequested = pyqtSignal(str)
 
     def __init__(
         self,
         model_name,
         model_data,
         in_favorites_section=False,
+        is_custom_model=False,
         parent=None,
     ):
         super().__init__(parent)
@@ -156,6 +158,7 @@ class ModelItem(QFrame):
         self.is_favorite = model_data.get("favorite", False)
         self.display_name = model_data.get("display_name", model_name)
         self.in_favorites_section = in_favorites_section
+        self.is_custom_model = is_custom_model
 
         self.setFixedHeight(DEFAULT_FIXED_HEIGHT)
         self.setFrameShape(QFrame.NoFrame)
@@ -167,6 +170,28 @@ class ModelItem(QFrame):
         self.name_label.setStyleSheet(f"font-size: {FONT_SIZE_SMALL};")
         layout.addWidget(self.name_label)
         layout.addStretch()
+
+        # Delete button for custom models (initially hidden, shows on hover)
+        self.delete_button = QPushButton()
+        self.delete_button.setFixedSize(*ICON_SIZE_SMALL)
+        self.delete_button.setStyleSheet(
+            """
+            QPushButton {
+                border: none;
+                background-color: transparent;
+            }
+            QPushButton:hover {
+                background-color: #ffcccc;
+                border-radius: 3px;
+            }
+        """
+        )
+        self.delete_button.setIcon(QIcon(new_icon("trash", "svg")))
+        self.delete_button.setVisible(False)
+        self.delete_button.clicked.connect(self._on_delete_clicked)
+        # Only show delete button for custom models (not load_custom_model)
+        self.can_delete = is_custom_model and model_name != "load_custom_model"
+        layout.addWidget(self.delete_button)
 
         # Checkmark for selected item
         self.check_icon = QLabel()
@@ -210,13 +235,20 @@ class ModelItem(QFrame):
         """
         )
 
+    def _on_delete_clicked(self):
+        self.deleteRequested.emit(self.model_name)
+
     def enterEvent(self, event):
         self.star_icon.setVisible(True)
+        if self.can_delete:
+            self.delete_button.setVisible(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         if self.in_favorites_section or not self.is_favorite:
             self.star_icon.setVisible(False)
+        if self.can_delete:
+            self.delete_button.setVisible(False)
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
@@ -361,11 +393,15 @@ class SearchableModelDropdownPopup(QWidget):
             self.container_layout.addWidget(fav_section)
 
             for provider, model_name, model_data in favorites:
+                is_custom = (provider == "Custom")
                 model_item = ModelItem(
-                    model_name, model_data, in_favorites_section=True
+                    model_name, model_data, in_favorites_section=True,
+                    is_custom_model=is_custom
                 )
                 model_item.clicked.connect(self.select_model)
                 model_item.favoriteToggled.connect(self.toggle_favorite)
+                if is_custom:
+                    model_item.deleteRequested.connect(self.delete_custom_model)
                 fav_section.add_model_item(model_item)
                 self.model_items[model_name] = model_item
 
@@ -389,9 +425,14 @@ class SearchableModelDropdownPopup(QWidget):
                 )
 
             for model_name, model_data in models.items():
-                model_item = ModelItem(model_name, model_data)
+                is_custom = (provider == "Custom")
+                model_item = ModelItem(
+                    model_name, model_data, is_custom_model=is_custom
+                )
                 model_item.clicked.connect(self.select_model)
                 model_item.favoriteToggled.connect(self.toggle_favorite)
+                if is_custom:
+                    model_item.deleteRequested.connect(self.delete_custom_model)
                 provider_section.add_model_item(model_item)
                 self.model_items[model_name] = model_item
 
@@ -512,6 +553,22 @@ class SearchableModelDropdownPopup(QWidget):
             }
             # Save to models.json - this is the only source for custom models now
             self.save_models_data()
+            self.setup_model_list()
+
+    def delete_custom_model(self, model_name):
+        """Delete a single custom model from the list"""
+        if "Custom" in self.models_data and model_name in self.models_data["Custom"]:
+            # Don't allow deleting load_custom_model
+            if model_name == "load_custom_model":
+                return
+            
+            # Remove the model from the data
+            del self.models_data["Custom"][model_name]
+            
+            # Save to models.json
+            self.save_models_data()
+            
+            # Rebuild the list
             self.setup_model_list()
 
     def filter_models(self, search_text, match_threshold=0.7):
