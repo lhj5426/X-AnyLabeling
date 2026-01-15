@@ -686,6 +686,11 @@ https://github.com/user-attachments/assets/0f34b275-f03f-4687-8453-aab1009bc637
 
 https://github.com/user-attachments/assets/744e0a00-321d-406f-9831-4e8c3e158d58
 
+141. 添加对yolo26的支持
+
+142.自定义模型列表添加对单个模型的删除按钮
+
+<img width="438" height="418" alt="image" src="https://github.com/user-attachments/assets/4b1335f3-24c5-4f1d-8d52-4167512e63ec" />
 
 
 
