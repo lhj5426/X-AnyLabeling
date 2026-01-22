@@ -23,18 +23,43 @@ class ImageLoader(QtCore.QRunnable):
             reader.setAutoTransform(True)
             
             orig_size = reader.size()
-            scale_factor = 1.0
-            shapes = []
+            image = None
+            orig_w, orig_h = 0, 0
             
             if orig_size.isValid():
-                aspect_ratio = orig_size.width() / orig_size.height()
+                orig_w = orig_size.width()
+                orig_h = orig_size.height()
+                aspect_ratio = orig_w / orig_h
                 target_width = int(self.target_height * aspect_ratio)
                 reader.setScaledSize(QtCore.QSize(target_width, self.target_height))
-                scale_factor = self.target_height / orig_size.height()
-                
+                scale_factor = self.target_height / orig_h
                 image = reader.read()
+            
+            if image is None or image.isNull():
+                # Fallback to Pillow
+                try:
+                    from PIL import Image
+                    import numpy as np
+                    pil_img = Image.open(self.path)
+                    orig_w, orig_h = pil_img.size
+                    aspect_ratio = orig_w / orig_h
+                    target_width = int(self.target_height * aspect_ratio)
+                    scale_factor = self.target_height / orig_h
+                    
+                    pil_img = pil_img.convert("RGBA")
+                    pil_img = pil_img.resize((target_width, self.target_height), Image.Resampling.LANCZOS)
+                    
+                    data = pil_img.tobytes("raw", "RGBA")
+                    image = QtGui.QImage(data, target_width, self.target_height, target_width * 4, QtGui.QImage.Format_RGBA8888)
+                    image = image.copy()
+                except Exception:
+                    image = None
+
+            if image is not None and not image.isNull():
+                aspect_ratio = image.width() / image.height()
                 
                 # Load shapes from JSON if exists
+                shapes = []
                 json_path = os.path.splitext(self.path)[0] + ".json"
                 if os.path.exists(json_path):
                     try:
@@ -43,13 +68,7 @@ class ImageLoader(QtCore.QRunnable):
                     except Exception:
                         pass
                 
-                if not image.isNull():
-                    self.signals.loaded.emit(self.path, image, aspect_ratio, shapes, scale_factor)
-            else:
-                image = reader.read()
-                if not image.isNull():
-                    aspect_ratio = image.width() / image.height()
-                    self.signals.loaded.emit(self.path, image, aspect_ratio, [], 1.0)
+                self.signals.loaded.emit(self.path, image, aspect_ratio, shapes, scale_factor if 'scale_factor' in locals() else 1.0)
         except Exception:
             pass
 
@@ -66,6 +85,8 @@ class ThumbnailLoader(QtCore.QRunnable):
             reader.setAutoTransform(True)
             
             orig_size = reader.size()
+            image = None
+            
             if orig_size.isValid():
                 aspect_ratio = orig_size.width() / orig_size.height()
                 if aspect_ratio > 1:
@@ -75,9 +96,33 @@ class ThumbnailLoader(QtCore.QRunnable):
                     h = self.target_size
                     w = int(self.target_size * aspect_ratio)
                 reader.setScaledSize(QtCore.QSize(w, h))
+                image = reader.read()
             
-            image = reader.read()
-            if not image.isNull():
+            if image is None or image.isNull():
+                # Fallback to Pillow
+                try:
+                    from PIL import Image
+                    import numpy as np
+                    pil_img = Image.open(self.path)
+                    orig_w, orig_h = pil_img.size
+                    aspect_ratio = orig_w / orig_h
+                    if aspect_ratio > 1:
+                        w = self.target_size
+                        h = int(self.target_size / aspect_ratio)
+                    else:
+                        h = self.target_size
+                        w = int(self.target_size * aspect_ratio)
+                    
+                    pil_img = pil_img.convert("RGBA")
+                    pil_img = pil_img.resize((w, h), Image.Resampling.LANCZOS)
+                    
+                    data = pil_img.tobytes("raw", "RGBA")
+                    image = QtGui.QImage(data, w, h, w * 4, QtGui.QImage.Format_RGBA8888)
+                    image = image.copy()
+                except Exception:
+                    image = None
+
+            if image is not None and not image.isNull():
                 self.signals.loaded.emit(self.path, image, 1.0, [], 1.0)
         except Exception:
             pass

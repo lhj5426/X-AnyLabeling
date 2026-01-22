@@ -27,6 +27,9 @@ class ThumbnailLoader(QtCore.QRunnable):
             reader.setAutoTransform(True)
             
             orig_size = reader.size()
+            image = None
+            orig_w, orig_h = 0, 0
+            
             if orig_size.isValid():
                 orig_w = orig_size.width()
                 orig_h = orig_size.height()
@@ -38,10 +41,31 @@ class ThumbnailLoader(QtCore.QRunnable):
                 
                 reader.setScaledSize(QtCore.QSize(thumb_width, thumb_height))
                 image = reader.read()
-                
-                if not image.isNull():
-                    pixmap = QtGui.QPixmap.fromImage(image)
-                    self.signals.loaded.emit(self.image_path, pixmap, orig_w, orig_h, self.target_width)
+            
+            # Fallback to Pillow if QImageReader fails (e.g., AVIF/HEIC)
+            if image is None or image.isNull():
+                try:
+                    from PIL import Image
+                    import numpy as np
+                    pil_img = Image.open(self.image_path)
+                    orig_w, orig_h = pil_img.size
+                    pil_img = pil_img.convert("RGBA")
+                    
+                    aspect_ratio = orig_h / orig_w
+                    thumb_width = self.target_width
+                    thumb_height = int(self.target_width * aspect_ratio)
+                    pil_img = pil_img.resize((thumb_width, thumb_height), Image.Resampling.LANCZOS)
+                    
+                    # Convert PIL to QImage using RGBA for better alignment/stability
+                    data = pil_img.tobytes("raw", "RGBA")
+                    image = QtGui.QImage(data, thumb_width, thumb_height, thumb_width * 4, QtGui.QImage.Format_RGBA8888)
+                    image = image.copy() # Ensure memory ownership
+                except Exception:
+                    image = None
+
+            if image is not None and not image.isNull():
+                pixmap = QtGui.QPixmap.fromImage(image)
+                self.signals.loaded.emit(self.image_path, pixmap, orig_w, orig_h, self.target_width)
         except Exception:
             pass
 
@@ -850,6 +874,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.grid_mode = False  # 方格子模式（统一尺寸）
         self.grid_size = 200  # 方格子尺寸
         
+        # 加载持久化设置
+        self.load_settings()
+        
         self.loaded_count = 0
         self.load_batch_size = 10
         self.items_map = {}
@@ -895,6 +922,11 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.masonry_widget.setStyleSheet("background-color: #1e1e1e;")
         self.masonry_widget.columns = self.columns
         self.masonry_widget.spacing = self.spacing
+        self.masonry_widget.row_height = self.row_height
+        self.masonry_widget.grid_mode = self.grid_mode
+        self.masonry_widget.horizontal_mode = self.horizontal_mode
+        self.masonry_widget.border_radius = self.border_radius
+        self.masonry_widget.border_width = self.border_width
         self.masonry_widget.resized.connect(self.on_masonry_resized)
         
         self.scroll_area.setWidget(self.masonry_widget)
@@ -979,6 +1011,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.columns_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.columns_slider.setRange(1, 10)
         self.columns_slider.setValue(self.columns)
+        self.columns_slider.setEnabled(not self.horizontal_mode)
         self.columns_slider.sliderReleased.connect(self.on_columns_released)
         self.columns_slider.valueChanged.connect(lambda v: self.columns_label.setText(str(v)))
         layout.addWidget(self.columns_slider)
@@ -991,10 +1024,16 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         layout.addWidget(QtWidgets.QLabel("高度:"))
         self.height_mode_btn = QtWidgets.QPushButton("横向")
         self.height_mode_btn.setFixedWidth(40)
-        self.height_mode_btn.setStyleSheet("""
-            QPushButton { background: #333; color: #888; border: 1px solid #555; border-radius: 3px; padding: 2px 5px; }
-            QPushButton:hover { background: #444; }
-        """)
+        if self.horizontal_mode:
+            self.height_mode_btn.setStyleSheet("""
+                QPushButton { background: #444; color: #fff; border: 1px solid #666; border-radius: 3px; padding: 2px 5px; }
+                QPushButton:hover { background: #555; }
+            """)
+        else:
+            self.height_mode_btn.setStyleSheet("""
+                QPushButton { background: #333; color: #888; border: 1px solid #555; border-radius: 3px; padding: 2px 5px; }
+                QPushButton:hover { background: #444; }
+            """)
         self.height_mode_btn.clicked.connect(self.set_horizontal_mode)
         layout.addWidget(self.height_mode_btn)
         
@@ -1003,7 +1042,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.height_slider.setValue(self.row_height)
         self.height_slider.sliderReleased.connect(self.on_height_released)
         self.height_slider.valueChanged.connect(lambda v: self.height_label.setText(str(v)))
-        self.height_slider.setEnabled(False)  # 默认禁用
+        self.height_slider.setEnabled(self.horizontal_mode)
         layout.addWidget(self.height_slider)
         self.height_label = QtWidgets.QLabel(str(self.row_height))
         self.height_label.setFixedWidth(30)
@@ -1012,7 +1051,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self._add_sep(layout)
         
         # 瀑布流/方格子切换
-        self.layout_mode_btn = QtWidgets.QPushButton("瀑布流")
+        self.layout_mode_btn = QtWidgets.QPushButton("缩略图" if self.grid_mode else "瀑布流")
         self.layout_mode_btn.setFixedSize(60, 28)
         self.layout_mode_btn.setStyleSheet("""
             QPushButton { background: #0078d4; color: #fff; border: 1px solid #005a9e; border-radius: 3px; padding: 4px 8px; font-weight: bold; }
@@ -1232,16 +1271,19 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.spacing = self.spacing_slider.value()
         self.masonry_widget.spacing = self.spacing
         self.masonry_widget.schedule_relayout(0)
+        self.save_masonry_settings()
     
     def on_radius_released(self):
         self.border_radius = self.radius_slider.value()
         for item in self.masonry_widget.items:
             item.update_radius(self.border_radius)
+        self.save_masonry_settings()
     
     def on_border_released(self):
         self.border_width = self.border_slider.value()
         for item in self.masonry_widget.items:
             item.set_border_width(self.border_width)
+        self.save_masonry_settings()
     
     def toggle_layout_mode(self):
         """切换瀑布流/方格子模式"""
@@ -1255,6 +1297,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         self.masonry_widget.schedule_relayout(0)
         self._resize_reload_timer.start(300)
+        self.save_masonry_settings()
     
     def on_columns_released(self):
         self.columns = self.columns_slider.value()
@@ -1262,6 +1305,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.masonry_widget.schedule_relayout(0)
         # 延迟处理重新加载，避免卡顿
         self._resize_reload_timer.start(500)
+        self.save_masonry_settings()
     
     def on_height_released(self):
         """高度滑块释放"""
@@ -1270,6 +1314,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.masonry_widget.schedule_relayout(0)
         # 延迟处理重新加载，避免卡顿
         self._resize_reload_timer.start(500)
+        self.save_masonry_settings()
     
     def set_vertical_mode(self):
         """设置为纵向模式"""
@@ -1294,6 +1339,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         self.masonry_widget.schedule_relayout(0)
         self._resize_reload_timer.start(300)
+        self.save_masonry_settings()
     
     def set_horizontal_mode(self):
         """设置为横向模式"""
@@ -1318,6 +1364,39 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         self.masonry_widget.schedule_relayout(0)
         self._resize_reload_timer.start(300)
+        self.save_masonry_settings()
+
+    def load_settings(self):
+        """从配置加载设置"""
+        if self.labeling_widget and hasattr(self.labeling_widget, '_config'):
+            settings = self.labeling_widget._config.get("masonry_settings", {})
+            if settings:
+                self.spacing = settings.get("spacing", self.spacing)
+                self.border_radius = settings.get("border_radius", self.border_radius)
+                self.border_width = settings.get("border_width", self.border_width)
+                self.columns = settings.get("columns", self.columns)
+                self.row_height = settings.get("row_height", self.row_height)
+                self.horizontal_mode = settings.get("horizontal_mode", self.horizontal_mode)
+                self.grid_mode = settings.get("grid_mode", self.grid_mode)
+
+    def save_masonry_settings(self):
+        """保存设置到配置"""
+        if self.labeling_widget and hasattr(self.labeling_widget, '_config'):
+            settings = {
+                "spacing": self.spacing,
+                "border_radius": self.border_radius,
+                "border_width": self.border_width,
+                "columns": self.columns,
+                "row_height": self.row_height,
+                "horizontal_mode": self.horizontal_mode,
+                "grid_mode": self.grid_mode
+            }
+            self.labeling_widget._config["masonry_settings"] = settings
+            try:
+                from ....config import save_config
+                save_config(self.labeling_widget._config)
+            except Exception:
+                pass
     
     def on_masonry_resized(self):
         """瀑布流容器大小变化"""
