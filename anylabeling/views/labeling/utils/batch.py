@@ -150,8 +150,15 @@ class TextInputDialog(QDialog):
 
 
 def get_image_size(image_path):
-    with Image.open(image_path) as img:
-        return img.size
+    try:
+        with Image.open(image_path) as img:
+            return img.size
+    except Exception:
+        # Fallback to Qt
+        qimg = QtGui.QImage(image_path)
+        if not qimg.isNull():
+            return qimg.width(), qimg.height()
+        raise
 
 
 def finish_processing(self, progress_dialog):

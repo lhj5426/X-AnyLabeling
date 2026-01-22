@@ -16,6 +16,11 @@ def scan_all_images(folder_path, recursive=True):
             f".{fmt.data().decode().lower()}"
             for fmt in QtGui.QImageReader.supportedImageFormats()
         ]
+        # Explicitly add avif and heic support
+        if ".avif" not in extensions:
+            extensions.append(".avif")
+        if ".heic" not in extensions:
+            extensions.append(".heic")
 
         images = []
         folder_path = osp.normpath(osp.abspath(folder_path))

@@ -60,6 +60,17 @@ class FileDialogPreview(QtWidgets.QFileDialog):
         else:
             pixmap = QtGui.QPixmap(path)
             if pixmap.isNull():
+                # Fallback for AVIF/HEIC using Pillow
+                try:
+                    from PIL import Image
+                    import io
+                    pil_img = Image.open(path)
+                    bytes_io = io.BytesIO()
+                    pil_img.save(bytes_io, format='PNG')
+                    pixmap.loadFromData(bytes_io.getvalue())
+                except Exception:
+                    pass
+            if pixmap.isNull():
                 self.label_preview.clear()
                 self.label_preview.setHidden(True)
             else:

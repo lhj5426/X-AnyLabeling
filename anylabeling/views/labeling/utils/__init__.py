@@ -34,6 +34,7 @@ from .image import (
     img_data_to_pil,
     img_data_to_png_data,
     img_pil_to_data,
+    pil_to_qimage,
     process_image_exif,
 )
 from ._io import io_open

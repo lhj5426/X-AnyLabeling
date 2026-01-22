@@ -12561,10 +12561,23 @@ class LabelingWidget(QtWidgets.QWidget):
         image = QtGui.QImage.fromData(self.image_data)
 
         if image.isNull():
+            # Fallback for AVIF/HEIC using Pillow
+            try:
+                img_pil = utils.img_data_to_pil(self.image_data)
+                image = utils.pil_to_qimage(img_pil)
+            except Exception:
+                pass
+
+        if image.isNull():
             formats = [
                 f"*.{fmt.data().decode()}"
                 for fmt in QtGui.QImageReader.supportedImageFormats()
             ]
+            # Explicitly add avif/heic to suggests if not present
+            if "*.avif" not in formats:
+                formats.append("*.avif")
+            if "*.heic" not in formats:
+                formats.append("*.heic")
             self.error_message(
                 self.tr("Error opening file"),
                 self.tr(

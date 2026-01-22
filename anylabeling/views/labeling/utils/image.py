@@ -22,8 +22,18 @@ def img_data_to_pil(img_data):
 
 
 def img_data_to_arr(img_data):
-    img_pil = img_data_to_pil(img_data)
-    img_arr = np.array(img_pil)
+    try:
+        img_pil = img_data_to_pil(img_data)
+        img_arr = np.array(img_pil)
+    except Exception:
+        # Fallback to Qt if Pillow fails (e.g., AVIF/HEIC without plugin)
+        import qimage2ndarray
+        from PyQt5.QtGui import QImage
+        qimg = QImage.fromData(img_data)
+        if not qimg.isNull():
+            img_arr = qimage2ndarray.rgb_view(qimg)
+        else:
+            raise
     return img_arr
 
 
@@ -42,14 +52,14 @@ def img_pil_to_data(img_pil):
 
 def pil_to_qimage(img):
     """Convert PIL Image to QImage."""
-    img = img.convert("RGBA")  # Ensure image is in RGBA format
+    img = img.convert("RGBA")
     data = np.array(img)
-    height, width, channel = data.shape
+    height, width, _ = data.shape
     bytes_per_line = 4 * width
     qimage = QtGui.QImage(
         data, width, height, bytes_per_line, QtGui.QImage.Format_RGBA8888
     )
-    return qimage
+    return qimage.copy()  # Use copy to ensure QImage owns the data
 
 
 def img_arr_to_b64(img_arr):
@@ -98,6 +108,21 @@ def get_pil_img_dim(img_path):
             raise ValueError(f"Invalid image path type: {type(img_path)}")
 
     except Exception as e:
+        # Fallback to Qt for dimensions if Pillow fails
+        try:
+            from PyQt5.QtGui import QImage
+            if isinstance(img_path, str):
+                qimg = QImage(img_path)
+            elif isinstance(img_path, bytes):
+                qimg = QImage.fromData(img_path)
+            else:
+                qimg = None
+            
+            if qimg and not qimg.isNull():
+                return qimg.width(), qimg.height()
+        except Exception:
+            pass
+
         logger.error(
             f"Error reading image dimensions from {img_path}: {str(e)}"
         )

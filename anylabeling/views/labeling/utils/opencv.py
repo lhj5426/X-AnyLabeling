@@ -11,13 +11,22 @@ def qt_img_to_rgb_cv_img(qt_img, img_path=None):
     """
     Convert 8bit/16bit RGB image or 8bit/16bit Gray image to 8bit RGB image
     """
+    cv_image = None
     if img_path is not None and os.path.exists(img_path):
-        # Load Image From Path Directly
-        # NOTE: Potential issue - unable to handle the flipped image.
-        # Temporary workaround: cv_image = cv2.imread(img_path)
+        # Try OpenCV first
         cv_image = cv2.imdecode(np.fromfile(img_path, dtype=np.uint8), -1)
-        cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-    else:
+        if cv_image is not None:
+            cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        else:
+            # Fallback for formats OpenCV doesn't support (AVIF, HEIC)
+            try:
+                import PIL.Image
+                pil_img = PIL.Image.open(img_path)
+                cv_image = np.array(pil_img.convert("RGB"))
+            except Exception:
+                cv_image = None
+
+    if cv_image is None and qt_img is not None and not qt_img.isNull():
         if (
             qt_img.format() == QImage.Format_RGB32
             or qt_img.format() == QImage.Format_ARGB32

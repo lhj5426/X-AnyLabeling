@@ -14,7 +14,7 @@ from PIL import Image
 
 from anylabeling.services.auto_labeling.utils.sahi.utils.file import Path
 
-IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".tiff", ".bmp"]
+IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".tiff", ".bmp", ".avif", ".heic"]
 VIDEO_EXTENSIONS = [
     ".mp4",
     ".mkv",
@@ -126,23 +126,30 @@ def convert_image_to(
 
 def read_large_image(image_path: str):
     use_cv2 = True
-    # read image, cv2 fails on large files
+    # read image, cv2 fails on large files or unsupported formats
     try:
         # convert to rgb (cv2 reads in bgr)
         img_cv2 = cv2.imread(image_path, 1)
+        if img_cv2 is None:
+            raise ValueError("OpenCV failed to read image")
         image0 = cv2.cvtColor(img_cv2, cv2.COLOR_BGR2RGB)
     except Exception:
         try:
-            import skimage.io
-        except ImportError:
-            raise ImportError(
-                'Please run "pip install -U scikit-image" '
-                "to install scikit-image first for large image handling."
-            )
-        image0 = skimage.io.imread(image_path, as_grey=False).astype(
-            np.uint8
-        )  # [::-1]
-        use_cv2 = False
+            # Try Pillar fallback
+            image0 = np.array(Image.open(image_path).convert("RGB"))
+            use_cv2 = False
+        except Exception:
+            try:
+                import skimage.io
+            except ImportError:
+                raise ImportError(
+                    'Please run "pip install -U scikit-image" '
+                    "to install scikit-image first for large image handling."
+                )
+            image0 = skimage.io.imread(image_path, as_grey=False).astype(
+                np.uint8
+            )  # [::-1]
+            use_cv2 = False
     return image0, use_cv2
 
 
@@ -152,7 +159,11 @@ def read_image(image_path: str):
     """
     # read image
     image = cv2.imread(image_path)
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    if image is not None:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    else:
+        # Fallback to Pillow
+        image = np.array(Image.open(image_path).convert("RGB"))
     # return image
     return image
 
