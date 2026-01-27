@@ -692,5 +692,18 @@ https://github.com/user-attachments/assets/744e0a00-321d-406f-9831-4e8c3e158d58
 
 <img width="438" height="418" alt="image" src="https://github.com/user-attachments/assets/4b1335f3-24c5-4f1d-8d52-4167512e63ec" />
 
+143.瀑布流缩略图 增加 快捷键 翻页 多选 删除
+
+https://github.com/user-attachments/assets/9308efea-8d59-4cf0-8957-07633f17f7bf
+
+144.瀑布流缩略图 增加 删合模式 修正时间切片 
+
+https://github.com/user-attachments/assets/80773543-7e71-4c60-bca8-11b1d1c91eb0
+
+
+
+
+
+
 
 
