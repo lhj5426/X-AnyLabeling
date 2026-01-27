@@ -15384,7 +15384,38 @@ class LabelingWidget(QtWidgets.QWidget):
         self.thumbnail_viewer_dialog.image_switched.connect(self.load_file)
         self.thumbnail_viewer_dialog.open_horizontal_viewer.connect(self.open_horizontal_viewer)
         self.thumbnail_viewer_dialog.open_vertical_viewer.connect(self.open_vertical_viewer)
+        self.thumbnail_viewer_dialog.files_changed.connect(self.refresh_file_list_after_merge_delete)
         self.thumbnail_viewer_dialog.show()
+    
+    def refresh_file_list_after_merge_delete(self):
+        """在瀑布流中执行合并/删除后刷新文件列表"""
+        if not self.last_open_dir:
+            return
+        
+        # 保存当前文件名
+        current_file = self.filename if self.filename else None
+        
+        # 重新扫描文件夹
+        self.import_image_folder(
+            self.last_open_dir,
+            pattern=None,
+            load=False,  # 不自动加载第一张图片
+            recursive=self._config.get("load_subfolders", False)
+        )
+        
+        # 如果当前文件还存在，重新加载它
+        if current_file and current_file in self.image_list:
+            self.load_file(current_file)
+        elif self.image_list:
+            # 如果当前文件被删除了，加载第一张
+            self.load_file(self.image_list[0])
+        
+        # 如果瀑布流对话框还打开着，更新它的图片列表
+        if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog and self.thumbnail_viewer_dialog.isVisible():
+            self.thumbnail_viewer_dialog.update_image_list(
+                self.image_list,
+                self.filename if self.filename else None
+            )
     
     def set_magnifier_settings(self):
         """打开放大镜设置对话框（非阻塞式）"""
