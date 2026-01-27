@@ -471,7 +471,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
     def _on_default_highlight_changed(self, state):
         if self._config:
             is_enabled = self.default_highlight_checkbox.isChecked()
-            self._config["highlight_enabled_by_default"] = is_enabledave_config(self._config)
+            self._config["highlight_enabled_by_default"] = is_enabled
+            save_config(self._config)
             if self.parent() and hasattr(self.parent(), 'apply_default_highlight_setting'):
                 self.parent().apply_default_highlight_setting(is_enabled)
 
