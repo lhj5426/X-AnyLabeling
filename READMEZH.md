@@ -700,7 +700,9 @@ https://github.com/user-attachments/assets/9308efea-8d59-4cf0-8957-07633f17f7bf
 
 https://github.com/user-attachments/assets/80773543-7e71-4c60-bca8-11b1d1c91eb0
 
+145.主界面右键打开瀑布流缩略图可以滚动到图片 并高亮视觉显示提示位置
 
+https://github.com/user-attachments/assets/3471bfc0-98a8-4998-a397-7fadccc23778
 
 
 
