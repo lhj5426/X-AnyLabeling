@@ -569,9 +569,18 @@ class ThumbnailItem(QtWidgets.QWidget):
             # 正常模式：原有的点击处理
             modifiers = QtWidgets.QApplication.keyboardModifiers()
             ctrl_pressed = (modifiers & Qt.ControlModifier) == Qt.ControlModifier
+            shift_pressed = (modifiers & Qt.ShiftModifier) == Qt.ShiftModifier
             
             if event.button() == Qt.LeftButton:
-                if ctrl_pressed:
+                if shift_pressed:
+                    # Shift+左键：范围选择（普通模式）
+                    print(f"Normal mode - Shift+Left click: Range select requested at index {self.index - 1}")
+                    parent = self.parent()
+                    while parent and not isinstance(parent, QtWidgets.QDialog):
+                        parent = parent.parent()
+                    if parent and hasattr(parent, 'on_normal_range_select'):
+                        parent.on_normal_range_select(self, self.index - 1)
+                elif ctrl_pressed:
                     # Ctrl+左键：多选
                     self.is_multi_selected = not self.is_multi_selected
                     # 更新图标显示
@@ -588,6 +597,9 @@ class ThumbnailItem(QtWidgets.QWidget):
                         parent = parent.parent()
                     if parent and hasattr(parent, 'update_multi_selection'):
                         parent.update_multi_selection()
+                    # 记录最后点击的索引（用于范围选择）
+                    if parent and hasattr(parent, '_last_multi_selected_index'):
+                        parent._last_multi_selected_index = self.index - 1
                 else:
                     # 普通左键：切换图片
                     self.clicked.emit(self.image_path)
@@ -1102,10 +1114,11 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.selected_images = []  # 选中的图片文件名列表
         self.deletion_list = []  # 标记删除的图片文件名列表
         self.merge_target = None  # 合并目标文件名
-        self._last_selected_index = None  # 记录上次点击的索引，用于Shift范围选择
+        self._last_selected_index = None  # 记录上次点击的索引，用于Shift范围选择（删合模式）
         
         # 普通模式多选状态
         self.multi_selected_items = []  # Ctrl+左键多选的图片项列表
+        self._last_multi_selected_index = None  # 记录上次点击的索引，用于Shift范围选择（普通模式）
         
         # 初始化鼠标指针
         self._init_cursors()
@@ -1357,6 +1370,11 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.multi_select_label.setStyleSheet("color: #00E676; font-weight: bold; font-size: 12px; padding-left: 15px;")  # 亮绿色
         layout.addWidget(self.multi_select_label)
         
+        # 已编辑统计标签（始终显示）
+        self.edited_count_label = QtWidgets.QLabel("已编辑: 0")
+        self.edited_count_label.setStyleSheet("color: #FFA500; font-weight: bold; font-size: 12px; padding-left: 15px;")  # 橙色
+        layout.addWidget(self.edited_count_label)
+        
         layout.addStretch()
         
         self.count_label = QtWidgets.QLabel(f"总数: {len(self.image_list)} | 加载中...")
@@ -1439,7 +1457,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.update_merge_stats()
     
     def on_range_select(self, item, current_index):
-        """处理范围选择（Shift+左键）"""
+        """处理范围选择（Shift+左键）- 删合模式"""
         print(f"on_range_select called: current_index={current_index}, last_index={self._last_selected_index}")
         
         if self._last_selected_index is None:
@@ -1467,6 +1485,42 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self._last_selected_index = current_index
         self.update_selected_list()
         self.update_merge_stats()
+    
+    def on_normal_range_select(self, item, current_index):
+        """处理范围选择（Shift+左键）- 普通模式"""
+        print(f"on_normal_range_select called: current_index={current_index}, last_index={self._last_multi_selected_index}")
+        
+        if self._last_multi_selected_index is None:
+            # 第一次点击，只选中当前项
+            self._last_multi_selected_index = current_index
+            item.is_multi_selected = True
+            item.status_icon.setText("✅")
+            item.status_icon.setStyleSheet("background-color: transparent; color: #00E676; font-size: 18px;")
+            item.status_icon.show()
+            item.update()
+            self.update_multi_selection()
+            print(f"First multi-selection at index {current_index}")
+            return
+        
+        # 计算范围
+        start_idx = min(self._last_multi_selected_index, current_index)
+        end_idx = max(self._last_multi_selected_index, current_index)
+        
+        print(f"Normal mode range selection: {start_idx} to {end_idx}")
+        
+        # 选中范围内的所有项
+        for idx in range(start_idx, end_idx + 1):
+            if idx < len(self.masonry_widget.items):
+                target_item = self.masonry_widget.items[idx]
+                if not target_item.is_multi_selected:
+                    target_item.is_multi_selected = True
+                    target_item.status_icon.setText("✅")
+                    target_item.status_icon.setStyleSheet("background-color: transparent; color: #00E676; font-size: 18px;")
+                    target_item.status_icon.show()
+                    target_item.update()
+        
+        self._last_multi_selected_index = current_index
+        self.update_multi_selection()
     
     def on_set_merge_target(self, item, index):
         """设置合并目标"""
@@ -1528,6 +1582,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         if self.loaded_count >= len(items):
             self.load_timer.stop()
             self.count_label.setText(f"总数: {len(self.image_list)} | 已加载: {self.loaded_count}")
+            # 更新已编辑统计
+            self.update_edited_count()
             # 处理重新加载队列
             self.process_reload_queue()
             return
@@ -1645,6 +1701,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         item.total_labels = len(shapes)
         item.update()
         
+        # 更新已编辑统计
+        self.update_edited_count()
+        
         # 更新主界面的文件列表颜色
         if self.labeling_widget and hasattr(self.labeling_widget, 'update_file_item_color'):
             self.labeling_widget.update_file_item_color(path, item.is_manually_edited)
@@ -1726,8 +1785,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 item.update()
         self.multi_selected_items.clear()
         
-        # 隐藏普通模式的多选统计标签
+        # 隐藏普通模式的多选统计标签和已编辑统计标签
         self.multi_select_label.setVisible(False)
+        self.edited_count_label.setVisible(False)
         
         # 临时移除主窗口的快捷键（如果还没移除的话）
         self._remove_main_window_shortcuts()
@@ -1758,8 +1818,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.merge_mode_status_label.setVisible(False)
         self.merge_stats_label.setVisible(False)
         
-        # 显示普通模式的多选统计标签
+        # 显示普通模式的多选统计标签和已编辑统计标签
         self.multi_select_label.setVisible(True)
+        self.edited_count_label.setVisible(True)
         
         # 恢复默认鼠标指针
         if hasattr(self, 'scroll_area') and self.scroll_area is not None:
@@ -1788,6 +1849,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         # 更新多选统计标签
         self.multi_select_label.setText("已选中: 0")
         self.multi_select_label.setStyleSheet("color: #666; font-size: 12px; padding-left: 15px;")
+        
+        # 更新已编辑统计
+        self.update_edited_count()
     
     def switch_merge_sub_mode(self, mode):
         """切换删合子模式（选择/删除）"""
@@ -2271,7 +2335,21 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             self.multi_select_label.setText("已选中: 0")
             self.multi_select_label.setStyleSheet("color: #666; font-size: 12px; padding-left: 15px;")
         
+        # 更新已编辑统计
+        self.update_edited_count()
+        
         print(f"Multi-selection updated: {count} items selected")
+    
+    def update_edited_count(self):
+        """更新已编辑统计标签"""
+        edited_count = sum(1 for item in self.masonry_widget.items if item.is_manually_edited)
+        
+        if edited_count > 0:
+            self.edited_count_label.setText(f"已编辑: {edited_count}")
+            self.edited_count_label.setStyleSheet("color: #FFA500; font-weight: bold; font-size: 12px; padding-left: 15px;")  # 橙色
+        else:
+            self.edited_count_label.setText("已编辑: 0")
+            self.edited_count_label.setStyleSheet("color: #666; font-size: 12px; padding-left: 15px;")
     
     def batch_toggle_edited(self):
         """批量切换已编辑状态"""
