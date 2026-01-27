@@ -128,6 +128,9 @@ class ThumbnailItem(QtWidgets.QWidget):
         # 普通模式多选状态
         self.is_multi_selected = False  # Ctrl+左键多选状态
         
+        # 悬停信息显示开关
+        self.show_hover_info = True  # 默认显示悬停信息
+        
         # 高亮状态（用于定位提示）
         self.is_highlighted = False  # 是否高亮显示
         self._highlight_opacity = 0  # 高亮透明度（0-255）
@@ -437,7 +440,7 @@ class ThumbnailItem(QtWidgets.QWidget):
                 offset = border_w / 2
                 painter.drawRoundedRect(rect.adjusted(offset, offset, -offset, -offset), self.border_radius, self.border_radius)
             
-            if self.hovered:
+            if self.hovered and self.show_hover_info:
                 painter.setClipPath(path)
                 painter.fillRect(rect, QtGui.QColor(0, 0, 0, 180))
                 painter.setClipping(False)
@@ -1142,6 +1145,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.grid_mode = False  # 方格子模式（统一尺寸）
         self.grid_size = 200  # 方格子尺寸
         
+        # 悬停信息显示开关（需要在load_settings之前定义）
+        self.show_hover_info = True  # 默认显示悬停信息
+        
         # 加载持久化设置
         self.load_settings()
         
@@ -1398,6 +1404,31 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         self._add_sep(layout)
         
+        # 隐藏悬停信息开关
+        self.hide_hover_info_btn = QtWidgets.QPushButton("隐藏信息")
+        self.hide_hover_info_btn.setFixedSize(70, 28)
+        self.hide_hover_info_btn.setCheckable(True)
+        self.hide_hover_info_btn.setChecked(not self.show_hover_info)  # 根据配置设置初始状态
+        self.hide_hover_info_btn.setStyleSheet("""
+            QPushButton { 
+                background: #444; 
+                color: #fff; 
+                border: 1px solid #666; 
+                border-radius: 3px; 
+                padding: 4px 8px; 
+            }
+            QPushButton:hover { background: #555; }
+            QPushButton:checked { 
+                background: #0078d4; 
+                border: 1px solid #005a9e; 
+                font-weight: bold;
+            }
+        """)
+        self.hide_hover_info_btn.clicked.connect(self.toggle_hover_info)
+        layout.addWidget(self.hide_hover_info_btn)
+        
+        self._add_sep(layout)
+        
         # 删合模式按钮
         self.merge_mode_btn = QtWidgets.QPushButton("删合模式")
         self.merge_mode_btn.setFixedSize(70, 28)
@@ -1507,6 +1538,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 item.current_merge_sub_mode = self.current_merge_sub_mode
                 item.set_cursors(self.select_cursor, self.delete_cursor)
                 item.set_merge_mode_cursor(self.current_merge_sub_mode)
+            
+            # 设置悬停信息显示状态
+            item.show_hover_info = self.show_hover_info
             
             self.masonry_widget.add_item(item)
             self.items_map[path] = item
@@ -1831,6 +1865,20 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         self.masonry_widget.schedule_relayout(0)
         self._resize_reload_timer.start(300)
+        self.save_masonry_settings()
+    
+    def toggle_hover_info(self):
+        """切换悬停信息显示"""
+        self.show_hover_info = not self.show_hover_info
+        
+        # 更新所有item的悬停信息显示状态
+        for item in self.masonry_widget.items:
+            item.show_hover_info = self.show_hover_info
+            # 如果当前正在悬停，立即更新显示
+            if item.hovered:
+                item.update()
+        
+        # 保存配置
         self.save_masonry_settings()
     
     def toggle_merge_mode(self):
@@ -2612,6 +2660,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 self.row_height = settings.get("row_height", self.row_height)
                 self.horizontal_mode = settings.get("horizontal_mode", self.horizontal_mode)
                 self.grid_mode = settings.get("grid_mode", self.grid_mode)
+                self.show_hover_info = settings.get("show_hover_info", self.show_hover_info)
     
     def _build_cursor(self, path: str, fallback_shape: Qt.CursorShape, hotspot=None) -> QtGui.QCursor:
         """从文件构建自定义光标（失败则回退到系统光标）"""
@@ -2657,7 +2706,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 "columns": self.columns,
                 "row_height": self.row_height,
                 "horizontal_mode": self.horizontal_mode,
-                "grid_mode": self.grid_mode
+                "grid_mode": self.grid_mode,
+                "show_hover_info": self.show_hover_info
             }
             self.labeling_widget._config["masonry_settings"] = settings
             try:
@@ -2742,42 +2792,114 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         scroll_bar = self.scroll_area.verticalScrollBar()
         current_scroll = scroll_bar.value()
         
-        # 计算目标滚动位置（当前位置 + 一屏高度）
-        target_scroll = current_scroll + (viewport_height * direction)
+        # 删合模式：按一屏高度翻页（快速浏览多张图）
+        if self.merge_mode:
+            # 计算目标滚动位置（当前位置 + 一屏高度）
+            target_scroll = current_scroll + (viewport_height * direction)
+            
+            # 限制在有效范围内
+            max_value = scroll_bar.maximum()
+            target_scroll = max(0, min(target_scroll, max_value))
+            
+            # 找到目标位置附近最近的图片顶部
+            closest_item_top = None
+            min_distance = float('inf')
+            
+            for item in self.masonry_widget.items:
+                item_top = item.y()
+                
+                # 向下翻页：找目标位置之后最近的图片顶部
+                if direction > 0:
+                    if item_top >= target_scroll:
+                        distance = item_top - target_scroll
+                        if distance < min_distance:
+                            min_distance = distance
+                            closest_item_top = item_top
+                # 向上翻页：找目标位置之前最近的图片顶部
+                else:
+                    if item_top <= target_scroll:
+                        distance = target_scroll - item_top
+                        if distance < min_distance:
+                            min_distance = distance
+                            closest_item_top = item_top
+            
+            # 如果找到了对齐的图片，滚动到该位置
+            if closest_item_top is not None:
+                final_scroll = closest_item_top
+            else:
+                final_scroll = target_scroll
+        else:
+            # 普通模式（瀑布流或方格子）：找第一张部分可见的图片，对齐到顶部
+            visible_top = current_scroll
+            visible_bottom = visible_top + viewport_height
+            
+            if direction > 0:
+                # 向下翻页：找第一张顶部在可见区域下方的图片
+                target_item_top = None
+                
+                # 检查当前是否已经对齐到某张图片的顶部
+                current_aligned = False
+                for item in self.masonry_widget.items:
+                    item_top = item.y()
+                    # 如果当前滚动位置已经对齐到某张图片（容差10像素）
+                    if abs(item_top - visible_top) <= 10:
+                        current_aligned = True
+                        # 找下一张图片
+                        for next_item in self.masonry_widget.items:
+                            next_top = next_item.y()
+                            if next_top > item_top + 10:
+                                target_item_top = next_top
+                                break
+                        break
+                
+                # 如果当前没有对齐到任何图片，找第一张顶部在下方的图片
+                if not current_aligned:
+                    for item in self.masonry_widget.items:
+                        item_top = item.y()
+                        if item_top > visible_top + 5:
+                            target_item_top = item_top
+                            break
+                
+                if target_item_top is not None:
+                    final_scroll = target_item_top
+                else:
+                    # 如果没有找到，说明已经到底了
+                    final_scroll = scroll_bar.maximum()
+            else:
+                # 向上翻页：找最后一张顶部在当前可见区域顶部之前的图片
+                target_item_top = None
+                
+                # 检查当前是否已经对齐到某张图片的顶部
+                current_aligned = False
+                for item in self.masonry_widget.items:
+                    item_top = item.y()
+                    # 如果当前滚动位置已经对齐到某张图片（容差10像素）
+                    if abs(item_top - visible_top) <= 10:
+                        current_aligned = True
+                        # 找上一张图片
+                        for prev_item in reversed(self.masonry_widget.items):
+                            prev_top = prev_item.y()
+                            if prev_top < item_top - 10:
+                                target_item_top = prev_top
+                                break
+                        break
+                
+                # 如果当前没有对齐到任何图片，找最后一张顶部在上方的图片
+                if not current_aligned:
+                    for item in reversed(self.masonry_widget.items):
+                        item_top = item.y()
+                        if item_top < visible_top - 5:
+                            target_item_top = item_top
+                            break
+                
+                if target_item_top is not None:
+                    final_scroll = target_item_top
+                else:
+                    # 如果没有找到，说明已经到顶了
+                    final_scroll = 0
         
         # 限制在有效范围内
         max_value = scroll_bar.maximum()
-        target_scroll = max(0, min(target_scroll, max_value))
-        
-        # 找到目标位置附近最近的图片顶部
-        closest_item_top = None
-        min_distance = float('inf')
-        
-        for item in self.masonry_widget.items:
-            item_top = item.y()
-            
-            # 向下翻页：找目标位置之后最近的图片顶部
-            if direction > 0:
-                if item_top >= target_scroll:
-                    distance = item_top - target_scroll
-                    if distance < min_distance:
-                        min_distance = distance
-                        closest_item_top = item_top
-            # 向上翻页：找目标位置之前最近的图片顶部
-            else:
-                if item_top <= target_scroll:
-                    distance = target_scroll - item_top
-                    if distance < min_distance:
-                        min_distance = distance
-                        closest_item_top = item_top
-        
-        # 如果找到了对齐的图片，滚动到该位置
-        if closest_item_top is not None:
-            final_scroll = closest_item_top
-        else:
-            final_scroll = target_scroll
-        
-        # 限制在有效范围内
         final_scroll = max(0, min(final_scroll, max_value))
         
         scroll_bar.setValue(int(final_scroll))
