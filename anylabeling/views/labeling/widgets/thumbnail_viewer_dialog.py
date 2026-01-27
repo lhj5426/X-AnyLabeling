@@ -128,6 +128,11 @@ class ThumbnailItem(QtWidgets.QWidget):
         # 普通模式多选状态
         self.is_multi_selected = False  # Ctrl+左键多选状态
         
+        # 高亮状态（用于定位提示）
+        self.is_highlighted = False  # 是否高亮显示
+        self._highlight_opacity = 0  # 高亮透明度（0-255）
+        self._highlight_timer = None  # 高亮动画定时器
+        
         # 鼠标指针
         self._select_cursor = None
         self._delete_cursor = None
@@ -422,6 +427,16 @@ class ThumbnailItem(QtWidgets.QWidget):
                 offset = self.border_width / 2
                 painter.drawRoundedRect(rect.adjusted(offset, offset, -offset, -offset), self.border_radius, self.border_radius)
             
+            # 绘制高亮边框（定位提示）
+            if self.is_highlighted:
+                border_w = 6
+                # 使用动态透明度的纯绿色边框（非常醒目）
+                pen = QtGui.QPen(QtGui.QColor(0, 255, 0, self._highlight_opacity), border_w)  # 纯绿色
+                painter.setPen(pen)
+                painter.setBrush(Qt.NoBrush)
+                offset = border_w / 2
+                painter.drawRoundedRect(rect.adjusted(offset, offset, -offset, -offset), self.border_radius, self.border_radius)
+            
             if self.hovered:
                 painter.setClipPath(path)
                 painter.fillRect(rect, QtGui.QColor(0, 0, 0, 180))
@@ -526,18 +541,14 @@ class ThumbnailItem(QtWidgets.QWidget):
                 modifiers = QtWidgets.QApplication.keyboardModifiers()
                 shift_pressed = (modifiers & Qt.ShiftModifier) == Qt.ShiftModifier
                 
-                print(f"Left click - Shift: {shift_pressed}, Mode: {self.current_merge_sub_mode}, Index: {self.index}")
-                
                 if self.current_merge_sub_mode == 'select':
                     # 选择模式
                     if shift_pressed:
                         # Shift+左键：范围选择
-                        print(f"Range select requested: {self.index - 1}")
                         self.range_select_requested.emit(self, self.index - 1)  # index从1开始，转为0开始
                     else:
                         # 普通左键：切换选中状态
                         self.is_selected = not self.is_selected
-                        print(f"Toggle selected: {self.is_selected}")
                         if not self.is_selected and self.is_merge_target:
                             # 取消选中时，同时取消合并目标
                             self.is_merge_target = False
@@ -553,13 +564,11 @@ class ThumbnailItem(QtWidgets.QWidget):
                 elif self.current_merge_sub_mode == 'delete':
                     # 删除模式：切换删除标记
                     self.is_marked_delete = not self.is_marked_delete
-                    print(f"Toggle delete: {self.is_marked_delete}")
                     self.update_merge_visual()
                     self.merge_state_changed.emit(self)
                     
             elif event.button() == Qt.RightButton:
                 # 右键：设置为合并目标（仅在选择模式且已选中时）
-                print(f"Right click - Mode: {self.current_merge_sub_mode}, Selected: {self.is_selected}")
                 if self.current_merge_sub_mode == 'select' and self.is_selected:
                     self.set_merge_target_requested.emit(self, self.index - 1)
                 # 阻止右键菜单弹出
@@ -574,7 +583,6 @@ class ThumbnailItem(QtWidgets.QWidget):
             if event.button() == Qt.LeftButton:
                 if shift_pressed:
                     # Shift+左键：范围选择（普通模式）
-                    print(f"Normal mode - Shift+Left click: Range select requested at index {self.index - 1}")
                     parent = self.parent()
                     while parent and not isinstance(parent, QtWidgets.QDialog):
                         parent = parent.parent()
@@ -631,6 +639,44 @@ class ThumbnailItem(QtWidgets.QWidget):
             self.status_icon.show()
         else:
             self.status_icon.hide()
+        
+        self.update()
+    
+    def start_highlight(self):
+        """开始高亮动画（闪烁3次）"""
+        self.is_highlighted = True
+        self._highlight_opacity = 255
+        self._highlight_count = 0  # 闪烁次数
+        self._highlight_direction = -1  # -1表示变暗，1表示变亮
+        
+        if self._highlight_timer:
+            self._highlight_timer.stop()
+        
+        self._highlight_timer = QtCore.QTimer()
+        self._highlight_timer.timeout.connect(self._update_highlight)
+        self._highlight_timer.start(30)  # 每30ms更新一次
+        self.update()
+    
+    def _update_highlight(self):
+        """更新高亮动画"""
+        # 调整透明度
+        self._highlight_opacity += self._highlight_direction * 15
+        
+        # 检查是否需要反转方向
+        if self._highlight_opacity <= 0:
+            self._highlight_opacity = 0
+            self._highlight_direction = 1
+            self._highlight_count += 1
+        elif self._highlight_opacity >= 255:
+            self._highlight_opacity = 255
+            self._highlight_direction = -1
+        
+        # 闪烁3次后停止
+        if self._highlight_count >= 3:
+            self.is_highlighted = False
+            if self._highlight_timer:
+                self._highlight_timer.stop()
+                self._highlight_timer = None
         
         self.update()
     
@@ -1148,14 +1194,24 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         super().focusInEvent(event)
         # 获得焦点时，移除主窗口的快捷键
         self._remove_main_window_shortcuts()
-        print("✓ Thumbnail dialog gained focus - shortcuts removed from main window")
+        # 自动刷新已编辑状态
+        self.refresh_edited_status()
+    
+    def refresh_edited_status(self):
+        """刷新所有图片的已编辑状态"""
+        for item in self.masonry_widget.items:
+            # 重新检查已编辑状态
+            item._check_manually_edited()
+            item.update()
+        
+        # 更新已编辑统计
+        self.update_edited_count()
     
     def focusOutEvent(self, event):
         """窗口失去焦点时"""
         super().focusOutEvent(event)
         # 失去焦点时，恢复主窗口的快捷键
         self._restore_main_window_shortcuts()
-        print("✓ Thumbnail dialog lost focus - shortcuts restored to main window")
     
     def changeEvent(self, event):
         """窗口状态改变事件"""
@@ -1163,11 +1219,17 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         if event.type() == QtCore.QEvent.WindowStateChange:
             # 窗口最小化时，恢复主窗口快捷键
             if self.isMinimized():
-                print("✓ Thumbnail dialog minimized - restoring shortcuts to main window")
                 self._restore_main_window_shortcuts()
+                # 激活主窗口，确保快捷键生效
+                if self.labeling_widget:
+                    # 使用更长的延迟，确保最小化动画完成
+                    QtCore.QTimer.singleShot(100, lambda: self.labeling_widget.raise_())
+                    QtCore.QTimer.singleShot(150, lambda: self.labeling_widget.activateWindow())
+                    QtCore.QTimer.singleShot(200, lambda: self.labeling_widget.setFocus())
+                    # 再次确保快捷键已恢复
+                    QtCore.QTimer.singleShot(250, self._restore_main_window_shortcuts)
             # 窗口从最小化恢复时，移除主窗口快捷键
             elif event.oldState() & Qt.WindowMinimized:
-                print("✓ Thumbnail dialog restored from minimized - removing shortcuts from main window")
                 # 延迟移除主窗口快捷键，确保窗口完全恢复
                 QtCore.QTimer.singleShot(100, self._remove_main_window_shortcuts)
     
@@ -1458,22 +1520,17 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     
     def on_range_select(self, item, current_index):
         """处理范围选择（Shift+左键）- 删合模式"""
-        print(f"on_range_select called: current_index={current_index}, last_index={self._last_selected_index}")
-        
         if self._last_selected_index is None:
             # 第一次点击，只选中当前项
             self._last_selected_index = current_index
             item.is_selected = True
             item.update_merge_visual()
             self.update_selected_list()
-            print(f"First selection at index {current_index}")
             return
         
         # 计算范围
         start_idx = min(self._last_selected_index, current_index)
         end_idx = max(self._last_selected_index, current_index)
-        
-        print(f"Range selection: {start_idx} to {end_idx}")
         
         # 选中范围内的所有项
         for idx in range(start_idx, end_idx + 1):
@@ -1488,7 +1545,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     
     def on_normal_range_select(self, item, current_index):
         """处理范围选择（Shift+左键）- 普通模式"""
-        print(f"on_normal_range_select called: current_index={current_index}, last_index={self._last_multi_selected_index}")
         
         if self._last_multi_selected_index is None:
             # 第一次点击，只选中当前项
@@ -1499,14 +1555,11 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             item.status_icon.show()
             item.update()
             self.update_multi_selection()
-            print(f"First multi-selection at index {current_index}")
             return
         
         # 计算范围
         start_idx = min(self._last_multi_selected_index, current_index)
         end_idx = max(self._last_multi_selected_index, current_index)
-        
-        print(f"Normal mode range selection: {start_idx} to {end_idx}")
         
         # 选中范围内的所有项
         for idx in range(start_idx, end_idx + 1):
@@ -1554,6 +1607,42 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.load_timer.timeout.connect(self.load_next_batch)
         self.load_timer.start(30)
     
+    def scroll_to_image(self, filename):
+        """滚动到指定图片并高亮显示"""
+        if not filename:
+            return
+        
+        # 查找图片对应的item
+        target_item = None
+        for item in self.masonry_widget.items:
+            if item.image_path == filename:
+                target_item = item
+                break
+        
+        if not target_item:
+            return
+        
+        # 获取item在父控件中的位置
+        item_pos = target_item.pos()
+        item_y = item_pos.y()
+        item_height = target_item.height()
+        
+        # 获取滚动区域的可见高度
+        viewport_height = self.scroll_area.viewport().height()
+        
+        # 计算滚动位置，让目标图片显示在可见区域的中间偏上位置
+        scroll_value = item_y - viewport_height // 3
+        
+        # 确保滚动值在有效范围内
+        scroll_bar = self.scroll_area.verticalScrollBar()
+        scroll_value = max(0, min(scroll_value, scroll_bar.maximum()))
+        
+        # 平滑滚动到目标位置
+        scroll_bar.setValue(int(scroll_value))
+        
+        # 启动高亮动画
+        target_item.start_highlight()
+    
     def get_load_width(self):
         """获取加载宽度/高度"""
         window_width = self.width()
@@ -1586,6 +1675,11 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             self.update_edited_count()
             # 处理重新加载队列
             self.process_reload_queue()
+            # 首次加载完成后，滚动到当前图片并高亮
+            if self.current_filename and not hasattr(self, '_initial_scroll_done'):
+                self._initial_scroll_done = True
+                # 延迟执行，确保布局完成
+                QtCore.QTimer.singleShot(300, lambda: self.scroll_to_image(self.current_filename))
             return
         
         load_width = self.get_load_width()
@@ -1633,7 +1727,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     def on_thumbnail_clicked(self, path):
         # 先恢复主窗口的快捷键
         self._restore_main_window_shortcuts()
-        print("✓ on_thumbnail_clicked: Restored shortcuts before switching")
         
         self.image_switched.emit(path)
         self.showMinimized()
@@ -1874,10 +1967,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     
     def merge_selected_images(self):
         """合并选中的图片"""
-        print(f"merge_selected_images called: selected={len(self.selected_images)}, target={self.merge_target}")
-        print(f"Selected images list:")
-        for i, path in enumerate(self.selected_images):
-            print(f"  {i+1}. {os.path.basename(path)}")
         
         if len(self.selected_images) < 2:
             QtWidgets.QMessageBox.warning(self, "警告", "请至少选择两张图片进行合并！")
@@ -2048,10 +2137,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         ret = box.exec_()
         if ret != QtWidgets.QMessageBox.Yes:
-            print("    User cancelled merge")
             return
-        
-        print("    User confirmed merge - executing...")
         
         # 解析文件名并计算新文件名
         try:
@@ -2185,9 +2271,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             self.files_changed.emit()
             
             # 静默完成，不弹出提示框
-            print(f"✓ 合并完成：{new_name}，删除了 {len(deleted)} 张图片")
-            if failed:
-                print(f"  警告：有 {len(failed)} 张删除失败")
             
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "错误", f"合并失败：{str(e)}")
@@ -2215,7 +2298,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     
     def delete_marked_images(self):
         """删除标记的图片"""
-        print(f"delete_marked_images called: deletion_list={len(self.deletion_list)}")
         
         if not self.deletion_list:
             QtWidgets.QMessageBox.warning(self, "警告", "没有标记要删除的图片！")
@@ -2243,10 +2325,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         )
         
         if reply != QtWidgets.QMessageBox.Yes:
-            print("    User cancelled delete")
             return
-        
-        print("    User confirmed delete - executing...")
         
         # 执行删除操作
         try:
@@ -2271,9 +2350,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             self.files_changed.emit()
             
             # 静默完成，不弹出提示框
-            print(f"✓ 已删除 {len(deleted)} 张图片")
-            if failed:
-                print(f"  警告：有 {len(failed)} 张删除失败")
             
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "错误", f"删除失败：{str(e)}")
@@ -2296,8 +2372,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     
     def clear_merge_selection(self):
         """清除所有选择"""
-        print(">>> clear_merge_selection called")
-        print(f"    Before clear - selected: {len(self.selected_images)}, deletion: {len(self.deletion_list)}")
         
         self.selected_images.clear()
         self.deletion_list.clear()
@@ -2313,9 +2387,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             item.is_merge_target = False
             item.status_icon.hide()  # 隐藏状态图标
             item.update()
-        
-        print(f"    Cleared {cleared_count} items")
-        print(f"    After clear - selected: {len(self.selected_images)}, deletion: {len(self.deletion_list)}")
         
         self.update_merge_stats()
     
@@ -2337,8 +2408,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # 更新已编辑统计
         self.update_edited_count()
-        
-        print(f"Multi-selection updated: {count} items selected")
     
     def update_edited_count(self):
         """更新已编辑统计标签"""
@@ -2361,9 +2430,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         for item in self.multi_selected_items:
             self.on_toggle_edited(item)  # 使用正确的方法名
-        
-        action = "取消编辑" if all_edited else "添加编辑标记"
-        print(f"✓ 批量{action}：{len(self.multi_selected_items)} 张图片")
     
     def delete_multi_selected(self):
         """删除多选的图片"""
@@ -2417,10 +2483,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # 发出文件列表变化信号
         self.files_changed.emit()
-        
-        print(f"✓ 已删除 {len(deleted)} 张图片")
-        if failed:
-            print(f"  警告：有 {len(failed)} 张删除失败")
     
     def update_merge_stats(self):
         """更新统计信息"""
@@ -2505,7 +2567,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 if not hasattr(self, '_original_w_shortcuts'):
                     self._original_w_shortcuts = action.shortcuts()
                 action.setShortcuts([])
-                print(f"✓ Removed W key shortcuts from main window")
             
             # 保存并移除A键快捷键
             if hasattr(self.labeling_widget.actions, 'open_prev_image'):
@@ -2513,7 +2574,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 if not hasattr(self, '_original_a_shortcuts'):
                     self._original_a_shortcuts = action.shortcuts()
                 action.setShortcuts([])
-                print(f"✓ Removed A key shortcuts from main window")
             
             # 保存并移除D键快捷键
             if hasattr(self.labeling_widget.actions, 'open_next_image'):
@@ -2521,7 +2581,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 if not hasattr(self, '_original_d_shortcuts'):
                     self._original_d_shortcuts = action.shortcuts()
                 action.setShortcuts([])
-                print(f"✓ Removed D key shortcuts from main window")
     
     def _restore_main_window_shortcuts(self):
         """恢复主窗口的W/A/D快捷键"""
@@ -2530,19 +2589,16 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             if hasattr(self.labeling_widget.actions, 'show_hidden_polygons'):
                 shortcuts = getattr(self, '_original_w_shortcuts', [QtGui.QKeySequence('W')])
                 self.labeling_widget.actions.show_hidden_polygons.setShortcuts(shortcuts)
-                print(f"✓ Restored W key shortcuts to main window")
             
             # 恢复A键快捷键
             if hasattr(self.labeling_widget.actions, 'open_prev_image'):
                 shortcuts = getattr(self, '_original_a_shortcuts', [QtGui.QKeySequence('A')])
                 self.labeling_widget.actions.open_prev_image.setShortcuts(shortcuts)
-                print(f"✓ Restored A key shortcuts to main window")
             
             # 恢复D键快捷键
             if hasattr(self.labeling_widget.actions, 'open_next_image'):
                 shortcuts = getattr(self, '_original_d_shortcuts', [QtGui.QKeySequence('D')])
                 self.labeling_widget.actions.open_next_image.setShortcuts(shortcuts)
-                print(f"✓ Restored D key shortcuts to main window")
     
     def load_settings(self):
         """从配置加载设置"""
@@ -2615,22 +2671,13 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         key = event.key()
         modifiers = event.modifiers()
         
-        # 调试：打印按键详细信息
-        print(f"=== KeyPress Event ===")
-        print(f"Key: {key} (Q={Qt.Key_Q}, W={Qt.Key_W}, E={Qt.Key_E}, A={Qt.Key_A}, D={Qt.Key_D})")
-        print(f"Merge mode: {self.merge_mode}")
-        print(f"Current sub-mode: {self.current_merge_sub_mode if self.merge_mode else 'N/A'}")
-        print(f"Modifiers: {modifiers}")
-        
         if not self.merge_mode:
             # 非删合模式 - 处理普通模式的快捷键
             if key == Qt.Key_Escape:
-                print("ESC pressed - closing window")
                 self.close()
                 event.accept()
             elif key == Qt.Key_W:
                 # W: 清除所有多选
-                print(">>> W pressed (normal mode) - clearing multi-selection")
                 for item in self.masonry_widget.items:
                     if item.is_multi_selected:
                         item.is_multi_selected = False
@@ -2641,12 +2688,10 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 event.accept()
             elif key == Qt.Key_A:
                 # A: 上一页
-                print(">>> A pressed (normal mode) - previous page")
                 self.scroll_page(-1)
                 event.accept()
             elif key == Qt.Key_D:
                 # D: 下一页
-                print(">>> D pressed (normal mode) - next page")
                 self.scroll_page(1)
                 event.accept()
             else:
@@ -2656,7 +2701,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         # 删合模式下的快捷键
         # Q: 切换选择/删除模式
         if key == Qt.Key_Q:
-            print(">>> Q pressed - switching mode")
             if self.current_merge_sub_mode == 'select':
                 self.switch_merge_sub_mode('delete')
             else:
@@ -2665,35 +2709,28 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # E 或 回车: 执行当前模式操作
         elif key in (Qt.Key_E, Qt.Key_Return):
-            print(f">>> E/Enter pressed - executing operation in mode: {self.current_merge_sub_mode}")
             if self.current_merge_sub_mode == 'select':
-                print("    -> Calling merge_selected_images()")
                 self.merge_selected_images()
             else:
-                print("    -> Calling delete_marked_images()")
                 self.delete_marked_images()
             event.accept()
         
         # W 或 ESC: 清除选择
         elif key in (Qt.Key_W, Qt.Key_Escape):
-            print(">>> W/ESC pressed - clearing selection")
             self.clear_merge_selection()
             event.accept()
         
         # A: 上一页
         elif key == Qt.Key_A:
-            print(">>> A pressed - previous page")
             self.scroll_page(-1)
             event.accept()
         
         # D: 下一页
         elif key == Qt.Key_D:
-            print(">>> D pressed - next page")
             self.scroll_page(1)
             event.accept()
         
         else:
-            print(f">>> Unhandled key: {key}")
             super().keyPressEvent(event)
     
     def scroll_page(self, direction):
@@ -2744,7 +2781,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         final_scroll = max(0, min(final_scroll, max_value))
         
         scroll_bar.setValue(int(final_scroll))
-        print(f"翻页: 从 {current_scroll} 到 {final_scroll} (方向: {'下' if direction > 0 else '上'})")
     
     def on_masonry_resized(self):
         """瀑布流容器大小变化"""
@@ -2803,7 +2839,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             # W键：清除所有多选
             if key == Qt.Key_W:
                 if self.multi_selected_items:
-                    print(">>> W pressed - clearing multi-selection")
                     for item in self.multi_selected_items:
                         item.is_multi_selected = False
                         item.status_icon.hide()
@@ -2816,14 +2851,12 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             
             # A键：上一页
             elif key == Qt.Key_A:
-                print(">>> A pressed - previous page (normal mode)")
                 self.scroll_page(-1)
                 event.accept()
                 return
             
             # D键：下一页
             elif key == Qt.Key_D:
-                print(">>> D pressed - next page (normal mode)")
                 self.scroll_page(1)
                 event.accept()
                 return
@@ -2833,15 +2866,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             return
         
         # 删合模式下的快捷键处理
-        print(f"=== KeyPress Event ===")
-        print(f"Key: {key} (Q={Qt.Key_Q}, W={Qt.Key_W}, E={Qt.Key_E}, A={Qt.Key_A}, D={Qt.Key_D})")
-        print(f"Merge mode: {self.merge_mode}")
-        print(f"Current sub-mode: {self.current_merge_sub_mode}")
-        print(f"Modifiers: {modifiers}")
         
         # Q键：切换选择/删除模式
         if key == Qt.Key_Q:
-            print(">>> Q pressed - toggling mode")
             if self.current_merge_sub_mode == 'select':
                 self.switch_merge_sub_mode('delete')
             else:
@@ -2851,33 +2878,27 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # W键：清除选择
         elif key == Qt.Key_W:
-            print(">>> W pressed - clearing selection")
             self.clear_merge_selection()
             event.accept()
             return
         
         # E键或Enter键：执行操作
         elif key in (Qt.Key_E, Qt.Key_Return, Qt.Key_Enter):
-            print(f">>> E/Enter pressed - executing operation in mode: {self.current_merge_sub_mode}")
             if self.current_merge_sub_mode == 'select':
-                print("-> Calling merge_selected_images()")
                 self.merge_selected_images()
             else:
-                print("-> Calling delete_marked_images()")
                 self.delete_marked_images()
             event.accept()
             return
         
         # A键：上一页
         elif key == Qt.Key_A:
-            print(">>> A pressed - previous page")
             self.scroll_page(-1)
             event.accept()
             return
         
         # D键：下一页
         elif key == Qt.Key_D:
-            print(">>> D pressed - next page")
             self.scroll_page(1)
             event.accept()
             return

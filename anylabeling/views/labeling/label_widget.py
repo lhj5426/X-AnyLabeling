@@ -15366,11 +15366,18 @@ class LabelingWidget(QtWidgets.QWidget):
             target_filename = self.image_path
         
         if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog and self.thumbnail_viewer_dialog.isVisible():
-            # 如果窗口被最小化，先还原它
+            # 如果窗口已经打开，只需要激活并定位到当前图片
+            # 如果窗口被最小化，先还原它（保持原有的最大化状态）
             if self.thumbnail_viewer_dialog.isMinimized():
-                self.thumbnail_viewer_dialog.showNormal()
+                # 恢复到之前的状态（最大化或正常）
+                if self.thumbnail_viewer_dialog.windowState() & Qt.WindowMaximized:
+                    self.thumbnail_viewer_dialog.showMaximized()
+                else:
+                    self.thumbnail_viewer_dialog.showNormal()
             self.thumbnail_viewer_dialog.raise_()
             self.thumbnail_viewer_dialog.activateWindow()
+            # 滚动到当前图片
+            self.thumbnail_viewer_dialog.scroll_to_image(target_filename)
             return
         
         if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog:
