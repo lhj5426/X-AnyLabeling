@@ -320,14 +320,16 @@ def perform_merge(shapes, mode, config):
     shapes = [shape for shape in shapes if shape is not None]
 
     output_shape_type = config.get("OUTPUT_SHAPE_TYPE", "rectangle")
-    # Filter shapes based on the selected output type
-    shapes = [s for s in shapes if s.get("shape_type") == output_shape_type]
+    
+    # 分离出匹配类型和不匹配类型的框
+    shapes_to_merge = [s for s in shapes if s.get("shape_type") == output_shape_type]
+    shapes_to_keep = [s for s in shapes if s.get("shape_type") != output_shape_type]
 
-    if not shapes:
-        return [], 0
+    if not shapes_to_merge:
+        return shapes, 0  # 没有可合并的框，返回原始列表
 
     # Use a Disjoint Set Union (DSU) data structure
-    parent = list(range(len(shapes)))
+    parent = list(range(len(shapes_to_merge)))
     def find(i):
         if parent[i] == i:
             return i
@@ -343,15 +345,15 @@ def perform_merge(shapes, mode, config):
         return False
 
     # Build the graph of mergeable shapes
-    for i in range(len(shapes)):
-        for j in range(i + 1, len(shapes)):
+    for i in range(len(shapes_to_merge)):
+        for j in range(i + 1, len(shapes_to_merge)):
             if find(i) != find(j):
-                if can_merge_shapes(shapes[i], shapes[j], mode, config):
+                if can_merge_shapes(shapes_to_merge[i], shapes_to_merge[j], mode, config):
                     union(i, j)
 
     # Group shapes by their root parent
     groups = {}
-    for i in range(len(shapes)):
+    for i in range(len(shapes_to_merge)):
         root = find(i)
         if root not in groups:
             groups[root] = []
@@ -363,9 +365,9 @@ def perform_merge(shapes, mode, config):
     for root_index in groups:
         indices = groups[root_index]
         if len(indices) == 1:
-            final_shapes.append(shapes[indices[0]])
+            final_shapes.append(shapes_to_merge[indices[0]])
         else:
-            group_shapes = [shapes[i] for i in indices]
+            group_shapes = [shapes_to_merge[i] for i in indices]
             
             # --- Start of new group merge logic ---
 
@@ -445,6 +447,9 @@ def perform_merge(shapes, mode, config):
             total_merge_count += len(group_shapes) - 1
             
             # --- End of new group merge logic ---
+
+    # 把不参与合并的框加回去
+    final_shapes.extend(shapes_to_keep)
 
     return final_shapes, total_merge_count
 
