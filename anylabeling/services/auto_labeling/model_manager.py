@@ -1959,6 +1959,14 @@ class ModelManager(QObject):
                 "model"
             ].set_auto_labeling_preserve_existing_annotations_state(state)
 
+    def set_auto_labeling_end2end_state(self, state):
+        """Set end2end mode state for YOLO26/YOLOv10 models"""
+        if (
+            self.loaded_model_config is not None
+            and hasattr(self.loaded_model_config["model"], "set_auto_labeling_end2end_state")
+        ):
+            self.loaded_model_config["model"].set_auto_labeling_end2end_state(state)
+
     def set_auto_labeling_prompt(self):
         if (
             self.loaded_model_config is not None

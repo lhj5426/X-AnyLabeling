@@ -4,7 +4,7 @@ from .__base__.yolo import YOLO
 
 
 class YOLO26(YOLO):
-    """YOLO26 - End-to-end object detection without NMS"""
+    """YOLO26 - End-to-end object detection with optional NMS mode"""
 
     class Meta:
         required_config_names = [
@@ -17,6 +17,9 @@ class YOLO26(YOLO):
             "button_run",
             "input_conf",
             "edit_conf",
+            "input_iou",
+            "edit_iou",
+            "toggle_end2end",
             "toggle_preserve_existing_annotations",
             "button_filter_classes",
         ]
@@ -26,3 +29,4 @@ class YOLO26(YOLO):
             "rectangle": QCoreApplication.translate("Model", "Rectangle"),
         }
         default_output_mode = "rectangle"
+

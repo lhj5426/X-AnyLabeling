@@ -212,6 +212,27 @@ class AutoLabelingWidget(QWidget):
             )
         )
 
+        # --- Configuration for: toggle_end2end ---
+        self.toggle_end2end.setChecked(True)  # Default: end2end mode ON (NMS OFF)
+        self.toggle_end2end.setCheckable(True)
+        # 初始状态：End2End 开启（NMS 关闭）- 灰色
+        self.toggle_end2end.setStyleSheet(
+            self._get_end2end_button_style("#777777", "#666666")
+        )
+        tooltip_on = self.tr(
+            "End-to-end mode (NMS disabled). Click to enable NMS."
+        )
+        tooltip_off = self.tr(
+            "Traditional NMS mode enabled. Click to disable NMS."
+        )
+        self.toggle_end2end.setToolTip(tooltip_on)
+        self.toggle_end2end.clicked.connect(
+            lambda checked: self._update_end2end_button_state(checked, tooltip_on, tooltip_off)
+        )
+        self.toggle_end2end.toggled.connect(
+            self.on_end2end_state_changed
+        )
+
         # --- Configuration for: toggle_preserve_existing_annotations ---
         self.toggle_preserve_existing_annotations.setChecked(False)
         self.toggle_preserve_existing_annotations.setCheckable(True)
@@ -715,6 +736,7 @@ class AutoLabelingWidget(QWidget):
             "input_iou",
             "output_label",
             "output_select_combobox",
+            "toggle_end2end",
             "toggle_preserve_existing_annotations",
             "button_set_api_token",
             "button_reset_tracker",
@@ -755,8 +777,35 @@ class AutoLabelingWidget(QWidget):
             state
         )
 
+    def on_end2end_state_changed(self, state):
+        """Handle end2end mode state changed"""
+        self.model_manager.set_auto_labeling_end2end_state(state)
+        # Update IoU controls based on end2end state
+        self.input_iou.setEnabled(not state)
+        self.edit_iou.setEnabled(not state)
+
     def _get_replace_button_style(self, bg_color, hover_color):
         """生成标签覆盖按钮的样式，保持和其他按钮一样的尺寸"""
+        return f"""
+            QPushButton {{
+                height: 24px;
+                min-width: 80px;
+                padding: 5px 8px;
+                border-radius: 8px;
+                background-color: {bg_color};
+                color: white;
+                border: 1px solid #d2d2d7;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_color};
+            }}
+            QPushButton:pressed {{
+                background-color: {hover_color};
+            }}
+        """
+
+    def _get_end2end_button_style(self, bg_color, hover_color):
+        """生成 End2End 按钮的样式"""
         return f"""
             QPushButton {{
                 height: 24px;
@@ -795,6 +844,33 @@ class AutoLabelingWidget(QWidget):
             self.toggle_preserve_existing_annotations.setStyleSheet(
                 self._get_replace_button_style("#d9534f", "#c9302c")
             )
+
+    def _update_end2end_button_state(self, checked, tooltip_on, tooltip_off):
+        """更新 End2End 按钮的状态和颜色"""
+        self.toggle_end2end.setToolTip(
+            tooltip_on if checked else tooltip_off
+        )
+        # checked=True 表示 End2End 开启（NMS 关闭）
+        # checked=False 表示 End2End 关闭（NMS 开启）
+        self.toggle_end2end.setText(
+            self.tr("NMS (关)") if checked else self.tr("NMS (开)")
+        )
+        if checked:
+            # End2End 开启（NMS 关闭）- 灰色
+            self.toggle_end2end.setStyleSheet(
+                self._get_end2end_button_style("#777777", "#666666")
+            )
+            # 禁用 IoU 控件
+            self.input_iou.setEnabled(False)
+            self.edit_iou.setEnabled(False)
+        else:
+            # End2End 关闭（NMS 开启）- 蓝色
+            self.toggle_end2end.setStyleSheet(
+                self._get_end2end_button_style("#5bc0de", "#46b8da")
+            )
+            # 启用 IoU 控件
+            self.input_iou.setEnabled(True)
+            self.edit_iou.setEnabled(True)
 
     def on_reset_tracker(self):
         """Handle reset tracker"""

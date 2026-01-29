@@ -98,6 +98,9 @@ class YOLO(Model):
         self.iou_thres = self.config.get("iou_threshold", 0.45)
         self.conf_thres = self.config.get("conf_threshold", 0.25)
         self.filter_classes = self.config.get("filter_classes", None)
+        self.max_det = self.config.get("max_det", 300)  # Maximum detections per image
+        self.agnostic_nms = self.config.get("agnostic_nms", False)  # Class-agnostic NMS for end2end models
+        self.end2end = self.config.get("end2end", True)  # End-to-end mode (no NMS), set False to use traditional NMS like YOLOv8
         self.nc = len(self.classes)
         self.input_shape = (self.input_height, self.input_width)
         if self.anchors:
@@ -221,6 +224,12 @@ class YOLO(Model):
         if self.tracker is not None:
             self.tracker.reset()
 
+    def set_auto_labeling_end2end_state(self, state):
+        """Toggle end2end mode for YOLO26/YOLOv10 models."""
+        self.end2end = state
+        # Return the new state to update UI (enable/disable IoU controls)
+        return state
+
     def inference(self, blob):
         if self.engine == "dnn" and self.task in ["det", "seg", "track"]:
             outputs = self.net.get_dnn_inference(blob=blob, extract=False)
@@ -326,11 +335,70 @@ class YOLO(Model):
                 nc=self.nc,
             )
         elif self.model_type in ["yolov10", "doclayout_yolo", "yolo26"]:
-            p = self.postprocess_v10(
-                preds[0][0],
-                conf_thres=self.conf_thres,
-                classes=self.filter_classes,
-            )
+            # YOLO26 and YOLOv10 support both end2end (no NMS) and traditional NMS modes
+            # Model output format is always the same: (1, 300, 6) = [x1,y1,x2,y2,conf,cls]
+            # Coordinates are in input image space (e.g., 640x640)
+            
+            if self.end2end:
+                # End-to-end mode: no NMS needed, model already did it
+                if len(preds) > 0 and len(preds[0]) > 0:
+                    p = self.postprocess_v10(
+                        preds[0][0],
+                        conf_thres=self.conf_thres,
+                        classes=self.filter_classes,
+                    )
+                else:
+                    logger.warning("Unexpected prediction format in end2end mode")
+                    p = [np.array([])]
+            else:
+                # Traditional NMS mode: apply NMS manually
+                # First, filter by confidence and classes (same as postprocess_v10)
+                if len(preds) > 0 and len(preds[0]) > 0:
+                    prediction = preds[0][0]  # shape: (300, 6)
+                    
+                    # Filter by confidence threshold
+                    x = prediction[prediction[:, 4] >= self.conf_thres]
+                    x[:, -1] = x[:, -1].astype(int)
+                    
+                    # Filter by classes if specified
+                    if self.filter_classes is not None:
+                        x = x[np.isin(x[:, -1], self.filter_classes)]
+                    
+                    if len(x) > 0:
+                        # Apply NMS manually
+                        # x format: [x1, y1, x2, y2, conf, cls]
+                        boxes = x[:, :4]
+                        scores = x[:, 4]
+                        classes = x[:, 5].astype(int)
+                        
+                        # Apply NMS per class or class-agnostic
+                        keep_indices = []
+                        if self.agnostic:
+                            # Class-agnostic NMS: treat all boxes the same
+                            keep = self._nms(boxes, scores, self.iou_thres)
+                            keep_indices = keep
+                        else:
+                            # Per-class NMS: apply NMS separately for each class
+                            unique_classes = np.unique(classes)
+                            for cls in unique_classes:
+                                cls_mask = classes == cls
+                                cls_boxes = boxes[cls_mask]
+                                cls_scores = scores[cls_mask]
+                                cls_indices = np.where(cls_mask)[0]
+                                
+                                keep = self._nms(cls_boxes, cls_scores, self.iou_thres)
+                                keep_indices.extend(cls_indices[keep])
+                        
+                        # Keep only the selected boxes
+                        if len(keep_indices) > 0:
+                            x = x[keep_indices]
+                        else:
+                            x = np.array([])
+                    
+                    p = [x] if len(x) > 0 else [np.array([])]
+                else:
+                    logger.warning("Unexpected prediction format in traditional NMS mode")
+                    p = [np.array([])]
         elif self.model_type == "u_rtdetr":
             return self.postprocess_rtdetr(preds)
         masks, keypoints = None, None
@@ -911,6 +979,51 @@ class YOLO(Model):
         boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, image_height)
 
         return boxes
+
+    @staticmethod
+    def _nms(boxes, scores, iou_threshold):
+        """
+        Apply Non-Maximum Suppression (NMS) to boxes.
+        
+        Args:
+            boxes: numpy array of shape (N, 4) in format [x1, y1, x2, y2]
+            scores: numpy array of shape (N,) with confidence scores
+            iou_threshold: IoU threshold for NMS
+            
+        Returns:
+            List of indices to keep
+        """
+        if len(boxes) == 0:
+            return []
+        
+        x1 = boxes[:, 0]
+        y1 = boxes[:, 1]
+        x2 = boxes[:, 2]
+        y2 = boxes[:, 3]
+        
+        areas = (x2 - x1) * (y2 - y1)
+        order = scores.argsort()[::-1]
+        
+        keep = []
+        while order.size > 0:
+            i = order[0]
+            keep.append(i)
+            
+            xx1 = np.maximum(x1[i], x1[order[1:]])
+            yy1 = np.maximum(y1[i], y1[order[1:]])
+            xx2 = np.minimum(x2[i], x2[order[1:]])
+            yy2 = np.minimum(y2[i], y2[order[1:]])
+            
+            w = np.maximum(0.0, xx2 - xx1)
+            h = np.maximum(0.0, yy2 - yy1)
+            inter = w * h
+            
+            iou = inter / (areas[i] + areas[order[1:]] - inter)
+            
+            inds = np.where(iou <= iou_threshold)[0]
+            order = order[inds + 1]
+        
+        return keep
 
     def unload(self):
         del self.net
