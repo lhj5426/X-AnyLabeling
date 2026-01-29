@@ -8,7 +8,8 @@ class MergeDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("区域合并工具设置")
-        self.setSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
+        self.setMinimumWidth(650)  # 缩小宽度
+        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Minimum)
         self.adjustSize()
         # 设置窗口标志：移除帮助按钮,添加最小化按钮
         self.setWindowFlags(
@@ -21,6 +22,15 @@ class MergeDialog(QtWidgets.QDialog):
         self.layout = QtWidgets.QVBoxLayout(self)
         self.layout.setSpacing(6)
         self.layout.setContentsMargins(8, 8, 8, 8)
+        
+        # 创建左右两栏布局
+        main_content_layout = QtWidgets.QHBoxLayout()
+        
+        # 左侧栏
+        left_column = QtWidgets.QVBoxLayout()
+        
+        # 右侧栏
+        right_column = QtWidgets.QVBoxLayout()
 
         # --- Mappings for translation ---
         self.merge_mode_map = {
@@ -47,10 +57,10 @@ class MergeDialog(QtWidgets.QDialog):
         for text, data in self.merge_mode_map.items():
             self.merge_mode.addItem(text, userData=data)
         main_layout.addRow("合并模式:", self.merge_mode)
-        self.layout.addWidget(main_group)
+        left_column.addWidget(main_group)
 
         # --- Text Reading Order Settings ---
-        reading_order_group = QtWidgets.QGroupBox("文本合并顺序 (按标签)")
+        reading_order_group = QtWidgets.QGroupBox("文本合并顺序")
         reading_order_layout = QtWidgets.QFormLayout(reading_order_group)
         reading_order_layout.setSpacing(4)
         reading_order_layout.setContentsMargins(8, 6, 8, 6)
@@ -66,7 +76,7 @@ class MergeDialog(QtWidgets.QDialog):
         reading_order_layout.addRow("从右到左 (RTL) 标签:", self.rtl_labels_edit)
         reading_order_layout.addRow("从上到下 (TTB) 标签:", self.ttb_labels_edit)
         
-        self.layout.addWidget(reading_order_group)
+        left_column.addWidget(reading_order_group)
 
         # --- Labeling Rules --- #
         label_group = QtWidgets.QGroupBox("标签合并规则")
@@ -80,7 +90,7 @@ class MergeDialog(QtWidgets.QDialog):
         label_layout.addRow("标签合并策略:", self.label_merge_strategy)
 
         # 黑名单启用复选框
-        self.enable_exclude_labels = QtWidgets.QCheckBox("启用排除合并的标签 (黑名单)")
+        self.enable_exclude_labels = QtWidgets.QCheckBox("启用排除合并的标签")
         self.enable_exclude_labels.setChecked(True)  # 默认启用
         label_layout.addRow(self.enable_exclude_labels)
         
@@ -96,20 +106,97 @@ class MergeDialog(QtWidgets.QDialog):
         label_layout.addRow(self.require_same_label)
 
         self.use_specific_groups = QtWidgets.QCheckBox("仅在特定标签组内合并")
-        self.specific_groups_edit = QtWidgets.QPlainTextEdit()
-        self.specific_groups_edit.setPlaceholderText("每行一个分组, 组内标签用逗号分隔\n例如:\nballoon,balloon2\nqipao,qipao2")
-        self.specific_groups_edit.setPlainText("balloon\nqipao\nshuqing\nchangfangtiao\nhengxie")
-        self.specific_groups_edit.setMaximumHeight(80)
-        self.specific_groups_edit.setEnabled(False)
-        self.use_specific_groups.toggled.connect(self.specific_groups_edit.setEnabled)
+        
+        # 使用原版的文本框，但改成带复选框的行编辑器
+        self.specific_groups_widget = QtWidgets.QWidget()
+        self.specific_groups_widget_layout = QtWidgets.QVBoxLayout(self.specific_groups_widget)
+        self.specific_groups_widget_layout.setContentsMargins(0, 0, 0, 0)
+        self.specific_groups_widget_layout.setSpacing(4)
+        
+        # 滚动区域
+        self.specific_groups_scroll = QtWidgets.QScrollArea()
+        self.specific_groups_scroll.setWidget(self.specific_groups_widget)
+        self.specific_groups_scroll.setWidgetResizable(True)
+        self.specific_groups_scroll.setMinimumHeight(150)
+        self.specific_groups_scroll.setMaximumHeight(250)
+        self.specific_groups_scroll.setEnabled(False)
+        self.specific_groups_scroll.setStyleSheet("""
+            QScrollArea {
+                border: 1px solid #d0d0d0;
+                border-radius: 4px;
+                background-color: white;
+            }
+        """)
+        
+        # 初始化组行列表
+        self.group_rows = []
+        default_groups = [
+            "balloon",
+            "qipao",
+            "shuqing",
+            "changfangtiao",
+            "hengxie",
+            "other"
+        ]
+        for group_text in default_groups:
+            self.add_group_row(group_text, checked=True)
+        
+        # 添加新组的输入框
+        add_group_layout = QtWidgets.QHBoxLayout()
+        self.new_group_input = QtWidgets.QLineEdit()
+        self.new_group_input.setPlaceholderText("输入新组标签...")
+        self.new_group_input.setEnabled(False)
+        self.new_group_input.setStyleSheet("""
+            QLineEdit {
+                padding: 4px 8px;
+                border: 1px solid #d0d0d0;
+                border-radius: 3px;
+                font-size: 10pt;
+            }
+            QLineEdit:focus {
+                border: 1px solid #4a90e2;
+            }
+        """)
+        self.new_group_input.returnPressed.connect(self.add_new_group)
+        
+        self.add_group_button = QtWidgets.QPushButton("添加组")
+        self.add_group_button.setEnabled(False)
+        self.add_group_button.setFixedWidth(70)
+        self.add_group_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4a90e2;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                padding: 5px 10px;
+                font-size: 10pt;
+            }
+            QPushButton:hover {
+                background-color: #357abd;
+            }
+            QPushButton:pressed {
+                background-color: #2868a8;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        self.add_group_button.clicked.connect(self.add_new_group)
+        add_group_layout.addWidget(self.new_group_input)
+        add_group_layout.addWidget(self.add_group_button)
+        
+        self.use_specific_groups.toggled.connect(self.specific_groups_scroll.setEnabled)
+        self.use_specific_groups.toggled.connect(self.new_group_input.setEnabled)
+        self.use_specific_groups.toggled.connect(self.add_group_button.setEnabled)
         self.use_specific_groups.toggled.connect(lambda checked: self.require_same_label.setDisabled(checked))
 
         label_layout.addRow(self.use_specific_groups)
-        label_layout.addRow(self.specific_groups_edit)
+        label_layout.addRow(self.specific_groups_scroll)
+        label_layout.addRow(add_group_layout)
 
-        self.layout.addWidget(label_group)
+        left_column.addWidget(label_group)
 
-        # --- Geometric Rules ---
+        # --- Geometric Rules --- 移到右侧栏
         geo_group = QtWidgets.QGroupBox("几何合并参数")
         geo_layout = QtWidgets.QFormLayout(geo_group)
         geo_layout.setSpacing(4)
@@ -141,20 +228,20 @@ class MergeDialog(QtWidgets.QDialog):
         geo_layout.addRow("最大水平间隙 (像素):", self.max_horizontal_gap)
         geo_layout.addRow("最小垂直重叠比例:", self.min_height_overlap_ratio)
 
-        self.layout.addWidget(geo_group)
+        right_column.addWidget(geo_group)
 
-        # --- Advanced Options --- #
+        # --- Advanced Options --- 移到右侧栏
         advanced_group = QtWidgets.QGroupBox("高级选项")
         advanced_layout = QtWidgets.QVBoxLayout(advanced_group)
         advanced_layout.setSpacing(4)
         advanced_layout.setContentsMargins(8, 6, 8, 6)
-        self.allow_negative_gap = QtWidgets.QCheckBox("允许负间隙 (即允许框本身有重叠)")
+        self.allow_negative_gap = QtWidgets.QCheckBox("允许负间隙")
         self.allow_negative_gap.setChecked(True)
         advanced_layout.addWidget(self.allow_negative_gap)
 
-        self.layout.addWidget(advanced_group)
+        right_column.addWidget(advanced_group)
 
-        # --- Merge Result Type --- #
+        # --- Merge Result Type --- 移到右侧栏
         result_type_group = QtWidgets.QGroupBox("合并结果类型")
         result_type_layout = QtWidgets.QVBoxLayout(result_type_group)
         result_type_layout.setSpacing(4)
@@ -172,9 +259,16 @@ class MergeDialog(QtWidgets.QDialog):
         result_type_layout.addWidget(self.radio_output_rectangle)
         result_type_layout.addWidget(self.radio_output_rotation)
         
-        self.layout.addWidget(result_type_group)
+        right_column.addWidget(result_type_group)
+        right_column.addStretch()  # 右侧栏底部留白
+        
+        # 组合左右两栏
+        main_content_layout.addLayout(left_column, 3)  # 左侧占3份
+        main_content_layout.addLayout(right_column, 2)  # 右侧占2份，更窄
+        
+        self.layout.addLayout(main_content_layout)
 
-        # --- Buttons --- #
+        # --- Buttons --- 按钮放在底部横跨整个宽度
         button_layout = QtWidgets.QHBoxLayout()
         self.run_current_button = QtWidgets.QPushButton("对当前文件运行")
         self.run_all_button = QtWidgets.QPushButton("对所有文件运行")
@@ -195,6 +289,90 @@ class MergeDialog(QtWidgets.QDialog):
         
         # 🎯 在构造函数末尾加载配置
         self.load_settings_from_config()
+
+    def add_group_row(self, group_text, checked=True):
+        """添加一个可勾选的组行"""
+        row_widget = QtWidgets.QWidget()
+        row_layout = QtWidgets.QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(4, 2, 4, 2)
+        row_layout.setSpacing(8)
+        
+        # 复选框
+        checkbox = QtWidgets.QCheckBox()
+        checkbox.setChecked(checked)
+        checkbox.setFixedWidth(20)
+        
+        # 文本输入框（可编辑）
+        line_edit = QtWidgets.QLineEdit(group_text)
+        line_edit.setStyleSheet("""
+            QLineEdit {
+                padding: 4px 8px;
+                border: 1px solid #d0d0d0;
+                border-radius: 3px;
+                font-size: 10pt;
+                font-family: Consolas, monospace;
+            }
+            QLineEdit:focus {
+                border: 1px solid #4a90e2;
+            }
+        """)
+        
+        # 删除按钮
+        delete_btn = QtWidgets.QPushButton("✕")
+        delete_btn.setFixedSize(20, 20)
+        delete_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0f0f0;
+                border: 1px solid #d0d0d0;
+                border-radius: 10px;
+                color: #666;
+                font-size: 12pt;
+                font-weight: bold;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                background-color: #ff4444;
+                color: white;
+                border: 1px solid #ff4444;
+            }
+            QPushButton:pressed {
+                background-color: #cc0000;
+            }
+        """)
+        delete_btn.clicked.connect(lambda: self.remove_group_row(row_widget))
+        
+        row_layout.addWidget(checkbox)
+        row_layout.addWidget(line_edit)
+        row_layout.addWidget(delete_btn)
+        
+        self.specific_groups_widget_layout.addWidget(row_widget)
+        self.group_rows.append((checkbox, line_edit, row_widget))
+    
+    def add_new_group(self):
+        """添加新组"""
+        group_text = self.new_group_input.text().strip()
+        if group_text:
+            self.add_group_row(group_text, checked=True)
+            self.new_group_input.clear()
+    
+    def remove_group_row(self, row_widget):
+        """删除组行"""
+        self.group_rows = [(cb, le, widget) for cb, le, widget in self.group_rows if widget != row_widget]
+        self.specific_groups_widget_layout.removeWidget(row_widget)
+        row_widget.deleteLater()
+    
+    def get_checked_groups(self):
+        """获取所有勾选的组"""
+        groups = []
+        for checkbox, line_edit, _ in self.group_rows:
+            if checkbox.isChecked():
+                group_text = line_edit.text().strip()
+                if group_text:
+                    # 分割逗号分隔的标签
+                    labels = [l.strip() for l in group_text.split(',') if l.strip()]
+                    if labels:
+                        groups.append(labels)
+        return groups
 
     def get_config(self):
         config = {}
@@ -222,13 +400,10 @@ class MergeDialog(QtWidgets.QDialog):
 
         config["USE_SPECIFIC_MERGE_GROUPS"] = self.use_specific_groups.isChecked()
         if config["USE_SPECIFIC_MERGE_GROUPS"]:
-            groups_text = self.specific_groups_edit.toPlainText().strip()
-            groups = []
-            for line in groups_text.split('\n'):
-                if line.strip():
-                    groups.append([l.strip() for l in line.split(',')])
+            # 使用勾选的组
+            groups = self.get_checked_groups()
             config["SPECIFIC_MERGE_GROUPS"] = groups
-            config["REQUIRE_SAME_LABEL"] = False # This is disabled in UI
+            config["REQUIRE_SAME_LABEL"] = False
         else:
             config["SPECIFIC_MERGE_GROUPS"] = []
             config["REQUIRE_SAME_LABEL"] = self.require_same_label.isChecked()
@@ -258,6 +433,14 @@ class MergeDialog(QtWidgets.QDialog):
 
     def save_settings_to_config(self):
         """保存当前设置到配置文件"""
+        # 保存组行的状态
+        group_states = []
+        for checkbox, line_edit, _ in self.group_rows:
+            group_states.append({
+                "text": line_edit.text(),
+                "checked": checkbox.isChecked()
+            })
+        
         merge_settings = {
             "merge_mode": self.merge_mode.currentData(),
             "ltr_labels": self.ltr_labels_edit.text(),
@@ -268,7 +451,7 @@ class MergeDialog(QtWidgets.QDialog):
             "exclude_labels": self.exclude_labels.text(),
             "require_same_label": self.require_same_label.isChecked(),
             "use_specific_groups": self.use_specific_groups.isChecked(),
-            "specific_groups": self.specific_groups_edit.toPlainText(),
+            "group_states": group_states,  # 保存组状态
             "max_vertical_gap": self.max_vertical_gap.value(),
             "min_width_overlap_ratio": self.min_width_overlap_ratio.value(),
             "max_horizontal_gap": self.max_horizontal_gap.value(),
@@ -335,7 +518,21 @@ class MergeDialog(QtWidgets.QDialog):
         # 加载其他复选框
         self.require_same_label.setChecked(settings.get("require_same_label", False))
         self.use_specific_groups.setChecked(settings.get("use_specific_groups", False))
-        self.specific_groups_edit.setPlainText(settings.get("specific_groups", "balloon\nqipao\nshuqing\nchangfangtiao\nhengxie"))
+        
+        # 加载组状态
+        group_states = settings.get("group_states", [])
+        if group_states:
+            # 清空现有组
+            for cb, le, widget in list(self.group_rows):
+                self.remove_group_row(widget)
+            # 重新添加组
+            for state in group_states:
+                self.add_group_row(state["text"], state["checked"])
+        else:
+            # 如果没有保存的配置，确保有默认的other
+            has_other = any(le.text().strip() == "other" for _, le, _ in self.group_rows)
+            if not has_other:
+                self.add_group_row("other", checked=True)
         
         # 加载几何参数
         self.max_vertical_gap.setValue(settings.get("max_vertical_gap", 10))
