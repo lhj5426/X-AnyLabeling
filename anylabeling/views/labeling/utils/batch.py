@@ -326,12 +326,18 @@ def process_next_image(self, progress_dialog):
 
 def show_progress_dialog_and_process(self):
     self.cancel_processing = False
+    
+    # 记录起始位置,用于显示
+    start_index = self.image_index
+    start_num = start_index + 1  # 显示用的起始页码
+    end_num = len(self.image_list)
+    total_to_process = end_num - start_index  # 总共要处理的数量
 
     progress_dialog = QProgressDialog(
-        "正在处理...",
+        f"处理范围: 第 {start_num}-{end_num} 张 (共 {total_to_process} 张)\n进度: 1/{total_to_process}",
         "取消",
-        self.image_index,
-        len(self.image_list),
+        start_index,  # 最小值是起始索引
+        len(self.image_list),  # 最大值是总数
         self,
     )
     progress_dialog.setWindowModality(Qt.WindowModal)
@@ -339,15 +345,19 @@ def show_progress_dialog_and_process(self):
     progress_dialog.setMinimumWidth(400)
     progress_dialog.setMinimumHeight(150)
 
-    progress_dialog.setLabelText(
-        f"进度: {self.image_index}/{len(self.image_list)}"
-    )
     progress_bar = progress_dialog.findChild(QtWidgets.QProgressBar)
 
     if progress_bar:
 
         def update_progress(value):
-            progress_dialog.setLabelText(f"进度: {value}/{len(self.image_list)}")
+            # value是实际的image_index
+            processed = value - start_index + 1  # 已处理的数量(从1开始)
+            current_num = value + 1  # 当前图片编号
+            progress_dialog.setLabelText(
+                f"处理范围: 第 {start_num}-{end_num} 张 (共 {total_to_process} 张)\n"
+                f"当前: 第 {current_num} 张\n"
+                f"进度: {processed}/{total_to_process}"
+            )
 
         progress_bar.valueChanged.connect(update_progress)
 
@@ -439,10 +449,16 @@ def run_all_images(self):
         )
         return
 
+    # 计算要处理的图片范围
+    current_index = self.fn_to_index[str(self.filename)]
+    start_num = current_index + 1  # 显示用的起始页码(从1开始)
+    end_num = len(self.image_list)  # 显示用的结束页码
+    total_to_process = end_num - current_index  # 要处理的图片数量
+    
     response = QtWidgets.QMessageBox()
     response.setIcon(QtWidgets.QMessageBox.Warning)
     response.setWindowTitle("确认")
-    response.setText("是否要处理所有图片？")
+    response.setText(f"是否要处理第 {start_num}-{end_num} 张图片?\n(共 {total_to_process} 张)")
     ok_button = response.addButton("确定", QtWidgets.QMessageBox.AcceptRole)
     response.addButton("取消", QtWidgets.QMessageBox.RejectRole)
     response.setStyleSheet(get_msg_box_style())
