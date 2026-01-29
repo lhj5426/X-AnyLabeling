@@ -167,7 +167,10 @@ def finish_processing(self, progress_dialog):
     
     # 重新导入文件夹，这会重新加载文件列表和当前文件
     # 从而正确更新manually_edited状态和颜色
-    self.import_image_folder(osp.dirname(self.filename), load=True)
+    # 使用last_open_dir(根文件夹)而不是dirname(filename)(子文件夹)
+    # 并保持recursive设置以加载所有子文件夹
+    recursive = self._config.get("load_subfolders", False)
+    self.import_image_folder(self.last_open_dir, load=True, recursive=recursive)
 
     del self.text_prompt
     del self.run_tracker
