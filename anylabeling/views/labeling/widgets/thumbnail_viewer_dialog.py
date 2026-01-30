@@ -15,6 +15,48 @@ DELETE_CURSOR_HOTSPOT = None
 # ==============================================
 
 
+class SpaceConfirmMessageBox(QtWidgets.QMessageBox):
+    """支持空格键确认的自定义消息框"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._yes_button = None
+        self._no_button = None
+        self._filter_installed = False
+    
+    def showEvent(self, event):
+        """对话框显示时，获取按钮并安装事件过滤器"""
+        super().showEvent(event)
+        
+        if not self._filter_installed:
+            self._yes_button = self.button(QtWidgets.QMessageBox.Yes)
+            self._no_button = self.button(QtWidgets.QMessageBox.No)
+            
+            if self._yes_button:
+                self._yes_button.setDefault(True)
+                self._yes_button.setAutoDefault(True)
+                self._yes_button.installEventFilter(self)
+                self._yes_button.setFocus()
+            
+            if self._no_button:
+                self._no_button.installEventFilter(self)
+            
+            self._filter_installed = True
+    
+    def eventFilter(self, obj, event):
+        """拦截按钮的空格键事件"""
+        if event.type() == QtCore.QEvent.KeyPress:
+            if event.key() == Qt.Key_Space:
+                if obj == self._yes_button:
+                    self._yes_button.click()
+                    return True
+                elif obj == self._no_button:
+                    self._no_button.click()
+                    return True
+        
+        return super().eventFilter(obj, event)
+
+
 class ThumbnailLoaderSignals(QtCore.QObject):
     """缩略图加载信号"""
     loaded = QtCore.pyqtSignal(str, QtGui.QPixmap, int, int, int)  # path, pixmap, orig_w, orig_h, load_width
@@ -140,11 +182,12 @@ class ThumbnailItem(QtWidgets.QWidget):
         self._select_cursor = None
         self._delete_cursor = None
         
-        # 右上角状态图标
+        # 左上角状态图标（紧跟在序号标签右边）
         self.status_icon = QtWidgets.QLabel(self)
         self.status_icon.setAlignment(Qt.AlignCenter)
         self.status_icon.setStyleSheet("background-color: transparent; font-size: 18px;")
-        self.status_icon.setGeometry(self.width() - 30, 5, 25, 25)
+        self.status_icon.setGeometry(50, 5, 25, 25)  # 放在序号标签右边
+        self.status_icon.raise_()  # 确保图标在最上层
         self.status_icon.hide()
         
         self.setFixedSize(thumbnail_width, thumbnail_width)
@@ -324,6 +367,12 @@ class ThumbnailItem(QtWidgets.QWidget):
         self.border_radius = new_radius
         self.update()
     
+    def resizeEvent(self, event):
+        """窗口大小改变时更新status_icon位置"""
+        super().resizeEvent(event)
+        # 状态图标固定在左上角序号标签右边，不需要动态调整位置
+        # self.status_icon.setGeometry(50, 5, 25, 25)  # 已在初始化时设置
+    
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
@@ -386,6 +435,11 @@ class ThumbnailItem(QtWidgets.QWidget):
                 # 绘制序号文字
                 painter.setPen(QtGui.QColor(255, 255, 255))
                 painter.drawText(label_rect, Qt.AlignCenter, index_str)
+                
+                # 动态更新status_icon位置（紧跟在序号标签右边）
+                icon_x = int(label_x + label_width + 4)  # 序号标签右边留4像素间距
+                icon_y = int(label_y)
+                self.status_icon.setGeometry(icon_x, icon_y, 25, 25)
             
             # 绘制边框
             if self.merge_mode and (self.is_merge_target or self.is_marked_delete or self.is_selected):
@@ -632,14 +686,17 @@ class ThumbnailItem(QtWidgets.QWidget):
             self.status_icon.setText("⭐")
             self.status_icon.setStyleSheet("background-color: transparent; color: gold; font-size: 18px;")
             self.status_icon.show()
+            self.status_icon.raise_()  # 确保在最上层
         elif self.is_marked_delete:
             self.status_icon.setText("❌")
             self.status_icon.setStyleSheet("background-color: transparent; color: red; font-size: 18px;")
             self.status_icon.show()
+            self.status_icon.raise_()
         elif self.is_selected:
             self.status_icon.setText("✅")
             self.status_icon.setStyleSheet("background-color: transparent; color: #4CAF50; font-size: 18px;")
             self.status_icon.show()
+            self.status_icon.raise_()
         else:
             self.status_icon.hide()
         
@@ -684,9 +741,10 @@ class ThumbnailItem(QtWidgets.QWidget):
         self.update()
     
     def contextMenuEvent(self, event):
-        # 删合模式下禁用右键菜单
+        # 删合模式下禁用右键菜单，但不阻止事件传递
+        # 右键事件已在mousePressEvent中处理
         if self.merge_mode:
-            event.ignore()
+            event.accept()  # 接受事件但不显示菜单
             return
         
         # 获取父窗口
@@ -1623,6 +1681,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             item.update_merge_visual()
             self.merge_target = self.image_list[index]
             self.update_merge_stats()
+        else:
+            pass
     
     def update_selected_list(self):
         """更新选中和删除列表"""
@@ -1942,14 +2002,14 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.merge_stats_label.setText("已选: 0 | 已标记删除: 0")
         self.merge_stats_label.setVisible(True)
         
-        # 应用鼠标指针
-        self._apply_background_cursor()
-        self._update_items_cursor()
-        
         # 修改缩略图项的点击行为
         for item in self.masonry_widget.items:
             item.merge_mode = True
             item.current_merge_sub_mode = self.current_merge_sub_mode
+        
+        # 应用鼠标指针（在设置merge_mode之后）
+        self._apply_background_cursor()
+        self._update_items_cursor()
     
     def exit_merge_mode(self):
         """退出删合模式"""
@@ -2169,11 +2229,12 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         html.append("<div style='margin-top:8px;'>其余将被删除。<br/>是否继续？</div>")
         full_html = "<div style='font-size:13px; line-height:1.38;'>" + "".join(html) + "</div>"
         
-        # 创建自定义消息框
-        box = QtWidgets.QMessageBox(self)
+        # 创建消息框（使用自定义类支持空格键）
+        box = SpaceConfirmMessageBox(self)
         box.setWindowTitle("确认合并")
         box.setIcon(QtWidgets.QMessageBox.Question)
         box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        box.setDefaultButton(QtWidgets.QMessageBox.Yes)
         
         # 添加富文本标签
         label = QtWidgets.QLabel(full_html)
@@ -2181,9 +2242,11 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         label.setOpenExternalLinks(False)
         label.setWordWrap(True)
         label.setMinimumWidth(520)
+        label.setFocusPolicy(Qt.NoFocus)  # 标签不接受焦点
         box.layout().addWidget(label, 0, 1)
         
         ret = box.exec_()
+        
         if ret != QtWidgets.QMessageBox.Yes:
             return
         
@@ -2287,7 +2350,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         return "_".join(parts[:4]) if len(parts) >= 4 else right
     
     def _run_merge_operation(self, target_path, new_path, delete_list, target_name, new_name):
-        """执行合并操作：重命名目标文件，删除其他文件"""
+        """执行合并操作：重命名目标文件，移动其他文件到_delete_文件夹"""
+        import shutil
         try:
             # 1) 重命名目标文件
             if os.path.abspath(target_path) != os.path.abspath(new_path):
@@ -2298,17 +2362,26 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 if os.path.exists(target_json):
                     os.replace(target_json, new_json)
             
-            # 2) 删除其他文件
+            # 2) 移动其他文件到_delete_文件夹
+            image_path = os.path.dirname(target_path)
+            delete_folder = os.path.join(image_path, "..", "_delete_")
+            os.makedirs(delete_folder, exist_ok=True)
+            
             deleted = []
             failed = []
             for path in delete_list:
                 try:
-                    os.remove(path)
-                    deleted.append(path)
-                    # 同时删除JSON文件
-                    json_path = os.path.splitext(path)[0] + ".json"
-                    if os.path.exists(json_path):
-                        os.remove(json_path)
+                    if os.path.exists(path):
+                        image_name = os.path.basename(path)
+                        save_file = os.path.join(delete_folder, image_name)
+                        shutil.move(path, save_file)
+                        deleted.append(path)
+                        # 同时移动JSON文件
+                        json_path = os.path.splitext(path)[0] + ".json"
+                        if os.path.exists(json_path):
+                            json_name = os.path.basename(json_path)
+                            json_save_file = os.path.join(delete_folder, json_name)
+                            shutil.move(json_path, json_save_file)
                 except Exception as e:
                     failed.append((path, str(e)))
             
@@ -2345,7 +2418,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.update_merge_stats()
     
     def delete_marked_images(self):
-        """删除标记的图片"""
+        """删除标记的图片（移动到_delete_文件夹）"""
         
         if not self.deletion_list:
             QtWidgets.QMessageBox.warning(self, "警告", "没有标记要删除的图片！")
@@ -2364,30 +2437,47 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         if len(self.deletion_list) > 10:
             msg += '\n...'
         msg += f'\n\n动态剩余张数：{remain_cnt}（总计 {total_cnt} - 删除 {will_delete_cnt}）'
-        msg += '\n\n此操作不可恢复！'
+        msg += '\n\n图片将移动到 _delete_ 文件夹！'
         
-        reply = QtWidgets.QMessageBox.question(
-            self, "确认删除",
-            msg,
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
-        )
+        # 使用自定义消息框（支持空格键）
+        msg_box = SpaceConfirmMessageBox(self)
+        msg_box.setWindowTitle("确认删除")
+        msg_box.setIcon(QtWidgets.QMessageBox.Question)
+        msg_box.setText(msg)
+        msg_box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        msg_box.setDefaultButton(QtWidgets.QMessageBox.Yes)
+        
+        reply = msg_box.exec_()
         
         if reply != QtWidgets.QMessageBox.Yes:
             return
         
-        # 执行删除操作
+        # 执行删除操作（移动到_delete_文件夹）
+        import shutil
         try:
+            # 创建_delete_文件夹
+            if self.deletion_list:
+                first_path = self.deletion_list[0]
+                image_path = os.path.dirname(first_path)
+                delete_folder = os.path.join(image_path, "..", "_delete_")
+                os.makedirs(delete_folder, exist_ok=True)
+            
             deleted = []
             failed = []
             
             for path in self.deletion_list:
                 try:
-                    os.remove(path)
-                    deleted.append(path)
-                    # 同时删除JSON文件
-                    json_path = os.path.splitext(path)[0] + ".json"
-                    if os.path.exists(json_path):
-                        os.remove(json_path)
+                    if os.path.exists(path):
+                        image_name = os.path.basename(path)
+                        save_file = os.path.join(delete_folder, image_name)
+                        shutil.move(path, save_file)
+                        deleted.append(path)
+                        # 同时移动JSON文件
+                        json_path = os.path.splitext(path)[0] + ".json"
+                        if os.path.exists(json_path):
+                            json_name = os.path.basename(json_path)
+                            json_save_file = os.path.join(delete_folder, json_name)
+                            shutil.move(json_path, json_save_file)
                 except Exception as e:
                     failed.append((path, str(e)))
             
@@ -2480,7 +2570,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             self.on_toggle_edited(item)  # 使用正确的方法名
     
     def delete_multi_selected(self):
-        """删除多选的图片"""
+        """删除多选的图片（移动到_delete_文件夹）"""
         if not self.multi_selected_items:
             # 没有多选项，删除当前右键点击的图片
             # 需要找到当前右键点击的item
@@ -2496,21 +2586,30 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # 直接删除，不需要确认（右键操作不会误操作）
         
-        # 执行删除
+        # 执行删除（移动到_delete_文件夹）
+        import shutil
         deleted = []
         failed = []
         
         for path in to_delete:
             try:
-                # 删除图片文件
                 if os.path.exists(path):
-                    os.remove(path)
+                    # 创建_delete_文件夹
+                    image_path, image_name = os.path.split(path)
+                    delete_folder = os.path.join(image_path, "..", "_delete_")
+                    os.makedirs(delete_folder, exist_ok=True)
+                    
+                    # 移动图片文件
+                    save_file = os.path.join(delete_folder, image_name)
+                    shutil.move(path, save_file)
                     deleted.append(path)
-                
-                # 删除对应的JSON文件
-                json_path = os.path.splitext(path)[0] + ".json"
-                if os.path.exists(json_path):
-                    os.remove(json_path)
+                    
+                    # 移动对应的JSON文件
+                    json_path = os.path.splitext(path)[0] + ".json"
+                    if os.path.exists(json_path):
+                        json_name = os.path.basename(json_path)
+                        json_save_file = os.path.join(delete_folder, json_name)
+                        shutil.move(json_path, json_save_file)
             except Exception as e:
                 failed.append((path, str(e)))
         
@@ -2716,73 +2815,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             except Exception:
                 pass
     
-    def keyPressEvent(self, event):
-        """处理快捷键"""
-        key = event.key()
-        modifiers = event.modifiers()
-        
-        if not self.merge_mode:
-            # 非删合模式 - 处理普通模式的快捷键
-            if key == Qt.Key_Escape:
-                self.close()
-                event.accept()
-            elif key == Qt.Key_W:
-                # W: 清除所有多选
-                for item in self.masonry_widget.items:
-                    if item.is_multi_selected:
-                        item.is_multi_selected = False
-                        item.status_icon.hide()
-                        item.update()
-                self.multi_selected_items.clear()
-                self.update_multi_selection()
-                event.accept()
-            elif key == Qt.Key_A:
-                # A: 上一页
-                self.scroll_page(-1)
-                event.accept()
-            elif key == Qt.Key_D:
-                # D: 下一页
-                self.scroll_page(1)
-                event.accept()
-            else:
-                super().keyPressEvent(event)
-            return
-        
-        # 删合模式下的快捷键
-        # Q: 切换选择/删除模式
-        if key == Qt.Key_Q:
-            if self.current_merge_sub_mode == 'select':
-                self.switch_merge_sub_mode('delete')
-            else:
-                self.switch_merge_sub_mode('select')
-            event.accept()
-        
-        # E 或 回车: 执行当前模式操作
-        elif key in (Qt.Key_E, Qt.Key_Return):
-            if self.current_merge_sub_mode == 'select':
-                self.merge_selected_images()
-            else:
-                self.delete_marked_images()
-            event.accept()
-        
-        # W 或 ESC: 清除选择
-        elif key in (Qt.Key_W, Qt.Key_Escape):
-            self.clear_merge_selection()
-            event.accept()
-        
-        # A: 上一页
-        elif key == Qt.Key_A:
-            self.scroll_page(-1)
-            event.accept()
-        
-        # D: 下一页
-        elif key == Qt.Key_D:
-            self.scroll_page(1)
-            event.accept()
-        
-        else:
-            super().keyPressEvent(event)
-    
     def scroll_page(self, direction):
         """智能翻页并对齐到图片顶部（direction: 1=下一页, -1=上一页）"""
         if not self.masonry_widget.items:
@@ -2952,6 +2984,11 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     
     def keyPressEvent(self, event):
         """处理键盘事件"""
+        # 如果有模态子窗口，完全不处理键盘事件，让事件传递给模态窗口
+        if QtWidgets.QApplication.activeModalWidget():
+            super().keyPressEvent(event)
+            return
+        
         key = event.key()
         modifiers = event.modifiers()
         
