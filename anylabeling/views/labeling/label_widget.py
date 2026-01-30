@@ -1206,19 +1206,19 @@ class LabelingWidget(QtWidgets.QWidget):
             enabled=False,
         )
         delete_file = action(
-            self.tr("&Delete File"),
+            self.tr("删除本页JSON文件"),
             self.delete_file,
             shortcuts["delete_file"],
             "delete",
-            self.tr("Delete current label file"),
+            self.tr("删除当前页面的JSON标签文件"),
             enabled=False,
         )
         delete_image_file = action(
-            self.tr("&Delete Image File"),
+            self.tr("删除图像文件（移至_delete_）"),
             self.delete_image_file,
             shortcuts["delete_image_file"],
             "delete",
-            self.tr("Delete current image file"),
+            self.tr("将当前图像文件移动到_delete_文件夹"),
             enabled=True,
         )
 
@@ -13248,8 +13248,7 @@ class LabelingWidget(QtWidgets.QWidget):
     def delete_file(self):
         mb = QtWidgets.QMessageBox
         msg = self.tr(
-            "You are about to permanently delete this label file, "
-            "proceed anyway?"
+            "即将删除本页JSON标签文件，是否继续？"
         )
         answer = mb.warning(self, self.tr("Attention"), msg, mb.Yes | mb.No)
         if answer != mb.Yes:
@@ -13275,8 +13274,8 @@ class LabelingWidget(QtWidgets.QWidget):
 
         mb = QtWidgets.QMessageBox
         msg = self.tr(
-            "You are about to permanently delete this image file, "
-            "proceed anyway?"
+            "图片将被移动到 _delete_ 文件夹（非永久删除），"
+            "是否继续？"
         )
         answer = mb.warning(self, self.tr("Attention"), msg, mb.Yes | mb.No)
         if answer != mb.Yes:
