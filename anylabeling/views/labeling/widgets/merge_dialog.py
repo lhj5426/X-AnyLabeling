@@ -105,7 +105,65 @@ class MergeDialog(QtWidgets.QDialog):
         self.require_same_label = QtWidgets.QCheckBox("要求标签完全相同才合并")
         label_layout.addRow(self.require_same_label)
 
+        # 创建"仅在特定标签组内合并"复选框和按钮的水平布局
+        specific_groups_row_layout = QtWidgets.QHBoxLayout()
+        specific_groups_row_layout.setSpacing(8)
+        
         self.use_specific_groups = QtWidgets.QCheckBox("仅在特定标签组内合并")
+        specific_groups_row_layout.addWidget(self.use_specific_groups)
+        
+        # 添加全选/全不选按钮
+        self.select_all_button = QtWidgets.QPushButton("全选")
+        self.select_all_button.setEnabled(False)
+        self.select_all_button.setFixedWidth(60)
+        self.select_all_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4a90e2;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                padding: 4px 8px;
+                font-size: 9pt;
+            }
+            QPushButton:hover {
+                background-color: #357abd;
+            }
+            QPushButton:pressed {
+                background-color: #2868a8;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        self.select_all_button.clicked.connect(self.select_all_groups)
+        
+        self.deselect_all_button = QtWidgets.QPushButton("全不选")
+        self.deselect_all_button.setEnabled(False)
+        self.deselect_all_button.setFixedWidth(60)
+        self.deselect_all_button.setStyleSheet("""
+            QPushButton {
+                background-color: #e74c3c;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                padding: 4px 8px;
+                font-size: 9pt;
+            }
+            QPushButton:hover {
+                background-color: #c0392b;
+            }
+            QPushButton:pressed {
+                background-color: #a93226;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        self.deselect_all_button.clicked.connect(self.deselect_all_groups)
+        
+        specific_groups_row_layout.addWidget(self.select_all_button)
+        specific_groups_row_layout.addWidget(self.deselect_all_button)
+        specific_groups_row_layout.addStretch()
         
         # 使用原版的文本框，但改成带复选框的行编辑器
         self.specific_groups_widget = QtWidgets.QWidget()
@@ -188,9 +246,11 @@ class MergeDialog(QtWidgets.QDialog):
         self.use_specific_groups.toggled.connect(self.specific_groups_scroll.setEnabled)
         self.use_specific_groups.toggled.connect(self.new_group_input.setEnabled)
         self.use_specific_groups.toggled.connect(self.add_group_button.setEnabled)
+        self.use_specific_groups.toggled.connect(self.select_all_button.setEnabled)
+        self.use_specific_groups.toggled.connect(self.deselect_all_button.setEnabled)
         self.use_specific_groups.toggled.connect(lambda checked: self.require_same_label.setDisabled(checked))
 
-        label_layout.addRow(self.use_specific_groups)
+        label_layout.addRow(specific_groups_row_layout)
         label_layout.addRow(self.specific_groups_scroll)
         label_layout.addRow(add_group_layout)
 
@@ -354,6 +414,16 @@ class MergeDialog(QtWidgets.QDialog):
         if group_text:
             self.add_group_row(group_text, checked=True)
             self.new_group_input.clear()
+    
+    def select_all_groups(self):
+        """全选所有组"""
+        for checkbox, line_edit, _ in self.group_rows:
+            checkbox.setChecked(True)
+    
+    def deselect_all_groups(self):
+        """全不选所有组"""
+        for checkbox, line_edit, _ in self.group_rows:
+            checkbox.setChecked(False)
     
     def remove_group_row(self, row_widget):
         """删除组行"""
