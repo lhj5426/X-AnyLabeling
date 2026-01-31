@@ -63,6 +63,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_show_point_checkbox.setToolTip("启用后，锁定的标签显示顶点圆形控制柄")
         self.lock_show_square_checkbox = QtWidgets.QCheckBox("锁定后显示块 (方形)")
         self.lock_show_square_checkbox.setToolTip("启用后，锁定的标签显示方形控制柄")
+        self.lock_show_crosshair_checkbox = QtWidgets.QCheckBox("锁定后显示内十字")
+        self.lock_show_crosshair_checkbox.setToolTip("启用后，锁定的标签显示内十字线")
         self.lock_layout.addWidget(self.lock_label)
         self.lock_layout.addWidget(self.lock_input)
         self.lock_layout.addWidget(self.lock_difficult_checkbox)
@@ -71,6 +73,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_layout.addWidget(self.lock_hide_order_checkbox)
         self.lock_layout.addWidget(self.lock_show_point_checkbox)
         self.lock_layout.addWidget(self.lock_show_square_checkbox)
+        self.lock_layout.addWidget(self.lock_show_crosshair_checkbox)
         self.lock_group.setLayout(self.lock_layout)
 
         # Label Pin to Top
@@ -182,6 +185,24 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.handle_layout.addWidget(self.handle_detect_chaotic_checkbox)
         self.handle_group.setLayout(self.handle_layout)
 
+        # Inner Crosshair Display Settings
+        self.crosshair_group = QtWidgets.QGroupBox("内十字显示设置")
+        self.crosshair_layout = QtWidgets.QVBoxLayout()
+        
+        self.crosshair_highlight_label = QtWidgets.QLabel("高亮时:")
+        self.crosshair_highlight_checkbox = QtWidgets.QCheckBox("显示内十字")
+        self.crosshair_highlight_checkbox.setChecked(True)
+        
+        self.crosshair_normal_label = QtWidgets.QLabel("非高亮时:")
+        self.crosshair_normal_checkbox = QtWidgets.QCheckBox("显示内十字")
+        self.crosshair_normal_checkbox.setChecked(False)
+        
+        self.crosshair_layout.addWidget(self.crosshair_highlight_label)
+        self.crosshair_layout.addWidget(self.crosshair_highlight_checkbox)
+        self.crosshair_layout.addWidget(self.crosshair_normal_label)
+        self.crosshair_layout.addWidget(self.crosshair_normal_checkbox)
+        self.crosshair_group.setLayout(self.crosshair_layout)
+
         # 取消功能增强设置
         self.deselect_group = QtWidgets.QGroupBox("取消功能增强")
         self.deselect_layout = QtWidgets.QVBoxLayout()
@@ -246,6 +267,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.right_column.addWidget(self.mixed_mode_group)
         self.right_column.addWidget(self.default_highlight_group)
         self.right_column.addWidget(self.handle_group)
+        self.right_column.addWidget(self.crosshair_group)
         self.right_column.addWidget(self.deselect_group)
         self.right_column.addWidget(self.invert_group)
         self.right_column.addWidget(self.overlap_group)
@@ -279,6 +301,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_hide_order_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.lock_show_point_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
         self.lock_show_square_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
+        self.lock_show_crosshair_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
         self.pin_input.textChanged.connect(self._realtime_save_settings)
         self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
         self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
@@ -290,6 +313,9 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.handle_normal_point_checkbox.stateChanged.connect(self._on_handle_setting_changed)
         self.handle_normal_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
         self.handle_detect_chaotic_checkbox.stateChanged.connect(self._on_handle_setting_changed)
+        
+        self.crosshair_highlight_checkbox.stateChanged.connect(self._on_crosshair_setting_changed)
+        self.crosshair_normal_checkbox.stateChanged.connect(self._on_crosshair_setting_changed)
         
         self.deselect_exclude_locked_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
         self.deselect_even_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
@@ -327,6 +353,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.lock_hide_order_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.lock_show_point_checkbox.stateChanged.disconnect(self._on_lock_handle_setting_changed)
             self.lock_show_square_checkbox.stateChanged.disconnect(self._on_lock_handle_setting_changed)
+            self.lock_show_crosshair_checkbox.stateChanged.disconnect(self._on_lock_handle_setting_changed)
             self.pin_input.textChanged.disconnect(self._realtime_save_settings)
             self.no_highlight_input.textChanged.disconnect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.disconnect(self._realtime_save_settings)
@@ -337,6 +364,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.handle_normal_point_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
             self.handle_normal_square_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
             self.handle_detect_chaotic_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
+            self.crosshair_highlight_checkbox.stateChanged.disconnect(self._on_crosshair_setting_changed)
+            self.crosshair_normal_checkbox.stateChanged.disconnect(self._on_crosshair_setting_changed)
             self.deselect_exclude_locked_checkbox.stateChanged.disconnect(self._on_deselect_setting_changed)
             self.deselect_even_checkbox.stateChanged.disconnect(self._on_deselect_setting_changed)
             self.deselect_odd_checkbox.stateChanged.disconnect(self._on_deselect_setting_changed)
@@ -362,6 +391,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.lock_hide_order_checkbox.setChecked(self._config.get("locked_hide_order", True))
             self.lock_show_point_checkbox.setChecked(self._config.get("locked_show_point", False))
             self.lock_show_square_checkbox.setChecked(self._config.get("locked_show_square", False))
+            self.lock_show_crosshair_checkbox.setChecked(self._config.get("locked_show_crosshair", False))
             self.pin_input.setText(self._config.get("pin_labels", ""))
             self.no_highlight_input.setText(self._config.get("no_highlight_labels", ""))
             self.mixed_mode_checkbox.setChecked(self._config.get("highlight_mixed_mode", False))
@@ -373,6 +403,9 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.handle_normal_point_checkbox.setChecked(self._config.get("handle_normal_point", False))
             self.handle_normal_square_checkbox.setChecked(self._config.get("handle_normal_square", False))
             self.handle_detect_chaotic_checkbox.setChecked(self._config.get("handle_detect_chaotic", True))
+            
+            self.crosshair_highlight_checkbox.setChecked(self._config.get("crosshair_highlight", True))
+            self.crosshair_normal_checkbox.setChecked(self._config.get("crosshair_normal", False))
             
             self.deselect_exclude_locked_checkbox.setChecked(self._config.get("deselect_exclude_locked", True))
             deselect_even = self._config.get("deselect_even", False)
@@ -419,6 +452,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.lock_hide_order_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.lock_show_point_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
             self.lock_show_square_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
+            self.lock_show_crosshair_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
             self.pin_input.textChanged.connect(self._realtime_save_settings)
             self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
@@ -429,6 +463,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.handle_normal_point_checkbox.stateChanged.connect(self._on_handle_setting_changed)
             self.handle_normal_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
             self.handle_detect_chaotic_checkbox.stateChanged.connect(self._on_handle_setting_changed)
+            self.crosshair_highlight_checkbox.stateChanged.connect(self._on_crosshair_setting_changed)
+            self.crosshair_normal_checkbox.stateChanged.connect(self._on_crosshair_setting_changed)
             self.deselect_exclude_locked_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
             self.deselect_even_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
             self.deselect_odd_checkbox.stateChanged.connect(self._on_deselect_setting_changed)
@@ -495,10 +531,19 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
                 self.parent().apply_handle_display_settings()
 
+    def _on_crosshair_setting_changed(self, state):
+        if self._config:
+            self._config["crosshair_highlight"] = self.crosshair_highlight_checkbox.isChecked()
+            self._config["crosshair_normal"] = self.crosshair_normal_checkbox.isChecked()
+            save_config(self._config)
+            if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
+                self.parent().apply_handle_display_settings()
+
     def _on_lock_handle_setting_changed(self, state):
         if self._config:
             self._config["locked_show_point"] = self.lock_show_point_checkbox.isChecked()
             self._config["locked_show_square"] = self.lock_show_square_checkbox.isChecked()
+            self._config["locked_show_crosshair"] = self.lock_show_crosshair_checkbox.isChecked()
             save_config(self._config)
             if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
                 self.parent().apply_handle_display_settings()

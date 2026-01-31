@@ -72,11 +72,15 @@ class Shape:
     handle_normal_point = False  # 非高亮时显示点
     handle_normal_square = False  # 非高亮时显示块
     handle_detect_chaotic = True  # 检测混沌状态（高亮下被点击过的图形用非高亮设置）
+    # Inner crosshair display settings
+    crosshair_highlight = True  # 高亮时显示内十字
+    crosshair_normal = False  # 非高亮时显示内十字
     # Highlight border color settings
     highlight_use_border_color = False  # 高亮时直接使用独立边框颜色（状态5）
     # Locked shape handle display settings
     locked_show_point = False  # 锁定后显示点
     locked_show_square = False  # 锁定后显示块
+    locked_show_crosshair = False  # 锁定后显示内十字
     locked_labels = set()  # 锁定的标签集合
     lock_difficult = False  # 锁定困难标记
     # Base line width
@@ -136,6 +140,11 @@ class Shape:
         # 标签独立控制柄颜色（None表示使用默认值）
         self._handle_vertex_color = None  # 选中时顶点填充色（点和块统一）
         self._handle_hvertex_color = None  # 拖拽时顶点填充色（点和块统一）
+        
+        # 标签独立内十字设置（None表示使用全局设置）
+        self._crosshair_color_highlight = None  # 高亮时内十字颜色
+        self._crosshair_color_normal = None  # 非高亮时内十字颜色
+        self._crosshair_width = None  # 内十字线条粗细
 
         # Rotation setting
         self.direction = direction
@@ -609,6 +618,9 @@ class Shape:
                             self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
+                    
+                    # 在绘制完边框和控制柄后，绘制内十字线
+                    self.draw_crosshair_in_rectangle(painter)
             elif self.shape_type == "rotation":
                 # Allow 1, 2, or 4 points; if invalid, treat as polygon
                 if len(self.points) not in [1, 2, 4]:
@@ -636,6 +648,9 @@ class Shape:
                             self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
+                    
+                    # 在绘制完边框和控制柄后，绘制内十字线
+                    self.draw_crosshair_in_rectangle(painter)
             elif self.shape_type == "rotation3":
                 # Same as rotation for rendering
                 if len(self.points) not in [1, 2, 4]:
@@ -663,6 +678,9 @@ class Shape:
                             self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
+                    
+                    # 在绘制完边框和控制柄后，绘制内十字线
+                    self.draw_crosshair_in_rectangle(painter)
             elif self.shape_type == "circle":
                 assert len(self.points) in [1, 2]
                 if len(self.points) == 2:
@@ -808,6 +826,104 @@ class Shape:
 
         # Draw edge midpoints as squares to distinguish from corner vertices (circles)
         path.addRect(point.x() - d / 2, point.y() - d / 2, d, d)
+
+    def should_draw_crosshair(self):
+        """判断是否应该绘制内十字"""
+        # 检查是否是锁定的标签
+        if self.is_label_locked():
+            # 锁定的标签：根据locked_show_crosshair设置决定
+            return Shape.locked_show_crosshair
+        
+        # 判断是否处于高亮状态
+        if Shape.handle_detect_chaotic:
+            # 检测混沌状态：全局高亮开启 且 当前图形有填充（未被点击过）
+            is_highlighted = Shape.highlighting_enabled and self.fill
+        else:
+            # 不检测混沌状态：只看全局高亮开关
+            is_highlighted = Shape.highlighting_enabled
+        
+        if is_highlighted:
+            return Shape.crosshair_highlight
+        else:
+            return Shape.crosshair_normal
+
+    def draw_crosshair_in_rectangle(self, painter):
+        """在矩形内绘制田字形十字线，从4条边的中点向矩形中心延伸，用于文字标注时的居中对齐参考
+        
+        Args:
+            painter: QPainter对象
+        """
+        if len(self.points) != 4:
+            return
+        
+        # 检查是否应该绘制内十字
+        if not self.should_draw_crosshair():
+            return
+        
+        # 获取4条边的中点
+        midpoints = self.get_edge_midpoints()
+        if len(midpoints) != 4:
+            return
+        
+        # 计算矩形的中心点
+        center_x = sum(p.x() for p in self.points) / 4
+        center_y = sum(p.y() for p in self.points) / 4
+        center = QtCore.QPointF(center_x, center_y)
+        
+        # midpoints[0]: 上边中点 (点0和点1之间)
+        # midpoints[1]: 右边中点 (点1和点2之间)
+        # midpoints[2]: 下边中点 (点2和点3之间)
+        # midpoints[3]: 左边中点 (点3和点0之间)
+        
+        # 保存当前画笔
+        old_pen = painter.pen()
+        
+        # 判断是否处于高亮状态
+        if Shape.handle_detect_chaotic:
+            is_highlighted = Shape.highlighting_enabled and self.fill
+        else:
+            is_highlighted = Shape.highlighting_enabled
+        
+        # 根据高亮状态确定内十字的颜色
+        if is_highlighted:
+            # 高亮时：优先使用标签独立的高亮颜色
+            if self._crosshair_color_highlight is not None:
+                crosshair_color = self._crosshair_color_highlight
+            else:
+                crosshair_color = QtGui.QColor(255, 255, 255, 180)  # 默认半透明白色
+        else:
+            # 非高亮时：优先使用标签独立的非高亮颜色
+            if self._crosshair_color_normal is not None:
+                crosshair_color = self._crosshair_color_normal
+            else:
+                crosshair_color = QtGui.QColor(0, 0, 0, 180)  # 默认半透明黑色
+        
+        # 确定内十字的线条粗细（优先使用标签独立设置，否则使用默认值1.0）
+        if self._crosshair_width is not None:
+            crosshair_width = self._crosshair_width
+        else:
+            crosshair_width = 1.0
+        
+        # 设置十字线的画笔（使用实线）
+        crosshair_pen = QtGui.QPen(crosshair_color)
+        crosshair_pen.setWidth(max(1, int(round(crosshair_width / self.scale))))
+        crosshair_pen.setStyle(QtCore.Qt.SolidLine)  # 使用实线样式
+        painter.setPen(crosshair_pen)
+        
+        # 从上边中点到中心
+        painter.drawLine(midpoints[0], center)
+        
+        # 从右边中点到中心
+        painter.drawLine(midpoints[1], center)
+        
+        # 从下边中点到中心
+        painter.drawLine(midpoints[2], center)
+        
+        # 从左边中点到中心
+        painter.drawLine(midpoints[3], center)
+        
+        # 恢复原来的画笔
+        painter.setPen(old_pen)
 
     def nearest_vertex(self, point, epsilon):
         """Find the index of the nearest vertex to a point

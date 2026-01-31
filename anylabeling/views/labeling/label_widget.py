@@ -470,11 +470,15 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.handle_normal_point = self._config.get("handle_normal_point", False)
         Shape.handle_normal_square = self._config.get("handle_normal_square", False)
         Shape.handle_detect_chaotic = self._config.get("handle_detect_chaotic", True)
+        # Inner crosshair display settings
+        Shape.crosshair_highlight = self._config.get("crosshair_highlight", True)
+        Shape.crosshair_normal = self._config.get("crosshair_normal", False)
         # Highlight border color settings
         Shape.highlight_use_border_color = self._config.get("highlight_use_border_color", False)
         # Locked shape handle display settings
         Shape.locked_show_point = self._config.get("locked_show_point", False)
         Shape.locked_show_square = self._config.get("locked_show_square", False)
+        Shape.locked_show_crosshair = self._config.get("locked_show_crosshair", False)
         Shape.lock_difficult = self._config.get("lock_difficult", False)
         locked_labels_str = self._config.get("locked_labels", "")
         Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
@@ -916,6 +920,13 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         self.unique_label_list.batch_change_label_handle_color.connect(
             self.batch_change_label_handle_color
+        )
+        # 连接内十字设置信号
+        self.unique_label_list.change_label_crosshair.connect(
+            self.change_label_crosshair
+        )
+        self.unique_label_list.batch_change_label_crosshair.connect(
+            self.batch_change_label_crosshair
         )
         # 创建标签控制按钮
         self.create_label_control_buttons()
@@ -6607,11 +6618,15 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.handle_normal_point = self._config.get("handle_normal_point", False)
         Shape.handle_normal_square = self._config.get("handle_normal_square", False)
         Shape.handle_detect_chaotic = self._config.get("handle_detect_chaotic", True)
+        # 内十字显示设置
+        Shape.crosshair_highlight = self._config.get("crosshair_highlight", True)
+        Shape.crosshair_normal = self._config.get("crosshair_normal", False)
         # 高亮时直接使用独立边框颜色设置
         Shape.highlight_use_border_color = self._config.get("highlight_use_border_color", False)
         # 锁定标签的控制柄显示设置
         Shape.locked_show_point = self._config.get("locked_show_point", False)
         Shape.locked_show_square = self._config.get("locked_show_square", False)
+        Shape.locked_show_crosshair = self._config.get("locked_show_crosshair", False)
         Shape.lock_difficult = self._config.get("lock_difficult", False)
         # 更新锁定标签集合
         locked_labels_str = self._config.get("locked_labels", "")
@@ -8556,6 +8571,12 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.digit_to_label = label
         self.toggle_draw_mode(edit=False, create_mode=create_mode)
+        
+        # Set crosshair color based on label color (after toggle_draw_mode)
+        rgb = self._get_rgb_by_label(label)
+        hex_color = "#{:02x}{:02x}{:02x}".format(rgb[0], rgb[1], rgb[2])
+        self.canvas.cross_line_color = hex_color
+        self.canvas.update()
 
     def toggle_draw_mode(
         self, edit=True, create_mode="rectangle", disable_auto_labeling=True
@@ -9684,6 +9705,11 @@ class LabelingWidget(QtWidgets.QWidget):
         # 更新独立控制柄颜色
         shape._handle_vertex_color = self._get_handle_vertex_color_by_label(shape.label)
         shape._handle_hvertex_color = self._get_handle_hvertex_color_by_label(shape.label)
+        
+        # 更新独立内十字设置
+        shape._crosshair_color_highlight = self._get_crosshair_color_highlight_by_label(shape.label)
+        shape._crosshair_color_normal = self._get_crosshair_color_normal_by_label(shape.label)
+        shape._crosshair_width = self._get_crosshair_width_by_label(shape.label)
 
     def _get_rgb_by_label(self, label, skip_label_info=False):
         if label in self.label_info and not skip_label_info:
@@ -9751,6 +9777,41 @@ class LabelingWidget(QtWidgets.QWidget):
         ):
             rgb = self._config["label_handle_hvertex_colors"][label]
             return QtGui.QColor(*rgb)
+        return None
+
+    def _get_crosshair_color_highlight_by_label(self, label):
+        """获取标签的独立高亮时内十字颜色，如果没有设置则返回None"""
+        if (
+            self._config.get("label_crosshair_colors_highlight")
+            and label in self._config["label_crosshair_colors_highlight"]
+        ):
+            rgba = self._config["label_crosshair_colors_highlight"][label]
+            if len(rgba) == 4:
+                return QtGui.QColor(*rgba)
+            elif len(rgba) == 3:
+                return QtGui.QColor(*rgba, 180)  # 默认透明度
+        return None
+
+    def _get_crosshair_color_normal_by_label(self, label):
+        """获取标签的独立非高亮时内十字颜色，如果没有设置则返回None"""
+        if (
+            self._config.get("label_crosshair_colors_normal")
+            and label in self._config["label_crosshair_colors_normal"]
+        ):
+            rgba = self._config["label_crosshair_colors_normal"][label]
+            if len(rgba) == 4:
+                return QtGui.QColor(*rgba)
+            elif len(rgba) == 3:
+                return QtGui.QColor(*rgba, 180)  # 默认透明度
+        return None
+
+    def _get_crosshair_width_by_label(self, label):
+        """获取标签的独立内十字线条粗细，如果没有设置则返回None"""
+        if (
+            self._config.get("label_crosshair_widths")
+            and label in self._config["label_crosshair_widths"]
+        ):
+            return self._config["label_crosshair_widths"][label]
         return None
 
     def remove_labels(self, shapes):
@@ -11183,6 +11244,320 @@ class LabelingWidget(QtWidgets.QWidget):
                     orig = original_settings[id(shape)]
                     shape._handle_vertex_color = orig['vertex_color']
                     shape._handle_hvertex_color = orig['hvertex_color']
+            self.canvas.update()
+
+        def on_finished(result):
+            """对话框关闭时处理"""
+            if result == QDialog.Rejected:
+                on_reject()
+
+        reset_btn.clicked.connect(on_reset)
+        ok_btn.clicked.connect(on_accept)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.finished.connect(on_finished)
+
+        dialog.show()
+
+    def change_label_crosshair(self, label):
+        """修改单个标签的内十字设置"""
+        self._change_label_crosshair_settings([label])
+
+    def batch_change_label_crosshair(self, labels):
+        """批量修改标签内十字设置"""
+        if not labels:
+            return
+        self._change_label_crosshair_settings(labels)
+
+    def _change_label_crosshair_settings(self, labels):
+        """修改标签内十字设置的内部实现（支持实时预览）"""
+        from PyQt5.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+            QPushButton, QGroupBox, QSpinBox
+        )
+        from PyQt5.QtGui import QColor
+        from PyQt5.QtCore import Qt
+        from views.labeling.shape import Shape
+
+        if not labels:
+            return
+
+        # 保存原始设置用于取消时恢复
+        original_settings = {}
+        for shape in self.canvas.shapes:
+            if shape.label in labels:
+                original_settings[id(shape)] = {
+                    'crosshair_color_highlight': shape._crosshair_color_highlight,
+                    'crosshair_color_normal': shape._crosshair_color_normal,
+                    'crosshair_width': shape._crosshair_width,
+                }
+
+        # 获取第一个标签的当前设置作为默认值
+        first_shape = None
+        for shape in self.canvas.shapes:
+            if shape.label in labels:
+                first_shape = shape
+                break
+
+        # 默认值
+        default_color_highlight = QColor(255, 255, 255, 180)  # 高亮时默认半透明白色
+        default_color_normal = QColor(0, 0, 0, 180)  # 非高亮时默认半透明黑色
+        default_width = 1.0
+
+        if first_shape and first_shape._crosshair_color_highlight:
+            current_color_highlight = first_shape._crosshair_color_highlight
+        else:
+            current_color_highlight = default_color_highlight
+
+        if first_shape and first_shape._crosshair_color_normal:
+            current_color_normal = first_shape._crosshair_color_normal
+        else:
+            current_color_normal = default_color_normal
+
+        if first_shape and first_shape._crosshair_width is not None:
+            current_width = first_shape._crosshair_width
+        else:
+            current_width = default_width
+
+        # 创建非模态对话框
+        dialog = QDialog(self)
+        dialog.setWindowFlags(
+            Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint
+        )
+        if len(labels) == 1:
+            dialog.setWindowTitle(self.tr(f"内十字设置 - {labels[0]}"))
+        else:
+            dialog.setWindowTitle(self.tr(f"内十字设置 ({len(labels)}个标签)"))
+        dialog.setMinimumWidth(400)
+
+        layout = QVBoxLayout(dialog)
+
+        # 高亮时颜色设置组
+        color_highlight_group = QGroupBox(self.tr("高亮时内十字颜色"))
+        color_highlight_layout = QHBoxLayout(color_highlight_group)
+
+        color_highlight_preview = QLabel()
+        color_highlight_preview.setFixedSize(60, 30)
+        color_highlight_preview.setStyleSheet(f"background-color: rgba({current_color_highlight.red()}, {current_color_highlight.green()}, {current_color_highlight.blue()}, {current_color_highlight.alpha()}); border: 1px solid black;")
+        color_highlight_layout.addWidget(color_highlight_preview)
+
+        color_highlight_btn = QPushButton(self.tr("选择颜色"))
+        selected_color_highlight = [current_color_highlight]
+
+        def update_preview():
+            """实时更新画布预览"""
+            for shape in self.canvas.shapes:
+                if shape.label in labels:
+                    shape._crosshair_color_highlight = selected_color_highlight[0]
+                    shape._crosshair_color_normal = selected_color_normal[0]
+                    shape._crosshair_width = selected_width[0]
+            self.canvas.update()
+
+        def on_color_highlight_click():
+            from PyQt5.QtWidgets import QColorDialog
+            color = QColorDialog.getColor(
+                selected_color_highlight[0], 
+                dialog, 
+                self.tr("选择高亮时内十字颜色"),
+                QColorDialog.ShowAlphaChannel
+            )
+            if color.isValid():
+                selected_color_highlight[0] = color
+                color_highlight_preview.setStyleSheet(f"background-color: rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha()}); border: 1px solid black;")
+                alpha_highlight_spinbox.setValue(color.alpha())
+                update_preview()
+
+        color_highlight_btn.clicked.connect(on_color_highlight_click)
+        color_highlight_layout.addWidget(color_highlight_btn)
+        color_highlight_layout.addStretch()
+        layout.addWidget(color_highlight_group)
+
+        # 高亮时透明度设置
+        alpha_highlight_group = QGroupBox(self.tr("高亮时透明度"))
+        alpha_highlight_layout = QHBoxLayout(alpha_highlight_group)
+        
+        alpha_highlight_label = QLabel(self.tr("透明度:"))
+        alpha_highlight_spinbox = QSpinBox()
+        alpha_highlight_spinbox.setMinimum(0)
+        alpha_highlight_spinbox.setMaximum(255)
+        alpha_highlight_spinbox.setValue(current_color_highlight.alpha())
+        alpha_highlight_spinbox.setSuffix(" (0-255)")
+        
+        def on_alpha_highlight_changed(value):
+            color = selected_color_highlight[0]
+            new_color = QColor(color.red(), color.green(), color.blue(), value)
+            selected_color_highlight[0] = new_color
+            color_highlight_preview.setStyleSheet(f"background-color: rgba({new_color.red()}, {new_color.green()}, {new_color.blue()}, {new_color.alpha()}); border: 1px solid black;")
+            update_preview()
+        
+        alpha_highlight_spinbox.valueChanged.connect(on_alpha_highlight_changed)
+        alpha_highlight_layout.addWidget(alpha_highlight_label)
+        alpha_highlight_layout.addWidget(alpha_highlight_spinbox)
+        alpha_highlight_layout.addStretch()
+        layout.addWidget(alpha_highlight_group)
+
+        # 非高亮时颜色设置组
+        color_normal_group = QGroupBox(self.tr("非高亮时内十字颜色"))
+        color_normal_layout = QHBoxLayout(color_normal_group)
+
+        color_normal_preview = QLabel()
+        color_normal_preview.setFixedSize(60, 30)
+        color_normal_preview.setStyleSheet(f"background-color: rgba({current_color_normal.red()}, {current_color_normal.green()}, {current_color_normal.blue()}, {current_color_normal.alpha()}); border: 1px solid black;")
+        color_normal_layout.addWidget(color_normal_preview)
+
+        color_normal_btn = QPushButton(self.tr("选择颜色"))
+        selected_color_normal = [current_color_normal]
+
+        def on_color_normal_click():
+            from PyQt5.QtWidgets import QColorDialog
+            color = QColorDialog.getColor(
+                selected_color_normal[0], 
+                dialog, 
+                self.tr("选择非高亮时内十字颜色"),
+                QColorDialog.ShowAlphaChannel
+            )
+            if color.isValid():
+                selected_color_normal[0] = color
+                color_normal_preview.setStyleSheet(f"background-color: rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha()}); border: 1px solid black;")
+                alpha_normal_spinbox.setValue(color.alpha())
+                update_preview()
+
+        color_normal_btn.clicked.connect(on_color_normal_click)
+        color_normal_layout.addWidget(color_normal_btn)
+        color_normal_layout.addStretch()
+        layout.addWidget(color_normal_group)
+
+        # 非高亮时透明度设置
+        alpha_normal_group = QGroupBox(self.tr("非高亮时透明度"))
+        alpha_normal_layout = QHBoxLayout(alpha_normal_group)
+        
+        alpha_normal_label = QLabel(self.tr("透明度:"))
+        alpha_normal_spinbox = QSpinBox()
+        alpha_normal_spinbox.setMinimum(0)
+        alpha_normal_spinbox.setMaximum(255)
+        alpha_normal_spinbox.setValue(current_color_normal.alpha())
+        alpha_normal_spinbox.setSuffix(" (0-255)")
+        
+        def on_alpha_normal_changed(value):
+            color = selected_color_normal[0]
+            new_color = QColor(color.red(), color.green(), color.blue(), value)
+            selected_color_normal[0] = new_color
+            color_normal_preview.setStyleSheet(f"background-color: rgba({new_color.red()}, {new_color.green()}, {new_color.blue()}, {new_color.alpha()}); border: 1px solid black;")
+            update_preview()
+        
+        alpha_normal_spinbox.valueChanged.connect(on_alpha_normal_changed)
+        alpha_normal_layout.addWidget(alpha_normal_label)
+        alpha_normal_layout.addWidget(alpha_normal_spinbox)
+        alpha_normal_layout.addStretch()
+        layout.addWidget(alpha_normal_group)
+
+        # 线条粗细设置组
+        width_group = QGroupBox(self.tr("线条粗细"))
+        width_layout = QHBoxLayout(width_group)
+
+        width_label = QLabel(self.tr("粗细:"))
+        width_spinbox = QSpinBox()
+        width_spinbox.setMinimum(1)
+        width_spinbox.setMaximum(100)
+        width_spinbox.setValue(int(current_width))
+        width_spinbox.setSuffix(" px")
+        
+        selected_width = [current_width]
+
+        def on_width_changed(value):
+            selected_width[0] = float(value)
+            update_preview()
+
+        width_spinbox.valueChanged.connect(on_width_changed)
+
+        width_layout.addWidget(width_label)
+        width_layout.addWidget(width_spinbox)
+        width_layout.addStretch()
+        layout.addWidget(width_group)
+
+        # 按钮
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton(self.tr("确定"))
+        cancel_btn = QPushButton(self.tr("取消"))
+        reset_btn = QPushButton(self.tr("重置为默认"))
+        btn_layout.addWidget(reset_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        accepted = [False]
+
+        def on_reset():
+            """重置为默认设置"""
+            selected_color_highlight[0] = None
+            selected_color_normal[0] = None
+            selected_width[0] = None
+            color_highlight_preview.setStyleSheet(f"background-color: rgba({default_color_highlight.red()}, {default_color_highlight.green()}, {default_color_highlight.blue()}, {default_color_highlight.alpha()}); border: 1px solid black;")
+            alpha_highlight_spinbox.setValue(default_color_highlight.alpha())
+            color_normal_preview.setStyleSheet(f"background-color: rgba({default_color_normal.red()}, {default_color_normal.green()}, {default_color_normal.blue()}, {default_color_normal.alpha()}); border: 1px solid black;")
+            alpha_normal_spinbox.setValue(default_color_normal.alpha())
+            width_spinbox.setValue(int(default_width))
+            for shape in self.canvas.shapes:
+                if shape.label in labels:
+                    shape._crosshair_color_highlight = None
+                    shape._crosshair_color_normal = None
+                    shape._crosshair_width = None
+            self.canvas.update()
+
+        def on_accept():
+            """确定按钮点击"""
+            accepted[0] = True
+            new_color_highlight = selected_color_highlight[0]
+            new_color_normal = selected_color_normal[0]
+            new_width = selected_width[0]
+
+            # 更新配置
+            if "label_crosshair_colors_highlight" not in self._config or self._config["label_crosshair_colors_highlight"] is None:
+                self._config["label_crosshair_colors_highlight"] = {}
+            if "label_crosshair_colors_normal" not in self._config or self._config["label_crosshair_colors_normal"] is None:
+                self._config["label_crosshair_colors_normal"] = {}
+            if "label_crosshair_widths" not in self._config or self._config["label_crosshair_widths"] is None:
+                self._config["label_crosshair_widths"] = {}
+
+            for label in labels:
+                if new_color_highlight:
+                    self._config["label_crosshair_colors_highlight"][label] = (
+                        new_color_highlight.red(), new_color_highlight.green(), new_color_highlight.blue(), new_color_highlight.alpha()
+                    )
+                elif label in self._config["label_crosshair_colors_highlight"]:
+                    del self._config["label_crosshair_colors_highlight"][label]
+
+                if new_color_normal:
+                    self._config["label_crosshair_colors_normal"][label] = (
+                        new_color_normal.red(), new_color_normal.green(), new_color_normal.blue(), new_color_normal.alpha()
+                    )
+                elif label in self._config["label_crosshair_colors_normal"]:
+                    del self._config["label_crosshair_colors_normal"][label]
+
+                if new_width is not None:
+                    self._config["label_crosshair_widths"][label] = new_width
+                elif label in self._config["label_crosshair_widths"]:
+                    del self._config["label_crosshair_widths"][label]
+
+            # 保存配置到文件
+            from anylabeling.config import save_config
+            save_config(self._config)
+            
+            self.canvas.update()
+            self.set_dirty()
+            dialog.accept()
+
+        def on_reject():
+            """取消按钮点击或关闭窗口"""
+            if accepted[0]:
+                return
+            # 恢复原始设置
+            for shape in self.canvas.shapes:
+                if shape.label in labels and id(shape) in original_settings:
+                    orig = original_settings[id(shape)]
+                    shape._crosshair_color_highlight = orig['crosshair_color_highlight']
+                    shape._crosshair_color_normal = orig['crosshair_color_normal']
+                    shape._crosshair_width = orig['crosshair_width']
             self.canvas.update()
 
         def on_finished(result):
