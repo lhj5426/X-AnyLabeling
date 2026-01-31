@@ -708,5 +708,18 @@ https://github.com/user-attachments/assets/3471bfc0-98a8-4998-a397-7fadccc23778
 
 https://github.com/user-attachments/assets/d98a3e50-5e39-488b-96f1-62a22918f05c
 
+147.矩形和旋转矩形添加内十字线显示设置
+
+https://github.com/user-attachments/assets/8ff7f6f9-1443-4ed2-92f5-b98ad504d263
+
+148.数字快捷键管理器和十字线显示和标签颜色联动按标签颜色显示十字线
+
+https://github.com/user-attachments/assets/77dd3504-2080-452f-91c7-b486fb11c32c
+
+
+
+
+
+
 
 
