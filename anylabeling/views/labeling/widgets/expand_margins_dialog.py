@@ -8,6 +8,7 @@ class ClickableLabel(QtWidgets.QLabel):
     leftClicked = QtCore.pyqtSignal()
     rightClicked = QtCore.pyqtSignal()
     middleClicked = QtCore.pyqtSignal()
+    ctrlLeftClicked = QtCore.pyqtSignal()  # 新增 Ctrl+左键信号
 
     def __init__(self, *args, **kwargs):
         super(ClickableLabel, self).__init__(*args, **kwargs)
@@ -32,7 +33,10 @@ class ClickableLabel(QtWidgets.QLabel):
 
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
-            self.leftClicked.emit()
+            if event.modifiers() & QtCore.Qt.ControlModifier:
+                self.ctrlLeftClicked.emit()
+            else:
+                self.leftClicked.emit()
         elif event.button() == QtCore.Qt.RightButton:
             self.rightClicked.emit()
         elif event.button() == QtCore.Qt.MiddleButton:
@@ -71,15 +75,16 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         layout.setSpacing(10)
 
         self.table_widget = QtWidgets.QTableWidget()
-        self.table_widget.setColumnCount(9)
+        self.table_widget.setColumnCount(10)  # 增加一列用于操作按钮
         self.table_widget.setHorizontalHeaderLabels([
             self.tr("标签"), self.tr("上"), "", self.tr("下"), "",
-            self.tr("左"), "", self.tr("右"), ""
+            self.tr("左"), "", self.tr("右"), "", self.tr("操作")
         ])
         self.table_widget.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
         for i in range(1, 8, 2):
             self.table_widget.horizontalHeader().setSectionResizeMode(i, QtWidgets.QHeaderView.ResizeToContents)
             self.table_widget.horizontalHeader().setSectionResizeMode(i + 1, QtWidgets.QHeaderView.ResizeToContents)
+        self.table_widget.horizontalHeader().setSectionResizeMode(9, QtWidgets.QHeaderView.ResizeToContents)  # 操作列
         self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         self.table_widget.viewport().installEventFilter(self)
@@ -89,7 +94,24 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             }
         """)
 
+        # 用于跟踪每个标签的行数
+        self.label_row_counts = {}  # {label: row_count}
+        self.label_order = []  # 保存标签顺序
+        
+        # 方向映射：{(row, col): actual_edge}，用于自定义按钮实际操作的方向
+        self.edge_mapping = {}  # 例如 {(0, 2): "Bottom"} 表示第0行第2列的"上"按钮实际操作"下"
+
+        # 先加载保存的行数和映射
+        self.load_saved_data()
+
         self.populate_table(labels)
+        
+        # 加载保存的数值
+        self.load_saved_margin_values()
+        
+        # 更新按钮显示（应用映射）
+        self.update_edge_button_labels()
+        
         layout.addWidget(self.table_widget)
 
         range_group = QtWidgets.QGroupBox(self.tr("范围选择"))
@@ -166,85 +188,154 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
 
 
     def populate_table(self, labels):
-        # 每个标签占两行（第一行扩大用，第二行缩小用）
-        self.table_widget.setRowCount(len(labels) * 2)
+        # 保存标签顺序
+        self.label_order = list(labels)
+        
+        # 初始化每个标签的行数为2（如果还没有记录）
+        for label in labels:
+            if label not in self.label_row_counts:
+                self.label_row_counts[label] = 2
+        
+        # 计算总行数
+        total_rows = sum(self.label_row_counts.get(label, 2) for label in labels)
+        self.table_widget.setRowCount(total_rows)
+        
         edges = ["Top", "Bottom", "Left", "Right"]
         edge_translations = {
             "Top": self.tr("上"), "Bottom": self.tr("下"),
             "Left": self.tr("左"), "Right": self.tr("右")
         }
 
-        for i, label in enumerate(labels):
-            row1 = i * 2      # 第一行（扩大）
-            row2 = i * 2 + 1  # 第二行（缩小）
+        current_row = 0
+        for label in labels:  # 按照传入的labels顺序遍历
+            row_count = self.label_row_counts.get(label, 2)
             
-            # 第一行标签
-            label_item1 = QtWidgets.QTableWidgetItem(label)
-            label_item1.setFlags(label_item1.flags() & ~QtCore.Qt.ItemIsEditable)
-            label_item1.setToolTip(self.tr("左键扩缩本页单个标签, 右键扩缩选中单个标签, 中键清零"))
-            self._update_label_color(label_item1, label)
-            self.table_widget.setItem(row1, 0, label_item1)
+            for row_offset in range(row_count):
+                row = current_row + row_offset
+                
+                # 标签列
+                label_item = QtWidgets.QTableWidgetItem(label)
+                label_item.setFlags(label_item.flags() & ~QtCore.Qt.ItemIsEditable)
+                label_item.setToolTip(self.tr("左键扩缩本页单个标签, 右键扩缩选中单个标签, 中键清零"))
+                self._update_label_color(label_item, label)
+                self.table_widget.setItem(row, 0, label_item)
+                
+                # 4个方向的spinbox和按钮
+                for j, edge in enumerate(edges):
+                    col_index = j * 2 + 1
+                    translated_edge = edge_translations.get(edge, edge)
+                    
+                    # spinbox
+                    spinbox = QtWidgets.QDoubleSpinBox()
+                    spinbox.setRange(-1000, 1000)
+                    spinbox.setDecimals(1)
+                    spinbox.setSingleStep(1.0)
+                    spinbox.setValue(0.0)
+                    self.table_widget.setCellWidget(row, col_index, spinbox)
+
+                    # 方向按钮
+                    apply_button = ClickableLabel(translated_edge)
+                    apply_button.setToolTip(
+                        self.tr("左键: 应用到本页全部 '{label}' 标签的'{edge}'边\n右键: 应用到本页选中 '{label}' 标签的'{edge}'边\n中键: 清零\nCtrl+左键: 自定义此按钮操作的方向").format(
+                            label=label, edge=translated_edge
+                        )
+                    )
+                    apply_button.leftClicked.connect(functools.partial(self.on_single_edge_apply, row, edge, "all"))
+                    apply_button.rightClicked.connect(functools.partial(self.on_single_edge_apply, row, edge, "selected"))
+                    apply_button.middleClicked.connect(functools.partial(self.on_single_edge_clear, row, edge))
+                    apply_button.ctrlLeftClicked.connect(functools.partial(self.on_customize_edge_mapping, row, col_index + 1, edge))
+                    
+                    container = QtWidgets.QWidget()
+                    container_layout = QtWidgets.QHBoxLayout(container)
+                    container_layout.setContentsMargins(0, 0, 0, 0)
+                    container_layout.addWidget(apply_button)
+                    container_layout.setAlignment(QtCore.Qt.AlignCenter)
+                    self.table_widget.setCellWidget(row, col_index + 1, container)
+                
+                # 操作按钮列（第10列）
+                btn_container = QtWidgets.QWidget()
+                btn_layout = QtWidgets.QHBoxLayout(btn_container)
+                btn_layout.setContentsMargins(2, 2, 2, 2)
+                btn_layout.setSpacing(2)
+                
+                # 添加行按钮（+）
+                btn_add = QtWidgets.QPushButton("+")
+                btn_add.setFixedSize(20, 20)
+                btn_add.setToolTip(self.tr("为此标签添加一行"))
+                btn_add.clicked.connect(functools.partial(self.add_row_for_label, label))
+                btn_layout.addWidget(btn_add)
+                
+                # 删除行按钮（-），只有当该标签行数>2时才显示
+                if row_count > 2:
+                    btn_remove = QtWidgets.QPushButton("-")
+                    btn_remove.setFixedSize(20, 20)
+                    btn_remove.setToolTip(self.tr("删除此行"))
+                    btn_remove.clicked.connect(functools.partial(self.remove_row, row))
+                    btn_layout.addWidget(btn_remove)
+                
+                self.table_widget.setCellWidget(row, 9, btn_container)
             
-            # 第二行标签
-            label_item2 = QtWidgets.QTableWidgetItem(label)
-            label_item2.setFlags(label_item2.flags() & ~QtCore.Qt.ItemIsEditable)
-            label_item2.setToolTip(self.tr("左键扩缩本页单个标签, 右键扩缩选中单个标签, 中键清零"))
-            self._update_label_color(label_item2, label)
-            self.table_widget.setItem(row2, 0, label_item2)
+            current_row += row_count
 
-            for j, edge in enumerate(edges):
-                col_index = j * 2 + 1
-                translated_edge = edge_translations.get(edge, edge)
+    def add_row_for_label(self, label):
+        """为指定标签添加一行"""
+        self.label_row_counts[label] = self.label_row_counts.get(label, 2) + 1
+        # 保存当前值
+        current_values = self.get_margin_values_raw()
+        # 重新生成表格（使用保存的标签顺序）
+        self.populate_table(self.label_order)
+        # 恢复值
+        self.restore_margin_values(current_values)
+    
+    def remove_row(self, row):
+        """删除指定行"""
+        label = self.table_widget.item(row, 0).text()
+        if self.label_row_counts.get(label, 2) <= 2:
+            return  # 至少保留2行
+        
+        self.label_row_counts[label] -= 1
+        # 保存当前值（删除指定行的值）
+        current_values = self.get_margin_values_raw_with_row_removal(row)
+        # 重新生成表格（使用保存的标签顺序）
+        self.populate_table(self.label_order)
+        # 恢复值
+        self.restore_margin_values(current_values)
+    
+    def get_margin_values_raw_with_row_removal(self, row_to_remove):
+        """获取边距值，但跳过要删除的行"""
+        margins = {}
+        current_row = 0
+        
+        for label in self.label_order:  # 使用保存的顺序
+            row_count = self.label_row_counts.get(label, 2)
+            values_list = []
+            
+            for row_offset in range(row_count):
+                row = current_row + row_offset
+                if row == row_to_remove:
+                    continue  # 跳过要删除的行
                 
-                # 第一行的spinbox和按钮
-                spinbox1 = QtWidgets.QDoubleSpinBox()
-                spinbox1.setRange(-1000, 1000)
-                spinbox1.setDecimals(1)
-                spinbox1.setSingleStep(1.0)
-                spinbox1.setValue(0.0)
-                self.table_widget.setCellWidget(row1, col_index, spinbox1)
-
-                apply_button1 = ClickableLabel(translated_edge)
-                apply_button1.setToolTip(
-                    self.tr("左键: 应用到本页全部 '{label}' 标签的'{edge}'边\n右键: 应用到本页选中 '{label}' 标签的'{edge}'边\n中键: 清零").format(
-                        label=label, edge=translated_edge
-                    )
-                )
-                apply_button1.leftClicked.connect(functools.partial(self.on_single_edge_apply, row1, edge, "all"))
-                apply_button1.rightClicked.connect(functools.partial(self.on_single_edge_apply, row1, edge, "selected"))
-                apply_button1.middleClicked.connect(functools.partial(self.on_single_edge_clear, row1, edge))
+                if row >= self.table_widget.rowCount():
+                    break
                 
-                container1 = QtWidgets.QWidget()
-                container_layout1 = QtWidgets.QHBoxLayout(container1)
-                container_layout1.setContentsMargins(0, 0, 0, 0)
-                container_layout1.addWidget(apply_button1)
-                container_layout1.setAlignment(QtCore.Qt.AlignCenter)
-                self.table_widget.setCellWidget(row1, col_index + 1, container1)
+                spinbox_top = self.table_widget.cellWidget(row, 1)
+                spinbox_bottom = self.table_widget.cellWidget(row, 3)
+                spinbox_left = self.table_widget.cellWidget(row, 5)
+                spinbox_right = self.table_widget.cellWidget(row, 7)
                 
-                # 第二行的spinbox和按钮
-                spinbox2 = QtWidgets.QDoubleSpinBox()
-                spinbox2.setRange(-1000, 1000)
-                spinbox2.setDecimals(1)
-                spinbox2.setSingleStep(1.0)
-                spinbox2.setValue(0.0)
-                self.table_widget.setCellWidget(row2, col_index, spinbox2)
-
-                apply_button2 = ClickableLabel(translated_edge)
-                apply_button2.setToolTip(
-                    self.tr("左键: 应用到本页全部 '{label}' 标签的'{edge}'边\n右键: 应用到本页选中 '{label}' 标签的'{edge}'边\n中键: 清零").format(
-                        label=label, edge=translated_edge
-                    )
-                )
-                apply_button2.leftClicked.connect(functools.partial(self.on_single_edge_apply, row2, edge, "all"))
-                apply_button2.rightClicked.connect(functools.partial(self.on_single_edge_apply, row2, edge, "selected"))
-                apply_button2.middleClicked.connect(functools.partial(self.on_single_edge_clear, row2, edge))
-                
-                container2 = QtWidgets.QWidget()
-                container_layout2 = QtWidgets.QHBoxLayout(container2)
-                container_layout2.setContentsMargins(0, 0, 0, 0)
-                container_layout2.addWidget(apply_button2)
-                container_layout2.setAlignment(QtCore.Qt.AlignCenter)
-                self.table_widget.setCellWidget(row2, col_index + 1, container2)
+                if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
+                    top = spinbox_top.value()
+                    bottom = spinbox_bottom.value()
+                    left = spinbox_left.value()
+                    right = spinbox_right.value()
+                    values_list.extend([top, bottom, left, right])
+            
+            if values_list:
+                margins[label] = tuple(values_list)
+            
+            current_row += row_count
+        
+        return margins
 
     def update_labels(self, labels):
         current_values = {}
@@ -255,84 +346,106 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.restore_margin_values(current_values)
 
     def get_margin_values(self):
-        """获取边距值，合并每个标签的两行（第一行+第二行）用于应用"""
+        """获取边距值，合并每个标签的所有行用于应用"""
         margins = {}
-        # 每个标签占两行，所以步进为2
-        for i in range(0, self.table_widget.rowCount(), 2):
-            label = self.table_widget.item(i, 0).text()
-            row1 = i      # 第一行
-            row2 = i + 1  # 第二行
+        current_row = 0
+        
+        for label in self.label_order:  # 使用保存的顺序
+            row_count = self.label_row_counts.get(label, 2)
+            top_sum = 0.0
+            bottom_sum = 0.0
+            left_sum = 0.0
+            right_sum = 0.0
             
-            # 获取第一行的值
-            top1 = self.table_widget.cellWidget(row1, 1).value()
-            bottom1 = self.table_widget.cellWidget(row1, 3).value()
-            left1 = self.table_widget.cellWidget(row1, 5).value()
-            right1 = self.table_widget.cellWidget(row1, 7).value()
+            for row_offset in range(row_count):
+                row = current_row + row_offset
+                if row >= self.table_widget.rowCount():
+                    break
+                
+                spinbox_top = self.table_widget.cellWidget(row, 1)
+                spinbox_bottom = self.table_widget.cellWidget(row, 3)
+                spinbox_left = self.table_widget.cellWidget(row, 5)
+                spinbox_right = self.table_widget.cellWidget(row, 7)
+                
+                if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
+                    top_sum += spinbox_top.value()
+                    bottom_sum += spinbox_bottom.value()
+                    left_sum += spinbox_left.value()
+                    right_sum += spinbox_right.value()
             
-            # 获取第二行的值
-            top2 = self.table_widget.cellWidget(row2, 1).value() if row2 < self.table_widget.rowCount() else 0.0
-            bottom2 = self.table_widget.cellWidget(row2, 3).value() if row2 < self.table_widget.rowCount() else 0.0
-            left2 = self.table_widget.cellWidget(row2, 5).value() if row2 < self.table_widget.rowCount() else 0.0
-            right2 = self.table_widget.cellWidget(row2, 7).value() if row2 < self.table_widget.rowCount() else 0.0
-            
-            # 合并两行的值（相加）
-            margins[label] = (top1 + top2, bottom1 + bottom2, left1 + left2, right1 + right2)
+            margins[label] = (top_sum, bottom_sum, left_sum, right_sum)
+            current_row += row_count
+        
         return margins
 
     def get_margin_values_raw(self):
-        """获取边距值的原始值（两行各4个值），用于保存和恢复"""
+        """获取边距值的原始值（每行4个值），用于保存和恢复"""
         margins = {}
-        # 每个标签占两行，所以步进为2
-        for i in range(0, self.table_widget.rowCount(), 2):
-            label = self.table_widget.item(i, 0).text()
-            row1 = i      # 第一行
-            row2 = i + 1  # 第二行
+        current_row = 0
+        
+        for label in self.label_order:  # 使用保存的顺序
+            row_count = self.label_row_counts.get(label, 2)
+            values_list = []
             
-            # 获取第一行的值
-            top1 = self.table_widget.cellWidget(row1, 1).value()
-            bottom1 = self.table_widget.cellWidget(row1, 3).value()
-            left1 = self.table_widget.cellWidget(row1, 5).value()
-            right1 = self.table_widget.cellWidget(row1, 7).value()
+            for row_offset in range(row_count):
+                row = current_row + row_offset
+                if row >= self.table_widget.rowCount():
+                    break
+                
+                spinbox_top = self.table_widget.cellWidget(row, 1)
+                spinbox_bottom = self.table_widget.cellWidget(row, 3)
+                spinbox_left = self.table_widget.cellWidget(row, 5)
+                spinbox_right = self.table_widget.cellWidget(row, 7)
+                
+                if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
+                    top = spinbox_top.value()
+                    bottom = spinbox_bottom.value()
+                    left = spinbox_left.value()
+                    right = spinbox_right.value()
+                    values_list.extend([top, bottom, left, right])
             
-            # 获取第二行的值
-            top2 = self.table_widget.cellWidget(row2, 1).value() if row2 < self.table_widget.rowCount() else 0.0
-            bottom2 = self.table_widget.cellWidget(row2, 3).value() if row2 < self.table_widget.rowCount() else 0.0
-            left2 = self.table_widget.cellWidget(row2, 5).value() if row2 < self.table_widget.rowCount() else 0.0
-            right2 = self.table_widget.cellWidget(row2, 7).value() if row2 < self.table_widget.rowCount() else 0.0
+            if values_list:
+                margins[label] = tuple(values_list)
             
-            # 保存两行的原始值（8个值）
-            margins[label] = (top1, bottom1, left1, right1, top2, bottom2, left2, right2)
+            current_row += row_count
+        
         return margins
 
     def restore_margin_values(self, saved_values):
-        """恢复边距值，saved_values现在包含两行的值"""
+        """恢复边距值"""
         if not saved_values:
             return
-        for i in range(0, self.table_widget.rowCount(), 2):
-            label = self.table_widget.item(i, 0).text()
-            if label in saved_values:
-                values = saved_values[label]
-                # 支持新格式（两行各4个值）和旧格式（单行4个值）
-                if len(values) == 8:
-                    # 新格式：(top1, bottom1, left1, right1, top2, bottom2, left2, right2)
-                    row1 = i
-                    row2 = i + 1
-                    self.table_widget.cellWidget(row1, 1).setValue(values[0])
-                    self.table_widget.cellWidget(row1, 3).setValue(values[1])
-                    self.table_widget.cellWidget(row1, 5).setValue(values[2])
-                    self.table_widget.cellWidget(row1, 7).setValue(values[3])
-                    if row2 < self.table_widget.rowCount():
-                        self.table_widget.cellWidget(row2, 1).setValue(values[4])
-                        self.table_widget.cellWidget(row2, 3).setValue(values[5])
-                        self.table_widget.cellWidget(row2, 5).setValue(values[6])
-                        self.table_widget.cellWidget(row2, 7).setValue(values[7])
-                elif len(values) == 4:
-                    # 旧格式：只恢复到第一行
-                    top, bottom, left, right = values
-                    self.table_widget.cellWidget(i, 1).setValue(top)
-                    self.table_widget.cellWidget(i, 3).setValue(bottom)
-                    self.table_widget.cellWidget(i, 5).setValue(left)
-                    self.table_widget.cellWidget(i, 7).setValue(right)
+        
+        current_row = 0
+        for label in self.label_order:  # 使用保存的顺序
+            if label not in saved_values:
+                current_row += self.label_row_counts.get(label, 2)
+                continue
+            
+            values = saved_values[label]
+            row_count = self.label_row_counts.get(label, 2)
+            
+            # 每行4个值
+            for row_offset in range(row_count):
+                row = current_row + row_offset
+                if row >= self.table_widget.rowCount():
+                    break
+                
+                value_offset = row_offset * 4
+                
+                if value_offset + 3 < len(values):
+                    spinbox_top = self.table_widget.cellWidget(row, 1)
+                    spinbox_bottom = self.table_widget.cellWidget(row, 3)
+                    spinbox_left = self.table_widget.cellWidget(row, 5)
+                    spinbox_right = self.table_widget.cellWidget(row, 7)
+                    
+                    if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
+                        spinbox_top.setValue(values[value_offset])
+                        spinbox_bottom.setValue(values[value_offset + 1])
+                        spinbox_left.setValue(values[value_offset + 2])
+                        spinbox_right.setValue(values[value_offset + 3])
+            
+            current_row += row_count
 
     def on_apply_current(self):
         margins = self.get_margin_values()
@@ -373,16 +486,14 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             item = self.parent().unique_label_list.item(i)
             label_text = item.data(QtCore.Qt.UserRole)
             current_labels.append(label_text)
-        # 每个标签占两行，所以只取偶数行的标签
-        existing_labels = []
-        for i in range(0, self.table_widget.rowCount(), 2):
-            label_item = self.table_widget.item(i, 0)
-            if label_item:
-                existing_labels.append(label_item.text())
+        
+        # 获取现有标签
+        existing_labels = list(self.label_order) if hasattr(self, 'label_order') else []
+        
         if set(current_labels) != set(existing_labels):
             self.update_labels(current_labels)
         else:
-            # 更新所有行的颜色（包括两行）
+            # 更新所有行的颜色
             for i in range(self.table_widget.rowCount()):
                 label_item = self.table_widget.item(i, 0)
                 if label_item:
@@ -455,34 +566,200 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
 
     def on_apply_single_label_selected(self, row):
         label = self.table_widget.item(row, 0).text()
-        top = self.table_widget.cellWidget(row, 1).value()
-        bottom = self.table_widget.cellWidget(row, 3).value()
-        left = self.table_widget.cellWidget(row, 5).value()
-        right = self.table_widget.cellWidget(row, 7).value()
-        margins = {label: (top, bottom, left, right)}
+        edges = ["Top", "Bottom", "Left", "Right"]
+        
+        # 获取这一行的所有数值，考虑映射
+        margins_tuple = [0.0, 0.0, 0.0, 0.0]
+        
+        for edge_index, edge in enumerate(edges):
+            spinbox_col = edge_index * 2 + 1
+            button_col = edge_index * 2 + 2
+            
+            # 检查是否有自定义映射
+            actual_edge = self.edge_mapping.get((row, button_col), edge)
+            actual_edge_index = edges.index(actual_edge)
+            
+            # 读取输入框的值
+            spinbox = self.table_widget.cellWidget(row, spinbox_col)
+            if spinbox:
+                value = spinbox.value()
+                # 累加到映射后的方向（如果多个输入框映射到同一方向，会累加）
+                margins_tuple[actual_edge_index] += value
+        
+        margins = {label: tuple(margins_tuple)}
         self.apply_single_label_selected.emit(margins)
 
     def on_apply_single_label(self, row):
         label = self.table_widget.item(row, 0).text()
-        top = self.table_widget.cellWidget(row, 1).value()
-        bottom = self.table_widget.cellWidget(row, 3).value()
-        left = self.table_widget.cellWidget(row, 5).value()
-        right = self.table_widget.cellWidget(row, 7).value()
-        margins = {label: (top, bottom, left, right)}
+        edges = ["Top", "Bottom", "Left", "Right"]
+        
+        # 获取这一行的所有数值，考虑映射
+        margins_tuple = [0.0, 0.0, 0.0, 0.0]
+        
+        for edge_index, edge in enumerate(edges):
+            spinbox_col = edge_index * 2 + 1
+            button_col = edge_index * 2 + 2
+            
+            # 检查是否有自定义映射
+            actual_edge = self.edge_mapping.get((row, button_col), edge)
+            actual_edge_index = edges.index(actual_edge)
+            
+            # 读取输入框的值
+            spinbox = self.table_widget.cellWidget(row, spinbox_col)
+            if spinbox:
+                value = spinbox.value()
+                # 累加到映射后的方向（如果多个输入框映射到同一方向，会累加）
+                margins_tuple[actual_edge_index] += value
+        
+        margins = {label: tuple(margins_tuple)}
         self.apply_single_label.emit(margins)
+
+    def on_customize_edge_mapping(self, row, col, default_edge):
+        """Ctrl+左键自定义按钮实际操作的方向"""
+        menu = QtWidgets.QMenu(self)
+        
+        edges = ["Top", "Bottom", "Left", "Right"]
+        edge_translations = {
+            "Top": self.tr("上"), 
+            "Bottom": self.tr("下"),
+            "Left": self.tr("左"), 
+            "Right": self.tr("右")
+        }
+        
+        # 获取当前映射
+        current_mapping = self.edge_mapping.get((row, col), default_edge)
+        
+        for edge in edges:
+            action = menu.addAction(edge_translations[edge])
+            action.setCheckable(True)
+            if edge == current_mapping:
+                action.setChecked(True)
+            action.triggered.connect(functools.partial(self.set_edge_mapping, row, col, edge, default_edge))
+        
+        # 添加"恢复默认"选项
+        menu.addSeparator()
+        reset_action = menu.addAction(self.tr("恢复默认"))
+        reset_action.triggered.connect(functools.partial(self.reset_edge_mapping, row, col, default_edge))
+        
+        # 在鼠标位置显示菜单
+        menu.exec_(QtGui.QCursor.pos())
+    
+    def set_edge_mapping(self, row, col, new_edge, default_edge):
+        """设置方向映射"""
+        self.edge_mapping[(row, col)] = new_edge
+        
+        # 更新按钮显示文字
+        container = self.table_widget.cellWidget(row, col)
+        if container:
+            label = container.findChild(ClickableLabel)
+            if label:
+                edge_translations = {
+                    "Top": self.tr("上"), 
+                    "Bottom": self.tr("下"),
+                    "Left": self.tr("左"), 
+                    "Right": self.tr("右")
+                }
+                # 如果不是默认映射，显示为"新"（只显示实际操作的方向）
+                if new_edge != default_edge:
+                    label.setText(edge_translations[new_edge])
+                    # 修改背景色以区分自定义映射
+                    label.setStyleSheet("""
+                        QLabel {
+                            background-color: #ffe4b5;
+                            border: 1px solid #ffa500;
+                            border-radius: 3px;
+                            padding: 1px;
+                        }
+                        QLabel:hover {
+                            background-color: #ffd700;
+                            border: 1px solid #ff8c00;
+                        }
+                        QLabel:pressed {
+                            background-color: #ffb90f;
+                        }
+                    """)
+                else:
+                    label.setText(edge_translations[default_edge])
+                    # 恢复默认样式
+                    label.setStyleSheet("""
+                        QLabel {
+                            background-color: #f0f0f0;
+                            border: 1px solid #b0b0b0;
+                            border-radius: 3px;
+                            padding: 1px;
+                        }
+                        QLabel:hover {
+                            background-color: #e0e0e0;
+                            border: 1px solid #a0a0a0;
+                        }
+                        QLabel:pressed {
+                            background-color: #d0d0d0;
+                        }
+                    """)
+        
+        # 保存映射
+        self.save_edge_mappings()
+    
+    def reset_edge_mapping(self, row, col, default_edge):
+        """恢复默认映射"""
+        if (row, col) in self.edge_mapping:
+            del self.edge_mapping[(row, col)]
+        
+        # 更新按钮显示文字
+        container = self.table_widget.cellWidget(row, col)
+        if container:
+            label = container.findChild(ClickableLabel)
+            if label:
+                edge_translations = {
+                    "Top": self.tr("上"), 
+                    "Bottom": self.tr("下"),
+                    "Left": self.tr("左"), 
+                    "Right": self.tr("右")
+                }
+                label.setText(edge_translations[default_edge])
+                # 恢复默认样式
+                label.setStyleSheet("""
+                    QLabel {
+                        background-color: #f0f0f0;
+                        border: 1px solid #b0b0b0;
+                        border-radius: 3px;
+                        padding: 1px;
+                    }
+                    QLabel:hover {
+                        background-color: #e0e0e0;
+                        border: 1px solid #a0a0a0;
+                    }
+                    QLabel:pressed {
+                        background-color: #d0d0d0;
+                    }
+                """)
+        
+        # 保存映射
+        self.save_edge_mappings()
 
     def on_single_edge_apply(self, row, edge_name, scope):
         label = self.table_widget.item(row, 0).text()
         edges = ["Top", "Bottom", "Left", "Right"]
         try:
+            # edge_name 是按钮的默认方向（例如"上"按钮的edge_name是"Top"）
             edge_index = edges.index(edge_name)
-            spinbox_col = edge_index * 2 + 1
+            button_col = edge_index * 2 + 2  # 按钮所在列
+            spinbox_col = edge_index * 2 + 1  # 按钮左边的输入框列
+            
+            # 检查是否有自定义映射
+            actual_edge = self.edge_mapping.get((row, button_col), edge_name)
+            actual_edge_index = edges.index(actual_edge)
+            
+            # 读取按钮左边输入框的值
             value = self.table_widget.cellWidget(row, spinbox_col).value()
         except (ValueError, AttributeError):
             return
+        
+        # 应用到映射后的方向
         margins_tuple = [0.0, 0.0, 0.0, 0.0]
-        margins_tuple[edge_index] = value
+        margins_tuple[actual_edge_index] = value
         margins = {label: tuple(margins_tuple)}
+        
         if scope == "all":
             self.apply_single_label.emit(margins)
         elif scope == "selected":
@@ -562,6 +839,201 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
     def save_window_position(self):
         settings = QtCore.QSettings()
         settings.setValue("expand_margins_dialog/geometry", self.saveGeometry())
+        
+        # 保存数值和行数到用户配置文件
+        self.save_current_values()
+    
+    def save_current_values(self):
+        """保存当前的数值和行数到用户配置文件"""
+        if not self.parent() or not hasattr(self.parent(), '_config'):
+            return
+        
+        # 保存行数
+        self.parent()._config["expand_margins_label_row_counts"] = dict(self.label_row_counts)
+        
+        # 保存数值
+        margin_values = {}
+        current_row = 0
+        
+        for label in self.label_order:  # 使用保存的顺序
+            row_count = self.label_row_counts.get(label, 2)
+            values_list = []
+            
+            for row_offset in range(row_count):
+                row = current_row + row_offset
+                if row >= self.table_widget.rowCount():
+                    break
+                
+                spinbox_top = self.table_widget.cellWidget(row, 1)
+                spinbox_bottom = self.table_widget.cellWidget(row, 3)
+                spinbox_left = self.table_widget.cellWidget(row, 5)
+                spinbox_right = self.table_widget.cellWidget(row, 7)
+                
+                if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
+                    top = float(spinbox_top.value())
+                    bottom = float(spinbox_bottom.value())
+                    left = float(spinbox_left.value())
+                    right = float(spinbox_right.value())
+                    values_list.extend([top, bottom, left, right])
+            
+            if values_list:
+                margin_values[label] = values_list  # 保存为list而不是tuple，因为JSON不支持tuple
+            
+            current_row += row_count
+        
+        self.parent()._config["expand_margins_values"] = margin_values
+        
+        # 保存到文件
+        from anylabeling.config import save_config
+        save_config(self.parent()._config)
+    
+    def save_edge_mappings(self):
+        """保存方向映射到配置"""
+        if not self.parent() or not hasattr(self.parent(), '_config'):
+            return
+        
+        # 将映射转换为可序列化的格式
+        mappings_serializable = {f"{row},{col}": edge for (row, col), edge in self.edge_mapping.items()}
+        self.parent()._config["expand_margins_edge_mappings"] = mappings_serializable
+        
+        from anylabeling.config import save_config
+        save_config(self.parent()._config)
+    
+    def update_edge_button_labels(self):
+        """更新所有方向按钮的显示文字"""
+        edge_translations = {
+            "Top": self.tr("上"), 
+            "Bottom": self.tr("下"),
+            "Left": self.tr("左"), 
+            "Right": self.tr("右")
+        }
+        edges = ["Top", "Bottom", "Left", "Right"]
+        
+        for (row, col), mapped_edge in self.edge_mapping.items():
+            container = self.table_widget.cellWidget(row, col)
+            if container:
+                label = container.findChild(ClickableLabel)
+                if label:
+                    # 根据列号推断默认方向
+                    if col == 2:  # 上
+                        default_edge = "Top"
+                    elif col == 4:  # 下
+                        default_edge = "Bottom"
+                    elif col == 6:  # 左
+                        default_edge = "Left"
+                    elif col == 8:  # 右
+                        default_edge = "Right"
+                    else:
+                        continue
+                    
+                    if mapped_edge != default_edge:
+                        # 只显示实际操作的方向，用橙色背景区分
+                        label.setText(edge_translations[mapped_edge])
+                        label.setStyleSheet("""
+                            QLabel {
+                                background-color: #ffe4b5;
+                                border: 1px solid #ffa500;
+                                border-radius: 3px;
+                                padding: 1px;
+                            }
+                            QLabel:hover {
+                                background-color: #ffd700;
+                                border: 1px solid #ff8c00;
+                            }
+                            QLabel:pressed {
+                                background-color: #ffb90f;
+                            }
+                        """)
+                    else:
+                        label.setText(edge_translations[default_edge])
+                        label.setStyleSheet("""
+                            QLabel {
+                                background-color: #f0f0f0;
+                                border: 1px solid #b0b0b0;
+                                border-radius: 3px;
+                                padding: 1px;
+                            }
+                            QLabel:hover {
+                                background-color: #e0e0e0;
+                                border: 1px solid #a0a0a0;
+                            }
+                            QLabel:pressed {
+                                background-color: #d0d0d0;
+                            }
+                        """)
+
+    def load_saved_data(self):
+        """从用户配置文件加载保存的行数和映射"""
+        if not self.parent() or not hasattr(self.parent(), '_config'):
+            return
+        
+        # 加载行数
+        saved_row_counts = self.parent()._config.get("expand_margins_label_row_counts", {})
+        if saved_row_counts and isinstance(saved_row_counts, dict):
+            # 只恢复当前存在的标签的行数
+            for label in saved_row_counts.keys():
+                if isinstance(saved_row_counts[label], int) and saved_row_counts[label] >= 2:
+                    self.label_row_counts[label] = saved_row_counts[label]
+        
+        # 加载方向映射（但不更新按钮，因为按钮还没创建）
+        mappings_serializable = self.parent()._config.get("expand_margins_edge_mappings", {})
+        if mappings_serializable and isinstance(mappings_serializable, dict):
+            # 转换回原格式
+            self.edge_mapping = {}
+            for key, edge in mappings_serializable.items():
+                try:
+                    row, col = map(int, key.split(','))
+                    self.edge_mapping[(row, col)] = edge
+                except (ValueError, AttributeError):
+                    pass
+    
+    def load_saved_margin_values(self):
+        """从用户配置文件加载保存的数值"""
+        if not self.parent() or not hasattr(self.parent(), '_config'):
+            return
+        
+        # 加载数值
+        saved_values = self.parent()._config.get("expand_margins_values", {})
+        if not saved_values or not isinstance(saved_values, dict):
+            return
+        
+        current_row = 0
+        for label in self.label_order:  # 使用保存的顺序
+            if label not in saved_values:
+                current_row += self.label_row_counts.get(label, 2)
+                continue
+            
+            values = saved_values[label]
+            if not isinstance(values, (list, tuple)):
+                current_row += self.label_row_counts.get(label, 2)
+                continue
+            
+            row_count = self.label_row_counts.get(label, 2)
+            
+            # 每行4个值
+            for row_offset in range(row_count):
+                row = current_row + row_offset
+                if row >= self.table_widget.rowCount():
+                    break
+                
+                value_offset = row_offset * 4
+                
+                if value_offset + 3 < len(values):
+                    spinbox_top = self.table_widget.cellWidget(row, 1)
+                    spinbox_bottom = self.table_widget.cellWidget(row, 3)
+                    spinbox_left = self.table_widget.cellWidget(row, 5)
+                    spinbox_right = self.table_widget.cellWidget(row, 7)
+                    
+                    if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
+                        try:
+                            spinbox_top.setValue(float(values[value_offset]))
+                            spinbox_bottom.setValue(float(values[value_offset + 1]))
+                            spinbox_left.setValue(float(values[value_offset + 2]))
+                            spinbox_right.setValue(float(values[value_offset + 3]))
+                        except (ValueError, TypeError):
+                            pass
+            
+            current_row += row_count
 
     def closeEvent(self, event):
         self.save_window_position()
