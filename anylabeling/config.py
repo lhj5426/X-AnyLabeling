@@ -60,6 +60,18 @@ def save_config(config):
         if "label_toggle_shortcuts" in config:
             merged["label_toggle_shortcuts"] = config["label_toggle_shortcuts"]
         
+        # Force overwrite for expand_margins_edge_mappings to handle deletions properly
+        if "expand_margins_edge_mappings" in config:
+            merged["expand_margins_edge_mappings"] = config["expand_margins_edge_mappings"]
+        
+        # Force overwrite for expand_margins_label_row_counts to handle row deletions properly
+        if "expand_margins_label_row_counts" in config:
+            merged["expand_margins_label_row_counts"] = config["expand_margins_label_row_counts"]
+        
+        # Force overwrite for expand_margins_values to handle value changes properly
+        if "expand_margins_values" in config:
+            merged["expand_margins_values"] = config["expand_margins_values"]
+        
         # 始终保留文件中已有的merge_tool_settings
         # merge_dialog.py会直接写文件来保存这个设置
         if existing_merge_settings:

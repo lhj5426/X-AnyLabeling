@@ -2,6 +2,7 @@
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 import functools
+from anylabeling.config import save_config
 
 class ClickableLabel(QtWidgets.QLabel):
     """A QLabel that emits signals for left, right and middle clicks."""
@@ -98,8 +99,10 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.label_row_counts = {}  # {label: row_count}
         self.label_order = []  # 保存标签顺序
         
-        # 方向映射：{(row, col): actual_edge}，用于自定义按钮实际操作的方向
-        self.edge_mapping = {}  # 例如 {(0, 2): "Bottom"} 表示第0行第2列的"上"按钮实际操作"下"
+        # 方向映射：{(label, row_offset, col): actual_edge}
+        # label: 标签名, row_offset: 该标签内的行偏移(0-based), col: 列号
+        # 例如 {("qipao", 2, 2): "Left"} 表示qipao标签的第3行(offset=2)的第2列按钮映射到"Left"
+        self.edge_mapping = {}
 
         # 先加载保存的行数和映射
         self.load_saved_data()
@@ -240,10 +243,10 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                             label=label, edge=translated_edge
                         )
                     )
-                    apply_button.leftClicked.connect(functools.partial(self.on_single_edge_apply, row, edge, "all"))
-                    apply_button.rightClicked.connect(functools.partial(self.on_single_edge_apply, row, edge, "selected"))
-                    apply_button.middleClicked.connect(functools.partial(self.on_single_edge_clear, row, edge))
-                    apply_button.ctrlLeftClicked.connect(functools.partial(self.on_customize_edge_mapping, row, col_index + 1, edge))
+                    apply_button.leftClicked.connect(functools.partial(self.on_single_edge_apply, label, row_offset, edge, "all"))
+                    apply_button.rightClicked.connect(functools.partial(self.on_single_edge_apply, label, row_offset, edge, "selected"))
+                    apply_button.middleClicked.connect(functools.partial(self.on_single_edge_clear, label, row_offset, edge))
+                    apply_button.ctrlLeftClicked.connect(functools.partial(self.on_customize_edge_mapping, label, row_offset, col_index + 1, edge))
                     
                     container = QtWidgets.QWidget()
                     container_layout = QtWidgets.QHBoxLayout(container)
@@ -280,12 +283,18 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
     def add_row_for_label(self, label):
         """为指定标签添加一行"""
         self.label_row_counts[label] = self.label_row_counts.get(label, 2) + 1
+        
         # 保存当前值
         current_values = self.get_margin_values_raw()
         # 重新生成表格（使用保存的标签顺序）
         self.populate_table(self.label_order)
         # 恢复值
         self.restore_margin_values(current_values)
+        # 更新按钮显示
+        self.update_edge_button_labels()
+        
+        # 保存所有配置（行数、数值、映射）
+        self.save_current_values()
     
     def remove_row(self, row):
         """删除指定行"""
@@ -293,13 +302,48 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         if self.label_row_counts.get(label, 2) <= 2:
             return  # 至少保留2行
         
+        # 找到这一行在该标签内的偏移量
+        current_row = 0
+        row_offset = 0
+        for lbl in self.label_order:
+            row_count = self.label_row_counts.get(lbl, 2)
+            if lbl == label:
+                if current_row <= row < current_row + row_count:
+                    row_offset = row - current_row
+                    break
+            current_row += row_count
+        
+        # 删除这一行的所有方向映射，并调整后续行的偏移量
+        new_edge_mapping = {}
+        for (lbl, offset, col), edge in self.edge_mapping.items():
+            if lbl == label:
+                if offset == row_offset:
+                    # 跳过被删除的行
+                    continue
+                elif offset > row_offset:
+                    # 后续行的偏移量-1
+                    new_edge_mapping[(lbl, offset - 1, col)] = edge
+                else:
+                    # 前面的行保持不变
+                    new_edge_mapping[(lbl, offset, col)] = edge
+            else:
+                # 其他标签保持不变
+                new_edge_mapping[(lbl, offset, col)] = edge
+        self.edge_mapping = new_edge_mapping
+        
         self.label_row_counts[label] -= 1
+        
         # 保存当前值（删除指定行的值）
         current_values = self.get_margin_values_raw_with_row_removal(row)
+        
         # 重新生成表格（使用保存的标签顺序）
         self.populate_table(self.label_order)
         # 恢复值
         self.restore_margin_values(current_values)
+        # 更新按钮显示
+        self.update_edge_button_labels()
+        # 保存所有配置（行数、数值、映射）
+        self.save_current_values()
     
     def get_margin_values_raw_with_row_removal(self, row_to_remove):
         """获取边距值，但跳过要删除的行"""
@@ -566,6 +610,18 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
 
     def on_apply_single_label_selected(self, row):
         label = self.table_widget.item(row, 0).text()
+        
+        # 找到这一行在该标签内的偏移量
+        current_row = 0
+        row_offset = 0
+        for lbl in self.label_order:
+            row_count = self.label_row_counts.get(lbl, 2)
+            if lbl == label:
+                if current_row <= row < current_row + row_count:
+                    row_offset = row - current_row
+                    break
+            current_row += row_count
+        
         edges = ["Top", "Bottom", "Left", "Right"]
         
         # 获取这一行的所有数值，考虑映射
@@ -576,7 +632,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             button_col = edge_index * 2 + 2
             
             # 检查是否有自定义映射
-            actual_edge = self.edge_mapping.get((row, button_col), edge)
+            actual_edge = self.edge_mapping.get((label, row_offset, button_col), edge)
             actual_edge_index = edges.index(actual_edge)
             
             # 读取输入框的值
@@ -591,6 +647,18 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
 
     def on_apply_single_label(self, row):
         label = self.table_widget.item(row, 0).text()
+        
+        # 找到这一行在该标签内的偏移量
+        current_row = 0
+        row_offset = 0
+        for lbl in self.label_order:
+            row_count = self.label_row_counts.get(lbl, 2)
+            if lbl == label:
+                if current_row <= row < current_row + row_count:
+                    row_offset = row - current_row
+                    break
+            current_row += row_count
+        
         edges = ["Top", "Bottom", "Left", "Right"]
         
         # 获取这一行的所有数值，考虑映射
@@ -601,7 +669,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             button_col = edge_index * 2 + 2
             
             # 检查是否有自定义映射
-            actual_edge = self.edge_mapping.get((row, button_col), edge)
+            actual_edge = self.edge_mapping.get((label, row_offset, button_col), edge)
             actual_edge_index = edges.index(actual_edge)
             
             # 读取输入框的值
@@ -614,7 +682,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         margins = {label: tuple(margins_tuple)}
         self.apply_single_label.emit(margins)
 
-    def on_customize_edge_mapping(self, row, col, default_edge):
+    def on_customize_edge_mapping(self, label, row_offset, col, default_edge):
         """Ctrl+左键自定义按钮实际操作的方向"""
         menu = QtWidgets.QMenu(self)
         
@@ -627,32 +695,42 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         }
         
         # 获取当前映射
-        current_mapping = self.edge_mapping.get((row, col), default_edge)
+        current_mapping = self.edge_mapping.get((label, row_offset, col), default_edge)
         
         for edge in edges:
             action = menu.addAction(edge_translations[edge])
             action.setCheckable(True)
             if edge == current_mapping:
                 action.setChecked(True)
-            action.triggered.connect(functools.partial(self.set_edge_mapping, row, col, edge, default_edge))
+            action.triggered.connect(functools.partial(self.set_edge_mapping, label, row_offset, col, edge, default_edge))
         
         # 添加"恢复默认"选项
         menu.addSeparator()
         reset_action = menu.addAction(self.tr("恢复默认"))
-        reset_action.triggered.connect(functools.partial(self.reset_edge_mapping, row, col, default_edge))
+        reset_action.triggered.connect(functools.partial(self.reset_edge_mapping, label, row_offset, col, default_edge))
         
         # 在鼠标位置显示菜单
         menu.exec_(QtGui.QCursor.pos())
     
-    def set_edge_mapping(self, row, col, new_edge, default_edge):
+    def set_edge_mapping(self, label, row_offset, col, new_edge, default_edge):
         """设置方向映射"""
-        self.edge_mapping[(row, col)] = new_edge
+        self.edge_mapping[(label, row_offset, col)] = new_edge
+        
+        # 找到这一行的绝对行号
+        current_row = 0
+        target_row = 0
+        for lbl in self.label_order:
+            row_count = self.label_row_counts.get(lbl, 2)
+            if lbl == label:
+                target_row = current_row + row_offset
+                break
+            current_row += row_count
         
         # 更新按钮显示文字
-        container = self.table_widget.cellWidget(row, col)
+        container = self.table_widget.cellWidget(target_row, col)
         if container:
-            label = container.findChild(ClickableLabel)
-            if label:
+            lbl_widget = container.findChild(ClickableLabel)
+            if lbl_widget:
                 edge_translations = {
                     "Top": self.tr("上"), 
                     "Bottom": self.tr("下"),
@@ -661,9 +739,9 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                 }
                 # 如果不是默认映射，显示为"新"（只显示实际操作的方向）
                 if new_edge != default_edge:
-                    label.setText(edge_translations[new_edge])
+                    lbl_widget.setText(edge_translations[new_edge])
                     # 修改背景色以区分自定义映射
-                    label.setStyleSheet("""
+                    lbl_widget.setStyleSheet("""
                         QLabel {
                             background-color: #ffe4b5;
                             border: 1px solid #ffa500;
@@ -679,9 +757,9 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                         }
                     """)
                 else:
-                    label.setText(edge_translations[default_edge])
+                    lbl_widget.setText(edge_translations[default_edge])
                     # 恢复默认样式
-                    label.setStyleSheet("""
+                    lbl_widget.setStyleSheet("""
                         QLabel {
                             background-color: #f0f0f0;
                             border: 1px solid #b0b0b0;
@@ -700,25 +778,35 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         # 保存映射
         self.save_edge_mappings()
     
-    def reset_edge_mapping(self, row, col, default_edge):
+    def reset_edge_mapping(self, label, row_offset, col, default_edge):
         """恢复默认映射"""
-        if (row, col) in self.edge_mapping:
-            del self.edge_mapping[(row, col)]
+        if (label, row_offset, col) in self.edge_mapping:
+            del self.edge_mapping[(label, row_offset, col)]
+        
+        # 找到这一行的绝对行号
+        current_row = 0
+        target_row = 0
+        for lbl in self.label_order:
+            row_count = self.label_row_counts.get(lbl, 2)
+            if lbl == label:
+                target_row = current_row + row_offset
+                break
+            current_row += row_count
         
         # 更新按钮显示文字
-        container = self.table_widget.cellWidget(row, col)
+        container = self.table_widget.cellWidget(target_row, col)
         if container:
-            label = container.findChild(ClickableLabel)
-            if label:
+            lbl_widget = container.findChild(ClickableLabel)
+            if lbl_widget:
                 edge_translations = {
                     "Top": self.tr("上"), 
                     "Bottom": self.tr("下"),
                     "Left": self.tr("左"), 
                     "Right": self.tr("右")
                 }
-                label.setText(edge_translations[default_edge])
+                lbl_widget.setText(edge_translations[default_edge])
                 # 恢复默认样式
-                label.setStyleSheet("""
+                lbl_widget.setStyleSheet("""
                     QLabel {
                         background-color: #f0f0f0;
                         border: 1px solid #b0b0b0;
@@ -737,8 +825,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         # 保存映射
         self.save_edge_mappings()
 
-    def on_single_edge_apply(self, row, edge_name, scope):
-        label = self.table_widget.item(row, 0).text()
+    def on_single_edge_apply(self, label, row_offset, edge_name, scope):
         edges = ["Top", "Bottom", "Left", "Right"]
         try:
             # edge_name 是按钮的默认方向（例如"上"按钮的edge_name是"Top"）
@@ -746,12 +833,22 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             button_col = edge_index * 2 + 2  # 按钮所在列
             spinbox_col = edge_index * 2 + 1  # 按钮左边的输入框列
             
+            # 找到这一行的绝对行号
+            current_row = 0
+            target_row = 0
+            for lbl in self.label_order:
+                row_count = self.label_row_counts.get(lbl, 2)
+                if lbl == label:
+                    target_row = current_row + row_offset
+                    break
+                current_row += row_count
+            
             # 检查是否有自定义映射
-            actual_edge = self.edge_mapping.get((row, button_col), edge_name)
+            actual_edge = self.edge_mapping.get((label, row_offset, button_col), edge_name)
             actual_edge_index = edges.index(actual_edge)
             
             # 读取按钮左边输入框的值
-            value = self.table_widget.cellWidget(row, spinbox_col).value()
+            value = self.table_widget.cellWidget(target_row, spinbox_col).value()
         except (ValueError, AttributeError):
             return
         
@@ -765,13 +862,24 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         elif scope == "selected":
             self.apply_single_label_selected.emit(margins)
 
-    def on_single_edge_clear(self, row, edge_name):
+    def on_single_edge_clear(self, label, row_offset, edge_name):
         """中键清零：将指定行的指定边距值设为0"""
         edges = ["Top", "Bottom", "Left", "Right"]
         try:
             edge_index = edges.index(edge_name)
             spinbox_col = edge_index * 2 + 1
-            spinbox = self.table_widget.cellWidget(row, spinbox_col)
+            
+            # 找到这一行的绝对行号
+            current_row = 0
+            target_row = 0
+            for lbl in self.label_order:
+                row_count = self.label_row_counts.get(lbl, 2)
+                if lbl == label:
+                    target_row = current_row + row_offset
+                    break
+                current_row += row_count
+            
+            spinbox = self.table_widget.cellWidget(target_row, spinbox_col)
             if spinbox:
                 spinbox.setValue(0.0)
         except (ValueError, AttributeError):
@@ -883,8 +991,11 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         
         self.parent()._config["expand_margins_values"] = margin_values
         
-        # 保存到文件
-        from anylabeling.config import save_config
+        # 保存方向映射（转换成可序列化格式）
+        mappings_serializable = {f"{label},{offset},{col}": edge for (label, offset, col), edge in self.edge_mapping.items()}
+        self.parent()._config["expand_margins_edge_mappings"] = mappings_serializable
+        
+        # 真正保存到磁盘
         save_config(self.parent()._config)
     
     def save_edge_mappings(self):
@@ -893,10 +1004,9 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             return
         
         # 将映射转换为可序列化的格式
-        mappings_serializable = {f"{row},{col}": edge for (row, col), edge in self.edge_mapping.items()}
+        mappings_serializable = {f"{label},{offset},{col}": edge for (label, offset, col), edge in self.edge_mapping.items()}
         self.parent()._config["expand_margins_edge_mappings"] = mappings_serializable
         
-        from anylabeling.config import save_config
         save_config(self.parent()._config)
     
     def update_edge_button_labels(self):
@@ -907,13 +1017,15 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             "Left": self.tr("左"), 
             "Right": self.tr("右")
         }
-        edges = ["Top", "Bottom", "Left", "Right"]
         
-        for (row, col), mapped_edge in self.edge_mapping.items():
-            container = self.table_widget.cellWidget(row, col)
-            if container:
-                label = container.findChild(ClickableLabel)
-                if label:
+        current_row = 0
+        for label in self.label_order:
+            row_count = self.label_row_counts.get(label, 2)
+            
+            for row_offset in range(row_count):
+                row = current_row + row_offset
+                
+                for col in [2, 4, 6, 8]:  # 上、下、左、右按钮的列
                     # 根据列号推断默认方向
                     if col == 2:  # 上
                         default_edge = "Top"
@@ -926,41 +1038,51 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                     else:
                         continue
                     
-                    if mapped_edge != default_edge:
-                        # 只显示实际操作的方向，用橙色背景区分
-                        label.setText(edge_translations[mapped_edge])
-                        label.setStyleSheet("""
-                            QLabel {
-                                background-color: #ffe4b5;
-                                border: 1px solid #ffa500;
-                                border-radius: 3px;
-                                padding: 1px;
-                            }
-                            QLabel:hover {
-                                background-color: #ffd700;
-                                border: 1px solid #ff8c00;
-                            }
-                            QLabel:pressed {
-                                background-color: #ffb90f;
-                            }
-                        """)
-                    else:
-                        label.setText(edge_translations[default_edge])
-                        label.setStyleSheet("""
-                            QLabel {
-                                background-color: #f0f0f0;
-                                border: 1px solid #b0b0b0;
-                                border-radius: 3px;
-                                padding: 1px;
-                            }
-                            QLabel:hover {
-                                background-color: #e0e0e0;
-                                border: 1px solid #a0a0a0;
-                            }
-                            QLabel:pressed {
-                                background-color: #d0d0d0;
-                            }
-                        """)
+                    # 获取映射的方向（如果有）
+                    mapped_edge = self.edge_mapping.get((label, row_offset, col), default_edge)
+                    
+                    # 获取按钮widget
+                    container = self.table_widget.cellWidget(row, col)
+                    if container:
+                        lbl_widget = container.findChild(ClickableLabel)
+                        if lbl_widget:
+                            if mapped_edge != default_edge:
+                                # 只显示实际操作的方向，用橙色背景区分
+                                lbl_widget.setText(edge_translations[mapped_edge])
+                                lbl_widget.setStyleSheet("""
+                                    QLabel {
+                                        background-color: #ffe4b5;
+                                        border: 1px solid #ffa500;
+                                        border-radius: 3px;
+                                        padding: 1px;
+                                    }
+                                    QLabel:hover {
+                                        background-color: #ffd700;
+                                        border: 1px solid #ff8c00;
+                                    }
+                                    QLabel:pressed {
+                                        background-color: #ffb90f;
+                                    }
+                                """)
+                            else:
+                                lbl_widget.setText(edge_translations[default_edge])
+                                lbl_widget.setStyleSheet("""
+                                    QLabel {
+                                        background-color: #f0f0f0;
+                                        border: 1px solid #b0b0b0;
+                                        border-radius: 3px;
+                                        padding: 1px;
+                                    }
+                                    QLabel:hover {
+                                        background-color: #e0e0e0;
+                                        border: 1px solid #a0a0a0;
+                                    }
+                                    QLabel:pressed {
+                                        background-color: #d0d0d0;
+                                    }
+                                """)
+            
+            current_row += row_count
 
     def load_saved_data(self):
         """从用户配置文件加载保存的行数和映射"""
@@ -982,8 +1104,16 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             self.edge_mapping = {}
             for key, edge in mappings_serializable.items():
                 try:
-                    row, col = map(int, key.split(','))
-                    self.edge_mapping[(row, col)] = edge
+                    parts = key.split(',')
+                    if len(parts) == 3:
+                        # 新格式：label,offset,col
+                        label = parts[0]
+                        offset = int(parts[1])
+                        col = int(parts[2])
+                        self.edge_mapping[(label, offset, col)] = edge
+                    elif len(parts) == 2:
+                        # 旧格式：row,col（忽略，因为行号会变）
+                        pass
                 except (ValueError, AttributeError):
                     pass
     
