@@ -12721,13 +12721,37 @@ class LabelingWidget(QtWidgets.QWidget):
         self.brightness_contrast_values[self.filename] = (brightness, contrast)
 
     def hide_selected_polygons(self):
+        """隐藏标注(根据配置决定隐藏选中的还是非选中的)"""
+        # 如果没有选中任何标签,直接返回
+        if not self.canvas.selected_shapes:
+            return
+        
+        # 直接使用self._config,不重新读取配置文件
+        # 获取隐藏模式设置
+        hide_selected_mode = self._config.get("hide_selected_mode", True)
+        hide_unselected_mode = self._config.get("hide_unselected_mode", False)
+        
         shapes_to_hide = []
-        for item in self.label_list:
-            if item.shape().selected:
-                item.setCheckState(Qt.Unchecked)
-                item.shape().visible = False
-                self.canvas.set_shape_visible(item.shape(), False)
-                shapes_to_hide.append(item.shape())
+        
+        if hide_unselected_mode:
+            # 隐藏非选中的标签
+            selected_shapes_set = set(self.canvas.selected_shapes)
+            for item in self.label_list:
+                shape = item.shape()
+                if shape not in selected_shapes_set:
+                    item.setCheckState(Qt.Unchecked)
+                    shape.visible = False
+                    self.canvas.set_shape_visible(shape, False)
+                    shapes_to_hide.append(shape)
+        else:
+            # 隐藏选中的标签(默认行为)
+            for shape in self.canvas.selected_shapes:
+                item = self.label_list.find_item_by_shape(shape)
+                if item:
+                    item.setCheckState(Qt.Unchecked)
+                    shape.visible = False
+                    self.canvas.set_shape_visible(shape, False)
+                    shapes_to_hide.append(shape)
 
         self.selected_polygon_stack.extend(shapes_to_hide)
         self.canvas.update()

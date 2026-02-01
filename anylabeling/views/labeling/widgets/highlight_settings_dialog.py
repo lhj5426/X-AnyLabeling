@@ -230,6 +230,18 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.invert_layout.addWidget(self.invert_exclude_locked_checkbox)
         self.invert_group.setLayout(self.invert_layout)
 
+        # S键隐藏方式设置
+        self.hide_mode_group = QtWidgets.QGroupBox("S键隐藏方式")
+        self.hide_mode_layout = QtWidgets.QVBoxLayout()
+        self.hide_selected_checkbox = QtWidgets.QCheckBox("隐藏选中的标签")
+        self.hide_selected_checkbox.setToolTip("勾选后，按S键隐藏鼠标选中的标签")
+        self.hide_selected_checkbox.setChecked(True)
+        self.hide_unselected_checkbox = QtWidgets.QCheckBox("隐藏非选中的标签")
+        self.hide_unselected_checkbox.setToolTip("勾选后，按S键隐藏除了鼠标选中之外的所有标签")
+        self.hide_mode_layout.addWidget(self.hide_selected_checkbox)
+        self.hide_mode_layout.addWidget(self.hide_unselected_checkbox)
+        self.hide_mode_group.setLayout(self.hide_mode_layout)
+
         # 重叠检测设置
         self.overlap_group = QtWidgets.QGroupBox("重叠检测")
         self.overlap_layout = QtWidgets.QVBoxLayout()
@@ -270,6 +282,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.right_column.addWidget(self.crosshair_group)
         self.right_column.addWidget(self.deselect_group)
         self.right_column.addWidget(self.invert_group)
+        self.right_column.addWidget(self.hide_mode_group)
         self.right_column.addWidget(self.overlap_group)
 
         # 右列底部添加弹簧
@@ -327,6 +340,10 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         
         self.invert_exclude_locked_checkbox.stateChanged.connect(self._on_invert_setting_changed)
         
+        # S键隐藏方式设置信号连接
+        self.hide_selected_checkbox.stateChanged.connect(self._on_hide_mode_exclusive)
+        self.hide_unselected_checkbox.stateChanged.connect(self._on_hide_mode_exclusive)
+        
         # 重叠检测设置信号连接
         self.overlap_enabled_checkbox.stateChanged.connect(self._on_overlap_setting_changed)
         self.overlap_exclude_locked_checkbox.stateChanged.connect(self._on_overlap_setting_changed)
@@ -374,6 +391,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.deselect_odd_checkbox.stateChanged.disconnect(self._on_even_odd_edited_exclusive)
             self.deselect_edited_checkbox.stateChanged.disconnect(self._on_even_odd_edited_exclusive)
             self.invert_exclude_locked_checkbox.stateChanged.disconnect(self._on_invert_setting_changed)
+            self.hide_selected_checkbox.stateChanged.disconnect(self._on_hide_mode_exclusive)
+            self.hide_unselected_checkbox.stateChanged.disconnect(self._on_hide_mode_exclusive)
             self.overlap_enabled_checkbox.stateChanged.disconnect(self._on_overlap_setting_changed)
             self.overlap_exclude_locked_checkbox.stateChanged.disconnect(self._on_overlap_setting_changed)
             self.overlap_exclude_labels_input.textChanged.disconnect(self._on_overlap_setting_changed)
@@ -426,6 +445,19 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             
             self.invert_exclude_locked_checkbox.setChecked(self._config.get("invert_exclude_locked", True))
             
+            # S键隐藏方式设置
+            hide_selected = self._config.get("hide_selected_mode", True)
+            hide_unselected = self._config.get("hide_unselected_mode", False)
+            # 确保两个选项互斥
+            if hide_selected and hide_unselected:
+                hide_unselected = False
+                self._config["hide_unselected_mode"] = False
+            elif not hide_selected and not hide_unselected:
+                hide_selected = True
+                self._config["hide_selected_mode"] = True
+            self.hide_selected_checkbox.setChecked(hide_selected)
+            self.hide_unselected_checkbox.setChecked(hide_unselected)
+            
             # 重叠检测设置
             self.overlap_enabled_checkbox.setChecked(self._config.get("overlap_detect_enabled", False))
             self.overlap_exclude_locked_checkbox.setChecked(self._config.get("overlap_exclude_locked", True))
@@ -473,6 +505,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.deselect_odd_checkbox.stateChanged.connect(self._on_even_odd_edited_exclusive)
             self.deselect_edited_checkbox.stateChanged.connect(self._on_even_odd_edited_exclusive)
             self.invert_exclude_locked_checkbox.stateChanged.connect(self._on_invert_setting_changed)
+            self.hide_selected_checkbox.stateChanged.connect(self._on_hide_mode_exclusive)
+            self.hide_unselected_checkbox.stateChanged.connect(self._on_hide_mode_exclusive)
             self.overlap_enabled_checkbox.stateChanged.connect(self._on_overlap_setting_changed)
             self.overlap_exclude_locked_checkbox.stateChanged.connect(self._on_overlap_setting_changed)
             self.overlap_exclude_labels_input.textChanged.connect(self._on_overlap_setting_changed)
@@ -560,6 +594,35 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         if self._config:
             self._config["invert_exclude_locked"] = self.invert_exclude_locked_checkbox.isChecked()
             save_config(self._config)
+
+    def _on_hide_mode_exclusive(self, state):
+        """确保隐藏选中和隐藏非选中两个选项互斥"""
+        sender = self.sender()
+        if state == QtCore.Qt.Checked:
+            if sender == self.hide_selected_checkbox:
+                self.hide_unselected_checkbox.blockSignals(True)
+                self.hide_unselected_checkbox.setChecked(False)
+                self.hide_unselected_checkbox.blockSignals(False)
+                # 立即更新配置
+                if self._config:
+                    self._config["hide_selected_mode"] = True
+                    self._config["hide_unselected_mode"] = False
+                    save_config(self._config)
+            elif sender == self.hide_unselected_checkbox:
+                self.hide_selected_checkbox.blockSignals(True)
+                self.hide_selected_checkbox.setChecked(False)
+                self.hide_selected_checkbox.blockSignals(False)
+                # 立即更新配置
+                if self._config:
+                    self._config["hide_selected_mode"] = False
+                    self._config["hide_unselected_mode"] = True
+                    save_config(self._config)
+        else:
+            # 如果取消勾选,确保至少有一个被勾选
+            if not self.hide_selected_checkbox.isChecked() and not self.hide_unselected_checkbox.isChecked():
+                sender.blockSignals(True)
+                sender.setChecked(True)
+                sender.blockSignals(False)
 
     def _on_even_odd_edited_exclusive(self, state):
         sender = self.sender()
