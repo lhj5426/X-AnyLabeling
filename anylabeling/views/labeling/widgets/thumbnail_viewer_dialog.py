@@ -931,7 +931,6 @@ class MasonryWidget(QtWidgets.QWidget):
         super().__init__(parent)
         self.items = []
         self.columns = 4
-        self._actual_columns = 4  # 实际使用的列数（自动计算）
         self.spacing = 10
         self.margin = 0  # 边距设为0，让图片完全占满窗口
         self.horizontal_mode = False  # 横向模式
@@ -956,43 +955,17 @@ class MasonryWidget(QtWidgets.QWidget):
         self.items.clear()
     
     def get_column_width(self):
-        """获取当前列宽（纵向模式）- 支持自动调整列数"""
+        """获取当前列宽（纵向模式）"""
         available_width = self.width() - 2 * self.margin
         if available_width <= 0:
             available_width = 800
         
-        # 定义每列的最小宽度（可以根据需要调整）
-        min_column_width = 150  # 最小列宽
-        max_column_width = 400  # 最大列宽
+        # 直接使用用户设置的列数,不自动调整
+        total_spacing = (self.columns - 1) * self.spacing
+        column_width = (available_width - total_spacing) // self.columns
         
-        # 根据可用宽度自动计算列数
-        # 尝试使用用户设置的列数
-        auto_columns = self.columns
-        
-        # 计算当前列数下的列宽
-        total_spacing = (auto_columns - 1) * self.spacing
-        calculated_width = (available_width - total_spacing) // auto_columns
-        
-        # 如果列宽太小，减少列数
-        while calculated_width < min_column_width and auto_columns > 1:
-            auto_columns -= 1
-            total_spacing = (auto_columns - 1) * self.spacing
-            calculated_width = (available_width - total_spacing) // auto_columns
-        
-        # 如果列宽太大，增加列数（但不超过用户设置的最大值）
-        while calculated_width > max_column_width and auto_columns < self.columns * 2:
-            auto_columns += 1
-            total_spacing = (auto_columns - 1) * self.spacing
-            calculated_width = (available_width - total_spacing) // auto_columns
-            if calculated_width < min_column_width:
-                # 如果增加后太小，回退
-                auto_columns -= 1
-                break
-        
-        # 更新实际使用的列数（用于布局）
-        self._actual_columns = auto_columns
-        total_spacing = (auto_columns - 1) * self.spacing
-        return max(50, (available_width - total_spacing) // auto_columns)
+        # 确保列宽不会太小
+        return max(50, column_width)
     
     def schedule_relayout(self, delay=50):
         """延迟布局"""
@@ -1018,8 +991,8 @@ class MasonryWidget(QtWidgets.QWidget):
         """纵向瀑布流布局（按顺序轮流分配到各列：1→列1, 2→列2, 3→列3, 4→列4, 5→列1...）"""
         col_width = self.get_column_width()
         
-        # 使用自动计算的列数
-        actual_columns = getattr(self, '_actual_columns', self.columns)
+        # 使用用户设置的列数
+        actual_columns = self.columns
         
         # 更新所有item的几何尺寸
         for item in self.items:
@@ -1050,12 +1023,8 @@ class MasonryWidget(QtWidgets.QWidget):
         if available_width <= 0:
             available_width = 800
         
+        # 直接使用用户设置的列数,不自动调整
         cols = max(1, self.columns)
-        
-        # 对于方格子模式，也根据窗口宽度自动调整列数
-        min_grid_size = 100  # 最小方格尺寸
-        max_cols = max(1, available_width // (min_grid_size + self.spacing))
-        cols = min(max_cols, cols)
         
         # 计算每张图片的宽高比
         items_data = []
@@ -1203,12 +1172,13 @@ class MasonryWidget(QtWidgets.QWidget):
             for item, ratio in row:
                 widths.append(int(row_height * ratio))
             
-            # 只有非最后一行不足时才补齐误差
+            # 只有完整行才补齐误差,最后一行不足时不补齐
             if not (is_last_row and is_incomplete):
                 if num_items > 0:
                     total_used = sum(widths) + total_spacing
                     diff = available_width - total_used
-                    if diff != 0 and widths:
+                    # 限制补齐的误差范围,避免过度拉伸
+                    if diff != 0 and widths and abs(diff) < widths[-1] * 0.1:  # 误差不超过10%
                         widths[-1] += diff
             
             # 布局这一行的图片
@@ -1307,12 +1277,13 @@ class MasonryWidget(QtWidgets.QWidget):
             for item, ratio in row:
                 widths.append(int(row_height * ratio))
             
-            # 只有非最后一行不足时才补齐误差
+            # 只有完整行才补齐误差,最后一行不足时不补齐
             if not (is_last_row and is_incomplete):
                 if num_items > 0:
                     total_used = sum(widths) + total_spacing
                     diff = available_width - total_used
-                    if diff != 0 and widths:
+                    # 限制补齐的误差范围,避免过度拉伸
+                    if diff != 0 and widths and abs(diff) < widths[-1] * 0.1:  # 误差不超过10%
                         widths[-1] += diff
             
             # 布局这一行的图片
