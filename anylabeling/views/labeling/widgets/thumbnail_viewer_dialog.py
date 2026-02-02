@@ -170,6 +170,11 @@ class ThumbnailItem(QtWidgets.QWidget):
         # 普通模式多选状态
         self.is_multi_selected = False  # Ctrl+左键多选状态
         
+        # 单击高亮状态
+        self.is_clicked = False  # 是否被单击(显示边框提示)
+        self._rainbow_hue = 0  # 彩虹色相值(0-360)
+        self._rainbow_timer = None  # 彩虹边框动画定时器
+        
         # 悬停信息显示开关
         self.show_hover_info = True  # 默认显示悬停信息
         
@@ -460,6 +465,31 @@ class ThumbnailItem(QtWidgets.QWidget):
                 painter.setBrush(Qt.NoBrush)
                 offset = border_w / 2
                 painter.drawRoundedRect(rect.adjusted(offset, offset, -offset, -offset), self.border_radius, self.border_radius)
+            elif self.is_clicked:
+                # 单击状态：彩虹色边框(红→橙→黄→绿→青→蓝→紫→白→黑)
+                border_w = 4
+                
+                if self._rainbow_hue < 360:
+                    # 0-359: 彩虹色(红→橙→黄→绿→青→蓝→紫)
+                    color = QtGui.QColor.fromHsv(self._rainbow_hue, 255, 255)
+                elif self._rainbow_hue < 405:
+                    # 360-404: 紫色渐变到白色
+                    progress = (self._rainbow_hue - 360) / 45  # 0.0 到 1.0
+                    # 从紫色(300度HSV)渐变到白色(降低饱和度)
+                    saturation = int(255 * (1 - progress))
+                    color = QtGui.QColor.fromHsv(300, saturation, 255)
+                else:
+                    # 405-449: 白色渐变到黑色
+                    progress = (self._rainbow_hue - 405) / 45  # 0.0 到 1.0
+                    # 从白色渐变到黑色(降低明度)
+                    value = int(255 * (1 - progress))
+                    color = QtGui.QColor.fromHsv(0, 0, value)
+                
+                pen = QtGui.QPen(color, border_w)
+                painter.setPen(pen)
+                painter.setBrush(Qt.NoBrush)
+                offset = border_w / 2
+                painter.drawRoundedRect(rect.adjusted(offset, offset, -offset, -offset), self.border_radius, self.border_radius)
             elif self.is_multi_selected:
                 # 普通模式多选：亮绿色边框
                 border_w = 3
@@ -628,8 +658,10 @@ class ThumbnailItem(QtWidgets.QWidget):
                 # 右键：设置为合并目标（仅在选择模式且已选中时）
                 if self.current_merge_sub_mode == 'select' and self.is_selected:
                     self.set_merge_target_requested.emit(self, self.index - 1)
-                # 阻止右键菜单弹出
-                event.accept()
+                    event.accept()
+                else:
+                    # 其他情况让事件传播到父控件，显示工具栏切换菜单
+                    event.ignore()
                 return
         else:
             # 正常模式：原有的点击处理
@@ -646,7 +678,7 @@ class ThumbnailItem(QtWidgets.QWidget):
                     if parent and hasattr(parent, 'on_normal_range_select'):
                         parent.on_normal_range_select(self, self.index - 1)
                 elif ctrl_pressed:
-                    # Ctrl+左键：多选
+                    # Ctrl+左键:多选
                     self.is_multi_selected = not self.is_multi_selected
                     # 更新图标显示
                     if self.is_multi_selected:
@@ -662,12 +694,27 @@ class ThumbnailItem(QtWidgets.QWidget):
                         parent = parent.parent()
                     if parent and hasattr(parent, 'update_multi_selection'):
                         parent.update_multi_selection()
-                    # 记录最后点击的索引（用于范围选择）
+                    # 记录最后点击的索引(用于范围选择)
                     if parent and hasattr(parent, '_last_multi_selected_index'):
                         parent._last_multi_selected_index = self.index - 1
                 else:
-                    # 普通左键：切换图片
-                    self.clicked.emit(self.image_path)
+                    # 普通左键:切换点击状态(显示/隐藏彩虹边框)
+                    if self.is_clicked:
+                        # 如果已经是点击状态,再次点击则取消
+                        self.is_clicked = False
+                        self.stop_rainbow_animation()
+                        self.update()
+                    else:
+                        # 清除其他图片的点击状态
+                        parent = self.parent()
+                        while parent and not isinstance(parent, QtWidgets.QDialog):
+                            parent = parent.parent()
+                        if parent and hasattr(parent, 'clear_all_clicked_states'):
+                            parent.clear_all_clicked_states()
+                        # 设置当前图片为点击状态并启动彩虹动画
+                        self.is_clicked = True
+                        self.start_rainbow_animation()
+                        self.update()
             elif event.button() == Qt.MiddleButton:
                 # 中键点击：切换已编辑状态（支持批量）
                 parent = self.parent()
@@ -679,6 +726,13 @@ class ThumbnailItem(QtWidgets.QWidget):
                 else:
                     # 单个切换
                     self.toggle_edited.emit(self)
+            elif event.button() == Qt.RightButton:
+                # 右键：让事件传播到父控件，显示工具栏切换菜单
+                event.ignore()
+                return
+            elif event.button() == Qt.RightButton:
+                # 右键：让事件传播到父控件，显示工具栏切换菜单
+                event.ignore()
     
     def update_merge_visual(self):
         """更新删合模式下的视觉效果"""
@@ -701,6 +755,18 @@ class ThumbnailItem(QtWidgets.QWidget):
             self.status_icon.hide()
         
         self.update()
+    
+    def mouseDoubleClickEvent(self, event):
+        """双击事件:切换到主界面对应图片"""
+        if not self.merge_mode and event.button() == Qt.LeftButton:
+            # 双击时停止彩虹动画
+            if self.is_clicked:
+                self.is_clicked = False
+                self.stop_rainbow_animation()
+            # 切换到主界面对应图片
+            self.clicked.emit(self.image_path)
+        else:
+            super().mouseDoubleClickEvent(event)
     
     def start_highlight(self):
         """开始高亮动画（闪烁3次）"""
@@ -739,6 +805,58 @@ class ThumbnailItem(QtWidgets.QWidget):
                 self._highlight_timer = None
         
         self.update()
+    
+    def start_rainbow_animation(self):
+        """开始彩虹边框动画"""
+        self._rainbow_hue = 0
+        
+        if self._rainbow_timer:
+            self._rainbow_timer.stop()
+        
+        self._rainbow_timer = QtCore.QTimer()
+        self._rainbow_timer.timeout.connect(self._update_rainbow)
+        self._rainbow_timer.start(30)  # 每30ms更新一次
+    
+    def _update_rainbow(self):
+        """更新彩虹色相 - 红→橙→黄→绿→青→蓝→紫→白→黑循环"""
+        # 检查图片是否在可见区域内,不可见则停止动画
+        if not self.isVisible():
+            # 图片不可见,停止动画
+            self.is_clicked = False
+            self.stop_rainbow_animation()
+            return
+        
+        # 检查图片是否在滚动区域的可视范围内
+        parent = self.parent()
+        if parent:
+            # 获取图片在父控件中的位置
+            item_rect = self.geometry()
+            # 查找滚动区域
+            scroll_parent = parent
+            while scroll_parent and not isinstance(scroll_parent, QtWidgets.QScrollArea):
+                scroll_parent = scroll_parent.parent()
+            
+            if scroll_parent and isinstance(scroll_parent, QtWidgets.QScrollArea):
+                viewport = scroll_parent.viewport()
+                viewport_rect = viewport.rect()
+                # 将图片坐标转换到viewport坐标系
+                item_global_pos = self.mapTo(viewport, QtCore.QPoint(0, 0))
+                item_in_viewport = QtCore.QRect(item_global_pos, self.size())
+                
+                # 如果图片完全不在可视区域内,停止动画
+                if not viewport_rect.intersects(item_in_viewport):
+                    self.is_clicked = False
+                    self.stop_rainbow_animation()
+                    return
+        
+        self._rainbow_hue = (self._rainbow_hue + 4) % 450  # 0-449循环(360彩虹+45白+45黑)
+        self.update()
+    
+    def stop_rainbow_animation(self):
+        """停止彩虹边框动画"""
+        if self._rainbow_timer:
+            self._rainbow_timer.stop()
+            self._rainbow_timer = None
     
     def contextMenuEvent(self, event):
         # 删合模式下禁用右键菜单，但不阻止事件传递
@@ -779,6 +897,16 @@ class ThumbnailItem(QtWidgets.QWidget):
             menu.addSeparator()
             delete_action = menu.addAction("删除此图片")
         
+        # 添加显示/隐藏工具栏选项
+        menu.addSeparator()
+        if parent and hasattr(parent, 'toolbar'):
+            if parent.toolbar.isVisible():
+                toolbar_action = menu.addAction("隐藏工具栏")
+            else:
+                toolbar_action = menu.addAction("显示工具栏")
+        else:
+            toolbar_action = None
+        
         action = menu.exec_(event.globalPos())
         if action == h_action:
             self.request_horizontal_viewer.emit(self.image_path)
@@ -788,6 +916,10 @@ class ThumbnailItem(QtWidgets.QWidget):
             # 删除功能
             if parent and hasattr(parent, 'delete_multi_selected'):
                 parent.delete_multi_selected()
+        elif toolbar_action and action == toolbar_action:
+            # 切换工具栏显示
+            if parent and hasattr(parent, 'toggle_toolbar'):
+                parent.toggle_toolbar()
 
 
 class MasonryWidget(QtWidgets.QWidget):
@@ -799,8 +931,9 @@ class MasonryWidget(QtWidgets.QWidget):
         super().__init__(parent)
         self.items = []
         self.columns = 4
+        self._actual_columns = 4  # 实际使用的列数（自动计算）
         self.spacing = 10
-        self.margin = 10
+        self.margin = 0  # 边距设为0，让图片完全占满窗口
         self.horizontal_mode = False  # 横向模式
         self.row_height = 200  # 横向模式的行高
         self.grid_mode = False  # 方格子模式
@@ -823,12 +956,43 @@ class MasonryWidget(QtWidgets.QWidget):
         self.items.clear()
     
     def get_column_width(self):
-        """获取当前列宽（纵向模式）"""
+        """获取当前列宽（纵向模式）- 支持自动调整列数"""
         available_width = self.width() - 2 * self.margin
         if available_width <= 0:
             available_width = 800
-        total_spacing = (self.columns - 1) * self.spacing
-        return max(50, (available_width - total_spacing) // self.columns)
+        
+        # 定义每列的最小宽度（可以根据需要调整）
+        min_column_width = 150  # 最小列宽
+        max_column_width = 400  # 最大列宽
+        
+        # 根据可用宽度自动计算列数
+        # 尝试使用用户设置的列数
+        auto_columns = self.columns
+        
+        # 计算当前列数下的列宽
+        total_spacing = (auto_columns - 1) * self.spacing
+        calculated_width = (available_width - total_spacing) // auto_columns
+        
+        # 如果列宽太小，减少列数
+        while calculated_width < min_column_width and auto_columns > 1:
+            auto_columns -= 1
+            total_spacing = (auto_columns - 1) * self.spacing
+            calculated_width = (available_width - total_spacing) // auto_columns
+        
+        # 如果列宽太大，增加列数（但不超过用户设置的最大值）
+        while calculated_width > max_column_width and auto_columns < self.columns * 2:
+            auto_columns += 1
+            total_spacing = (auto_columns - 1) * self.spacing
+            calculated_width = (available_width - total_spacing) // auto_columns
+            if calculated_width < min_column_width:
+                # 如果增加后太小，回退
+                auto_columns -= 1
+                break
+        
+        # 更新实际使用的列数（用于布局）
+        self._actual_columns = auto_columns
+        total_spacing = (auto_columns - 1) * self.spacing
+        return max(50, (available_width - total_spacing) // auto_columns)
     
     def schedule_relayout(self, delay=50):
         """延迟布局"""
@@ -854,6 +1018,9 @@ class MasonryWidget(QtWidgets.QWidget):
         """纵向瀑布流布局（按顺序轮流分配到各列：1→列1, 2→列2, 3→列3, 4→列4, 5→列1...）"""
         col_width = self.get_column_width()
         
+        # 使用自动计算的列数
+        actual_columns = getattr(self, '_actual_columns', self.columns)
+        
         # 更新所有item的几何尺寸
         for item in self.items:
             item.horizontal_mode = False
@@ -861,11 +1028,11 @@ class MasonryWidget(QtWidgets.QWidget):
             item.update_geometry_only(col_width)
         
         # 按顺序轮流分配到各列（瀑布流，但按序号顺序）
-        column_heights = [self.margin] * self.columns
+        column_heights = [self.margin] * actual_columns
         
         for idx, item in enumerate(self.items):
             # 按顺序分配到列：0,1,2,3,0,1,2,3...
-            col = idx % self.columns
+            col = idx % actual_columns
             x = self.margin + col * (col_width + self.spacing)
             y = column_heights[col]
             
@@ -884,6 +1051,11 @@ class MasonryWidget(QtWidgets.QWidget):
             available_width = 800
         
         cols = max(1, self.columns)
+        
+        # 对于方格子模式，也根据窗口宽度自动调整列数
+        min_grid_size = 100  # 最小方格尺寸
+        max_cols = max(1, available_width // (min_grid_size + self.spacing))
+        cols = min(max_cols, cols)
         
         # 计算每张图片的宽高比
         items_data = []
@@ -1169,6 +1341,26 @@ class MasonryWidget(QtWidgets.QWidget):
         self.schedule_relayout(100)
         # 发出大小变化信号
         self.resized.emit()
+    
+    def contextMenuEvent(self, event):
+        """右键菜单 - 在缩略图区域"""
+        # 获取父对话框
+        parent_dialog = self.parent()
+        while parent_dialog and not isinstance(parent_dialog, MasonryThumbnailDialog):
+            parent_dialog = parent_dialog.parent()
+        
+        if parent_dialog:
+            menu = QtWidgets.QMenu(self)
+            
+            # 添加显示/隐藏工具栏选项
+            if parent_dialog.toolbar.isVisible():
+                toggle_action = menu.addAction("隐藏工具栏")
+            else:
+                toggle_action = menu.addAction("显示工具栏")
+            toggle_action.triggered.connect(parent_dialog.toggle_toolbar)
+            
+            menu.exec_(event.globalPos())
+        self.resized.emit()
 
 
 class MasonryThumbnailDialog(QtWidgets.QDialog):
@@ -1188,6 +1380,12 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # 设置焦点策略，确保能接收键盘事件
         self.setFocusPolicy(Qt.StrongFocus)
+        
+        # 启用拖放功能
+        self.setAcceptDrops(True)
+        
+        # 设置最小尺寸，允许窗口缩小到很小
+        self.setMinimumSize(300, 200)
         
         self.image_list = image_list
         self.current_filename = current_filename
@@ -1302,8 +1500,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        toolbar = self.create_toolbar()
-        main_layout.addWidget(toolbar)
+        self.toolbar = self.create_toolbar()  # 保存工具栏引用
+        main_layout.addWidget(self.toolbar)
         
         self.scroll_area = QtWidgets.QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -1317,6 +1515,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             QScrollBar::handle:vertical { background: #666; min-height: 20px; border-radius: 5px; margin: 2px; }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """)
+        
+        # 连接滚动条信号，更新标题显示当前位置
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self.update_title_with_position)
         
         self.masonry_widget = MasonryWidget()
         self.masonry_widget.setStyleSheet("background-color: #1e1e1e;")
@@ -1356,7 +1557,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         layout.setSpacing(10)
         
         # 列距
-        layout.addWidget(QtWidgets.QLabel("列距:"))
+        self.spacing_label_text = QtWidgets.QLabel("列距:")
+        layout.addWidget(self.spacing_label_text)
         self.spacing_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.spacing_slider.setRange(0, 40)
         self.spacing_slider.setValue(self.spacing)
@@ -1370,7 +1572,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self._add_sep(layout)
         
         # 圆角
-        layout.addWidget(QtWidgets.QLabel("圆角:"))
+        self.radius_label_text = QtWidgets.QLabel("圆角:")
+        layout.addWidget(self.radius_label_text)
         self.radius_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.radius_slider.setRange(0, 40)
         self.radius_slider.setValue(self.border_radius)
@@ -1384,7 +1587,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self._add_sep(layout)
         
         # 边框
-        layout.addWidget(QtWidgets.QLabel("边框:"))
+        self.border_label_text = QtWidgets.QLabel("边框:")
+        layout.addWidget(self.border_label_text)
         self.border_slider = QtWidgets.QSlider(Qt.Horizontal)
         self.border_slider.setRange(0, 10)
         self.border_slider.setValue(self.border_width)
@@ -1398,7 +1602,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self._add_sep(layout)
         
         # 列数（纵向模式）
-        layout.addWidget(QtWidgets.QLabel("列数:"))
+        self.columns_label_text = QtWidgets.QLabel("列数:")
+        layout.addWidget(self.columns_label_text)
         self.mode_btn = QtWidgets.QPushButton("纵向")
         self.mode_btn.setFixedWidth(40)
         self.mode_btn.setStyleSheet("""
@@ -1421,7 +1626,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         self._add_sep(layout)
         # 高度（横向模式）
-        layout.addWidget(QtWidgets.QLabel("高度:"))
+        self.height_label_text = QtWidgets.QLabel("高度:")
+        layout.addWidget(self.height_label_text)
         self.height_mode_btn = QtWidgets.QPushButton("横向")
         self.height_mode_btn.setFixedWidth(40)
         if self.horizontal_mode:
@@ -1700,6 +1906,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.load_timer = QtCore.QTimer()
         self.load_timer.timeout.connect(self.load_next_batch)
         self.load_timer.start(30)
+        
+        # 初始化标题显示
+        self.update_title_with_position()
     
     def scroll_to_image(self, filename):
         """滚动到指定图片并高亮显示"""
@@ -1926,6 +2135,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.masonry_widget.schedule_relayout(0)
         self._resize_reload_timer.start(300)
         self.save_masonry_settings()
+        # 延迟更新标题以确保布局完成
+        QtCore.QTimer.singleShot(350, self.update_title_with_position)
     
     def toggle_hover_info(self):
         """切换悬停信息显示"""
@@ -2547,6 +2758,14 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         # 更新已编辑统计
         self.update_edited_count()
     
+    def clear_all_clicked_states(self):
+        """清除所有图片的单击状态"""
+        for item in self.masonry_widget.items:
+            if item.is_clicked:
+                item.is_clicked = False
+                item.stop_rainbow_animation()
+                item.update()
+    
     def update_edited_count(self):
         """更新已编辑统计标签"""
         edited_count = sum(1 for item in self.masonry_widget.items if item.is_manually_edited)
@@ -2679,6 +2898,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.masonry_widget.schedule_relayout(0)
         self._resize_reload_timer.start(300)
         self.save_masonry_settings()
+        # 延迟更新标题以确保布局完成
+        QtCore.QTimer.singleShot(350, self.update_title_with_position)
     
     def set_horizontal_mode(self):
         """设置为横向模式"""
@@ -2704,6 +2925,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.masonry_widget.schedule_relayout(0)
         self._resize_reload_timer.start(300)
         self.save_masonry_settings()
+        # 延迟更新标题以确保布局完成
+        QtCore.QTimer.singleShot(350, self.update_title_with_position)
 
     def _remove_main_window_shortcuts(self):
         """移除主窗口的W/A/D快捷键"""
@@ -2955,6 +3178,10 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.create_thumbnail_items()
         self.start_loading()
         
+        # 重置滚动位置到顶部
+        if hasattr(self, 'scroll_area') and self.scroll_area is not None:
+            self.scroll_area.verticalScrollBar().setValue(0)
+        
         # 如果处于删合模式，重新应用鼠标指针
         if self.merge_mode:
             self._apply_background_cursor()
@@ -2982,6 +3209,132 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         super().closeEvent(event)
     
+    def toggle_toolbar(self):
+        """切换工具栏显示/隐藏"""
+        if self.toolbar.isVisible():
+            self.toolbar.hide()
+        else:
+            self.toolbar.show()
+    
+    def toggle_fullscreen(self):
+        """切换全屏模式"""
+        if self.isFullScreen():
+            # 退出全屏
+            self.showNormal()
+            # 恢复最大化状态（如果之前是最大化的）
+            if hasattr(self, '_was_maximized') and self._was_maximized:
+                self.showMaximized()
+        else:
+            # 进入全屏前记录是否是最大化状态
+            self._was_maximized = self.isMaximized()
+            self.showFullScreen()
+    
+    def update_title_with_position(self):
+        """更新窗口标题，显示当前完全可见的最后一张图片序号"""
+        if not self.masonry_widget.items:
+            self.setWindowTitle("瀑布流缩略图")
+            return
+        
+        # 获取滚动区域的可见范围
+        scroll_value = self.scroll_area.verticalScrollBar().value()
+        viewport_height = self.scroll_area.viewport().height()
+        visible_bottom = scroll_value + viewport_height
+        
+        # 找到最后一张完全可见的图片
+        last_visible_index = 0
+        for i, item in enumerate(self.masonry_widget.items):
+            item_top = item.y()
+            item_bottom = item.y() + item.height()
+            
+            # 图片必须完全在可见区域内：顶部和底部都要在可见范围内
+            if item_top >= scroll_value and item_bottom <= visible_bottom:
+                last_visible_index = i
+            elif item_bottom > visible_bottom:
+                # 图片底部超出可见区域，停止查找
+                break
+        
+        # 更新标题：显示 "序号/总数"
+        current_num = last_visible_index + 1  # 从1开始计数
+        total_num = len(self.masonry_widget.items)
+        self.setWindowTitle(f"瀑布流缩略图 - {current_num}/{total_num}")
+    
+    def dragEnterEvent(self, event):
+        """拖拽进入事件"""
+        if event.mimeData().hasUrls():
+            items = [i.toLocalFile() for i in event.mimeData().urls()]
+            # 获取支持的图片格式
+            extensions = [
+                f".{fmt.data().decode().lower()}"
+                for fmt in QtGui.QImageReader.supportedImageFormats()
+            ]
+            # 接受文件夹或图片文件的拖放
+            if any(os.path.isdir(i) or i.lower().endswith(tuple(extensions)) for i in items):
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event):
+        """拖放事件"""
+        if not self.labeling_widget:
+            event.ignore()
+            return
+        
+        items = [i.toLocalFile() for i in event.mimeData().urls()]
+        
+        # 检查是否有文件夹被拖放
+        folders = [i for i in items if os.path.isdir(i)]
+        if folders:
+            # 如果拖放了文件夹，通知主窗口打开第一个文件夹
+            folder_path = folders[0]
+            # 获取主窗口的递归加载设置
+            recursive = False
+            if hasattr(self.labeling_widget, '_config'):
+                recursive = self.labeling_widget._config.get("load_subfolders", False)
+            
+            # 调用主窗口的import_image_folder方法
+            if hasattr(self.labeling_widget, 'import_image_folder'):
+                self.labeling_widget.import_image_folder(folder_path, recursive=recursive)
+                event.accept()
+            else:
+                event.ignore()
+            return
+        
+        # 检查是否有图片文件被拖放
+        extensions = [
+            f".{fmt.data().decode().lower()}"
+            for fmt in QtGui.QImageReader.supportedImageFormats()
+        ]
+        image_files = [i for i in items if i.lower().endswith(tuple(extensions))]
+        if image_files:
+            # 取第一个图片文件，打开其所在文件夹
+            first_image = image_files[0]
+            folder_path = os.path.dirname(first_image)
+            # 获取主窗口的递归加载设置
+            recursive = False
+            if hasattr(self.labeling_widget, '_config'):
+                recursive = self.labeling_widget._config.get("load_subfolders", False)
+            
+            # 调用主窗口的import_image_folder方法
+            if hasattr(self.labeling_widget, 'import_image_folder'):
+                self.labeling_widget.import_image_folder(folder_path, recursive=recursive)
+                # 加载完文件夹后，定位到拖放的图片
+                # 使用延迟调用，确保文件夹加载完成
+                QtCore.QTimer.singleShot(100, lambda: self._load_dropped_image(first_image))
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.ignore()
+    
+    def _load_dropped_image(self, image_path):
+        """加载拖放的图片（延迟调用）"""
+        if self.labeling_widget and hasattr(self.labeling_widget, 'load_file'):
+            # 检查图片是否在文件列表中
+            if hasattr(self.labeling_widget, 'fn_to_index') and image_path in self.labeling_widget.fn_to_index:
+                self.labeling_widget.load_file(image_path)
+    
     def keyPressEvent(self, event):
         """处理键盘事件"""
         # 如果有模态子窗口，完全不处理键盘事件，让事件传递给模态窗口
@@ -2991,6 +3344,12 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         key = event.key()
         modifiers = event.modifiers()
+        
+        # F11键：切换全屏（不分模式，全局快捷键）
+        if key == Qt.Key_F11:
+            self.toggle_fullscreen()
+            event.accept()
+            return
         
         if not self.merge_mode:
             # 非删合模式下的快捷键处理
