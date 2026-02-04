@@ -81,6 +81,7 @@ class Shape:
     locked_show_point = False  # 锁定后显示点
     locked_show_square = False  # 锁定后显示块
     locked_show_crosshair = False  # 锁定后显示内十字
+    locked_show_safety_border = False  # 锁定后显示安全边界
     locked_labels = set()  # 锁定的标签集合
     lock_difficult = False  # 锁定困难标记
     # Base line width
@@ -90,6 +91,14 @@ class Shape:
     select_line_width = None
     canvas_select_line_width = None
     canvas_hover_line_width = None
+    # Safety border settings (global)
+    safety_border_show_vertical = False
+    safety_border_show_horizontal = False
+    safety_border_distance = 3
+    safety_border_show_vertical_highlight = True
+    safety_border_show_horizontal_highlight = True
+    safety_border_show_vertical_normal = False
+    safety_border_show_horizontal_normal = False
 
     def __init__(
         self,
@@ -145,6 +154,9 @@ class Shape:
         self._crosshair_color_highlight = None  # 高亮时内十字颜色
         self._crosshair_color_normal = None  # 非高亮时内十字颜色
         self._crosshair_width = None  # 内十字线条粗细
+        
+        # 标签独立安全边界设置（None表示使用全局设置）
+        self._safety_border_settings = None  # 安全边界设置字典
 
         # Rotation setting
         self.direction = direction
@@ -618,9 +630,6 @@ class Shape:
                             self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
-                    
-                    # 在绘制完边框和控制柄后，绘制内十字线
-                    self.draw_crosshair_in_rectangle(painter)
             elif self.shape_type == "rotation":
                 # Allow 1, 2, or 4 points; if invalid, treat as polygon
                 if len(self.points) not in [1, 2, 4]:
@@ -648,9 +657,6 @@ class Shape:
                             self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
-                    
-                    # 在绘制完边框和控制柄后，绘制内十字线
-                    self.draw_crosshair_in_rectangle(painter)
             elif self.shape_type == "rotation3":
                 # Same as rotation for rendering
                 if len(self.points) not in [1, 2, 4]:
@@ -678,9 +684,6 @@ class Shape:
                             self.draw_edge_midpoint(vrtx_path, midpoint, i + 4)
                     if self.is_closed() or self.label is not None:
                         line_path.lineTo(self.points[0])
-                    
-                    # 在绘制完边框和控制柄后，绘制内十字线
-                    self.draw_crosshair_in_rectangle(painter)
             elif self.shape_type == "circle":
                 assert len(self.points) in [1, 2]
                 if len(self.points) == 2:
@@ -739,6 +742,12 @@ class Shape:
             painter.drawPath(vrtx_path)
             if self._vertex_fill_color is not None:
                 painter.fillPath(vrtx_path, self._vertex_fill_color)
+            
+            # 在绘制完边框和控制柄后，绘制内十字线和安全边界
+            # 这样它们会显示在最上层，不会被填充色覆盖
+            if self.shape_type in ["rectangle", "rotation", "rotation3"] and len(self.points) == 4:
+                self.draw_crosshair_in_rectangle(painter)
+                self.draw_safety_border(painter)
 
     def draw_vertex(self, path, i, show_difficult=False):
         """Draw a vertex"""
@@ -921,6 +930,131 @@ class Shape:
         
         # 从左边中点到中心
         painter.drawLine(midpoints[3], center)
+        
+        # 恢复原来的画笔
+        painter.setPen(old_pen)
+
+    def draw_safety_border(self, painter):
+        """绘制安全边界 - 在矩形边框外侧绘制回字形边界（单一颜色）
+        
+        Args:
+            painter: QPainter对象
+        """
+        if len(self.points) != 4:
+            return
+        
+        # 检查是否是锁定的标签
+        if self.is_label_locked():
+            # 锁定的标签：根据locked_show_safety_border设置决定
+            if not Shape.locked_show_safety_border:
+                return
+        
+        # 检查是否启用安全边界（使用类变量，不调用 get_config）
+        show_vertical = Shape.safety_border_show_vertical
+        show_horizontal = Shape.safety_border_show_horizontal
+        
+        if not show_vertical and not show_horizontal:
+            return
+        
+        # 获取安全边界距离（使用类变量）
+        distance = Shape.safety_border_distance
+        
+        # 判断是否处于高亮状态
+        if Shape.handle_detect_chaotic:
+            is_highlighted = Shape.highlighting_enabled and self.fill
+        else:
+            is_highlighted = Shape.highlighting_enabled
+        
+        # 根据高亮状态确定是否显示垂直/水平边界（使用类变量）
+        if is_highlighted:
+            show_v_now = Shape.safety_border_show_vertical_highlight
+            show_h_now = Shape.safety_border_show_horizontal_highlight
+        else:
+            show_v_now = Shape.safety_border_show_vertical_normal
+            show_h_now = Shape.safety_border_show_horizontal_normal
+        
+        # 如果当前状态下不显示任何边界，直接返回
+        if not show_v_now and not show_h_now:
+            return
+        
+        # 保存当前画笔
+        old_pen = painter.pen()
+        
+        # 获取标签独立的安全边界设置（如果有）
+        label_safety_settings = self._safety_border_settings
+        
+        # 获取颜色、透明度和宽度（单一设置，不分垂直/水平）
+        if label_safety_settings:
+            color_hex = label_safety_settings.get('color_highlight' if is_highlighted else 'color_normal', '#FF0000')
+            width = label_safety_settings.get('width', 2.0)
+            opacity = label_safety_settings.get('opacity_highlight' if is_highlighted else 'opacity_normal', 255)
+        else:
+            # 使用全局默认值
+            color_hex = '#FF0000'
+            width = 2.0
+            opacity = 255 if is_highlighted else 128
+        
+        # 设置画笔
+        color = QtGui.QColor(color_hex)
+        color.setAlpha(opacity)
+        pen = QtGui.QPen(color)
+        pen.setWidth(max(1, int(round(width / self.scale))))
+        pen.setStyle(QtCore.Qt.SolidLine)
+        painter.setPen(pen)
+        
+        # 计算矩形的4个角点（按顺时针顺序）
+        p0, p1, p2, p3 = self.points[0], self.points[1], self.points[2], self.points[3]
+        
+        # 计算每条边的向外法向量（单位向量）
+        def get_outward_normal(p_start, p_end):
+            """计算边的向外法向量"""
+            dx = p_end.x() - p_start.x()
+            dy = p_end.y() - p_start.y()
+            length = math.sqrt(dx * dx + dy * dy)
+            if length == 0:
+                return QtCore.QPointF(0, 0)
+            # 法向量（逆时针旋转90度）
+            nx = -dy / length
+            ny = dx / length
+            return QtCore.QPointF(nx, ny)
+        
+        # 计算4条边的向外法向量
+        normal_01 = get_outward_normal(p0, p1)  # 上边
+        normal_12 = get_outward_normal(p1, p2)  # 右边
+        normal_23 = get_outward_normal(p2, p3)  # 下边
+        normal_30 = get_outward_normal(p3, p0)  # 左边
+        
+        # 计算安全边界的4个角点（向外偏移distance像素）
+        offset_p0 = QtCore.QPointF(
+            p0.x() + (normal_01.x() + normal_30.x()) * distance,
+            p0.y() + (normal_01.y() + normal_30.y()) * distance
+        )
+        offset_p1 = QtCore.QPointF(
+            p1.x() + (normal_01.x() + normal_12.x()) * distance,
+            p1.y() + (normal_01.y() + normal_12.y()) * distance
+        )
+        offset_p2 = QtCore.QPointF(
+            p2.x() + (normal_12.x() + normal_23.x()) * distance,
+            p2.y() + (normal_12.y() + normal_23.y()) * distance
+        )
+        offset_p3 = QtCore.QPointF(
+            p3.x() + (normal_23.x() + normal_30.x()) * distance,
+            p3.y() + (normal_23.y() + normal_30.y()) * distance
+        )
+        
+        # 绘制垂直边界（左右两条）
+        if show_vertical and show_v_now:
+            # 左边垂直线
+            painter.drawLine(offset_p0, offset_p3)
+            # 右边垂直线
+            painter.drawLine(offset_p1, offset_p2)
+        
+        # 绘制水平边界（上下两条）
+        if show_horizontal and show_h_now:
+            # 上边水平线
+            painter.drawLine(offset_p0, offset_p1)
+            # 下边水平线
+            painter.drawLine(offset_p3, offset_p2)
         
         # 恢复原来的画笔
         painter.setPen(old_pen)

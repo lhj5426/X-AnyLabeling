@@ -167,14 +167,15 @@ def _check_filename_exist(self):
     return True
 
 
-def _filter_images_by_labels(image_list, label_dir_path, filter_config):
+def _filter_images_by_labels(image_list, label_dir_path, filter_config, parent_widget=None):
     """
     根据标签筛选配置过滤图片列表
 
     Args:
         image_list: 图片文件路径列表
-        label_dir_path: 标签文件目录
+        label_dir_path: 标签文件目录（可能不使用，改为从图片路径推导）
         filter_config: 筛选配置字典，包含 enabled, mode, match_condition, labels
+        parent_widget: 父窗口对象，用于获取output_dir和last_open_dir
 
     Returns:
         过滤后的图片列表
@@ -190,7 +191,17 @@ def _filter_images_by_labels(image_list, label_dir_path, filter_config):
     for image_file in image_list:
         image_file_name = osp.basename(image_file)
         label_file_name = osp.splitext(image_file_name)[0] + ".json"
-        label_file = osp.join(label_dir_path, label_file_name)
+        
+        # 修复：根据图片的实际路径找对应的JSON文件
+        image_dir = osp.dirname(image_file)
+        if parent_widget and hasattr(parent_widget, 'output_dir') and parent_widget.output_dir:
+            if hasattr(parent_widget, 'last_open_dir') and parent_widget.last_open_dir:
+                rel_path = osp.relpath(image_dir, parent_widget.last_open_dir)
+                label_file = osp.join(parent_widget.output_dir, rel_path, label_file_name)
+            else:
+                label_file = osp.join(parent_widget.output_dir, label_file_name)
+        else:
+            label_file = osp.join(image_dir, label_file_name)
 
         if not osp.exists(label_file):
             # 如果标签文件不存在，根据模式决定是否包含
@@ -600,7 +611,17 @@ def export_yolo_annotation(self, mode):
         for image_file in image_list:
             image_file_name = osp.basename(image_file)
             label_file_name = osp.splitext(image_file_name)[0] + ".json"
-            src_file = osp.join(label_dir_path, label_file_name)
+            
+            # 修复：根据图片的实际路径找对应的JSON文件
+            image_dir = osp.dirname(image_file)
+            if self.output_dir:
+                if hasattr(self, 'last_open_dir') and self.last_open_dir:
+                    rel_path = osp.relpath(image_dir, self.last_open_dir)
+                    src_file = osp.join(self.output_dir, rel_path, label_file_name)
+                else:
+                    src_file = osp.join(self.output_dir, label_file_name)
+            else:
+                src_file = osp.join(image_dir, label_file_name)
 
             if osp.exists(src_file):
                 try:
@@ -614,7 +635,7 @@ def export_yolo_annotation(self, mode):
 
     # Filter by labels if advanced filter is enabled
     if filter_config['enabled']:
-        image_list = _filter_images_by_labels(image_list, label_dir_path, filter_config)
+        image_list = _filter_images_by_labels(image_list, label_dir_path, filter_config, self)
         if not image_list:
             popup = Popup(
                 self.tr("没有图片符合筛选条件！"),
@@ -641,7 +662,21 @@ def export_yolo_annotation(self, mode):
             label_file_name = osp.splitext(image_file_name)[0] + ".json"
             dst_file_name = osp.splitext(image_file_name)[0] + ".txt"
 
-            src_file = osp.join(label_dir_path, label_file_name)
+            # 修复：根据图片的实际路径找对应的JSON文件
+            # 如果图片在子文件夹中，JSON文件也应该在同一个子文件夹中
+            image_dir = osp.dirname(image_file)
+            if self.output_dir:
+                # 如果设置了output_dir，JSON文件在output_dir的对应子目录中
+                # 计算图片相对于根目录的路径
+                if hasattr(self, 'last_open_dir') and self.last_open_dir:
+                    rel_path = osp.relpath(image_dir, self.last_open_dir)
+                    src_file = osp.join(self.output_dir, rel_path, label_file_name)
+                else:
+                    src_file = osp.join(self.output_dir, label_file_name)
+            else:
+                # 没有output_dir，JSON文件就在图片同目录
+                src_file = osp.join(image_dir, label_file_name)
+            
             dst_file = osp.join(save_path, dst_file_name)
 
             is_empty_file = converter.custom_to_yolo(
@@ -854,7 +889,7 @@ def export_voc_annotation(self, mode):
 
     # Filter by labels if advanced filter is enabled
     if filter_config['enabled']:
-        image_list = _filter_images_by_labels(image_list, label_dir_path, filter_config)
+        image_list = _filter_images_by_labels(image_list, label_dir_path, filter_config, self)
         if not image_list:
             popup = Popup(
                 self.tr("没有图片符合筛选条件！"),
@@ -881,7 +916,17 @@ def export_voc_annotation(self, mode):
             label_file_name = osp.splitext(image_file_name)[0] + ".json"
             dst_file_name = osp.splitext(image_file_name)[0] + ".xml"
 
-            src_file = osp.join(label_dir_path, label_file_name)
+            # 修复：根据图片的实际路径找对应的JSON文件
+            image_dir = osp.dirname(image_file)
+            if self.output_dir:
+                if hasattr(self, 'last_open_dir') and self.last_open_dir:
+                    rel_path = osp.relpath(image_dir, self.last_open_dir)
+                    src_file = osp.join(self.output_dir, rel_path, label_file_name)
+                else:
+                    src_file = osp.join(self.output_dir, label_file_name)
+            else:
+                src_file = osp.join(image_dir, label_file_name)
+            
             dst_file = osp.join(save_path, dst_file_name)
 
             is_empty_file = converter.custom_to_voc(
@@ -1278,7 +1323,17 @@ def export_dota_annotation(self):
             label_file_name = osp.splitext(image_file_name)[0] + ".json"
             dst_file_name = osp.splitext(image_file_name)[0] + ".txt"
 
-            src_file = osp.join(label_dir_path, label_file_name)
+            # 修复：根据图片的实际路径找对应的JSON文件
+            image_dir = osp.dirname(image_file)
+            if self.output_dir:
+                if hasattr(self, 'last_open_dir') and self.last_open_dir:
+                    rel_path = osp.relpath(image_dir, self.last_open_dir)
+                    src_file = osp.join(self.output_dir, rel_path, label_file_name)
+                else:
+                    src_file = osp.join(self.output_dir, label_file_name)
+            else:
+                src_file = osp.join(image_dir, label_file_name)
+            
             dst_file = osp.join(save_path, dst_file_name)
 
             if not osp.exists(src_file):
@@ -1449,7 +1504,17 @@ def export_mask_annotation(self):
             label_file_name = osp.splitext(image_file_name)[0] + ".json"
             dst_file_name = osp.splitext(image_file_name)[0] + ".png"
 
-            src_file = osp.join(label_dir_path, label_file_name)
+            # 修复：根据图片的实际路径找对应的JSON文件
+            image_dir = osp.dirname(image_file)
+            if self.output_dir:
+                if hasattr(self, 'last_open_dir') and self.last_open_dir:
+                    rel_path = osp.relpath(image_dir, self.last_open_dir)
+                    src_file = osp.join(self.output_dir, rel_path, label_file_name)
+                else:
+                    src_file = osp.join(self.output_dir, label_file_name)
+            else:
+                src_file = osp.join(image_dir, label_file_name)
+            
             dst_file = osp.join(save_path, dst_file_name)
 
             if not osp.exists(src_file):

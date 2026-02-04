@@ -27,6 +27,9 @@ def scan_all_images(folder_path, recursive=True):
 
         if recursive:
             for root, _, files in os.walk(folder_path):
+                # 跳过 _delete_ 和 labels 文件夹
+                if "_delete_" in root or "\\labels" in root or "/labels" in root:
+                    continue
                 for file in files:
                     if file.lower().endswith(tuple(extensions)):
                         relative_path = osp.normpath(osp.join(root, file))

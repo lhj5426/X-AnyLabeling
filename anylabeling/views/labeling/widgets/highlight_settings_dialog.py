@@ -54,26 +54,28 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_difficult_checkbox.setToolTip("启用后，所有标记为困难（difficult: true）的标注都会被锁定")
         self.lock_highlight_checkbox = QtWidgets.QCheckBox("锁定后仍可高亮")
         self.lock_highlight_checkbox.setToolTip("启用后，锁定的标签也能参与高亮/反向高亮功能")
-        self.lock_hide_info_checkbox = QtWidgets.QCheckBox("锁定后不显示宽高和角度")
-        self.lock_hide_info_checkbox.setToolTip("启用后，锁定的标签不显示宽高和旋转角度信息")
-        self.lock_hide_order_checkbox = QtWidgets.QCheckBox("锁定后不显示序号")
-        self.lock_hide_order_checkbox.setToolTip("启用后，锁定的标签不参与序号排序和显示")
-        self.lock_hide_order_checkbox.setChecked(True)
+        self.lock_show_info_checkbox = QtWidgets.QCheckBox("锁定后显示宽高和角度")
+        self.lock_show_info_checkbox.setToolTip("启用后，锁定的标签显示宽高和旋转角度信息")
+        self.lock_show_order_checkbox = QtWidgets.QCheckBox("锁定后显示序号")
+        self.lock_show_order_checkbox.setToolTip("启用后，锁定的标签参与序号排序和显示")
         self.lock_show_point_checkbox = QtWidgets.QCheckBox("锁定后显示点 (圆形)")
         self.lock_show_point_checkbox.setToolTip("启用后，锁定的标签显示顶点圆形控制柄")
         self.lock_show_square_checkbox = QtWidgets.QCheckBox("锁定后显示块 (方形)")
         self.lock_show_square_checkbox.setToolTip("启用后，锁定的标签显示方形控制柄")
         self.lock_show_crosshair_checkbox = QtWidgets.QCheckBox("锁定后显示内十字")
         self.lock_show_crosshair_checkbox.setToolTip("启用后，锁定的标签显示内十字线")
+        self.lock_show_safety_border_checkbox = QtWidgets.QCheckBox("锁定后显示安全边界")
+        self.lock_show_safety_border_checkbox.setToolTip("启用后，锁定的标签显示安全边界")
         self.lock_layout.addWidget(self.lock_label)
         self.lock_layout.addWidget(self.lock_input)
         self.lock_layout.addWidget(self.lock_difficult_checkbox)
         self.lock_layout.addWidget(self.lock_highlight_checkbox)
-        self.lock_layout.addWidget(self.lock_hide_info_checkbox)
-        self.lock_layout.addWidget(self.lock_hide_order_checkbox)
+        self.lock_layout.addWidget(self.lock_show_info_checkbox)
+        self.lock_layout.addWidget(self.lock_show_order_checkbox)
         self.lock_layout.addWidget(self.lock_show_point_checkbox)
         self.lock_layout.addWidget(self.lock_show_square_checkbox)
         self.lock_layout.addWidget(self.lock_show_crosshair_checkbox)
+        self.lock_layout.addWidget(self.lock_show_safety_border_checkbox)
         self.lock_group.setLayout(self.lock_layout)
 
         # Label Pin to Top
@@ -122,6 +124,53 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.canvas_pan_layout.addWidget(self.canvas_pan_enabled_checkbox)
         self.canvas_pan_group.setLayout(self.canvas_pan_layout)
 
+        # 安全边界设置
+        self.safety_border_group = QtWidgets.QGroupBox("安全边界设置")
+        self.safety_border_layout = QtWidgets.QVBoxLayout()
+        
+        # 显示安全边界复选框
+        self.safety_border_show_vertical_checkbox = QtWidgets.QCheckBox("显示垂直边界")
+        self.safety_border_show_vertical_checkbox.setToolTip("启用后，在矩形左右两侧显示垂直安全边界")
+        self.safety_border_show_horizontal_checkbox = QtWidgets.QCheckBox("显示水平边界")
+        self.safety_border_show_horizontal_checkbox.setToolTip("启用后，在矩形上下两侧显示水平安全边界")
+        
+        # 安全边界距离设置
+        self.safety_border_distance_layout = QtWidgets.QHBoxLayout()
+        self.safety_border_distance_label = QtWidgets.QLabel("安全边界距离:")
+        self.safety_border_distance_spin = QtWidgets.QSpinBox()
+        self.safety_border_distance_spin.setRange(1, 50)
+        self.safety_border_distance_spin.setValue(3)
+        self.safety_border_distance_spin.setSuffix(" px")
+        self.safety_border_distance_spin.setToolTip("设置安全边界距离矩形边框的像素距离")
+        self.safety_border_distance_layout.addWidget(self.safety_border_distance_label)
+        self.safety_border_distance_layout.addWidget(self.safety_border_distance_spin)
+        self.safety_border_distance_layout.addStretch()
+        
+        # 高亮时显示设置
+        self.safety_border_highlight_label = QtWidgets.QLabel("高亮时:")
+        self.safety_border_show_vertical_highlight_checkbox = QtWidgets.QCheckBox("显示垂直边界")
+        self.safety_border_show_horizontal_highlight_checkbox = QtWidgets.QCheckBox("显示水平边界")
+        self.safety_border_show_vertical_highlight_checkbox.setChecked(True)
+        self.safety_border_show_horizontal_highlight_checkbox.setChecked(True)
+        
+        # 非高亮时显示设置
+        self.safety_border_normal_label = QtWidgets.QLabel("非高亮时:")
+        self.safety_border_show_vertical_normal_checkbox = QtWidgets.QCheckBox("显示垂直边界")
+        self.safety_border_show_horizontal_normal_checkbox = QtWidgets.QCheckBox("显示水平边界")
+        self.safety_border_show_vertical_normal_checkbox.setChecked(False)
+        self.safety_border_show_horizontal_normal_checkbox.setChecked(False)
+        
+        self.safety_border_layout.addWidget(self.safety_border_show_vertical_checkbox)
+        self.safety_border_layout.addWidget(self.safety_border_show_horizontal_checkbox)
+        self.safety_border_layout.addLayout(self.safety_border_distance_layout)
+        self.safety_border_layout.addWidget(self.safety_border_highlight_label)
+        self.safety_border_layout.addWidget(self.safety_border_show_vertical_highlight_checkbox)
+        self.safety_border_layout.addWidget(self.safety_border_show_horizontal_highlight_checkbox)
+        self.safety_border_layout.addWidget(self.safety_border_normal_label)
+        self.safety_border_layout.addWidget(self.safety_border_show_vertical_normal_checkbox)
+        self.safety_border_layout.addWidget(self.safety_border_show_horizontal_normal_checkbox)
+        self.safety_border_group.setLayout(self.safety_border_layout)
+
         # 添加到左列
         self.left_column.addWidget(self.positive_group)
         self.left_column.addWidget(self.negative_group)
@@ -130,6 +179,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.left_column.addWidget(self.no_highlight_group)
         self.left_column.addWidget(self.canvas_overlay_group)
         self.left_column.addWidget(self.canvas_pan_group)
+        self.left_column.addWidget(self.safety_border_group)
         self.left_column.addStretch()
 
         # ========== 右列内容 ==========
@@ -310,11 +360,12 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.lock_input.textChanged.connect(self._realtime_save_settings)
         self.lock_difficult_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.lock_highlight_checkbox.stateChanged.connect(self._realtime_save_settings)
-        self.lock_hide_info_checkbox.stateChanged.connect(self._realtime_save_settings)
-        self.lock_hide_order_checkbox.stateChanged.connect(self._realtime_save_settings)
+        self.lock_show_info_checkbox.stateChanged.connect(self._realtime_save_settings)
+        self.lock_show_order_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.lock_show_point_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
         self.lock_show_square_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
         self.lock_show_crosshair_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
+        self.lock_show_safety_border_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
         self.pin_input.textChanged.connect(self._realtime_save_settings)
         self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
         self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
@@ -357,6 +408,15 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         # 画布平移设置信号连接
         self.canvas_pan_enabled_checkbox.stateChanged.connect(self._on_canvas_pan_setting_changed)
 
+        # 安全边界设置信号连接
+        self.safety_border_show_vertical_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+        self.safety_border_show_horizontal_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+        self.safety_border_distance_spin.valueChanged.connect(self._on_safety_border_setting_changed)
+        self.safety_border_show_vertical_highlight_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+        self.safety_border_show_horizontal_highlight_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+        self.safety_border_show_vertical_normal_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+        self.safety_border_show_horizontal_normal_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+
         self.load_settings()
 
     def load_settings(self):
@@ -366,8 +426,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.lock_input.textChanged.disconnect(self._realtime_save_settings)
             self.lock_difficult_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.lock_highlight_checkbox.stateChanged.disconnect(self._realtime_save_settings)
-            self.lock_hide_info_checkbox.stateChanged.disconnect(self._realtime_save_settings)
-            self.lock_hide_order_checkbox.stateChanged.disconnect(self._realtime_save_settings)
+            self.lock_show_info_checkbox.stateChanged.disconnect(self._realtime_save_settings)
+            self.lock_show_order_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.lock_show_point_checkbox.stateChanged.disconnect(self._on_lock_handle_setting_changed)
             self.lock_show_square_checkbox.stateChanged.disconnect(self._on_lock_handle_setting_changed)
             self.lock_show_crosshair_checkbox.stateChanged.disconnect(self._on_lock_handle_setting_changed)
@@ -400,17 +460,26 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.canvas_overlay_enabled_checkbox.stateChanged.disconnect(self._on_canvas_overlay_setting_changed)
             self.canvas_overlay_position_combo.currentIndexChanged.disconnect(self._on_canvas_overlay_setting_changed)
             self.canvas_pan_enabled_checkbox.stateChanged.disconnect(self._on_canvas_pan_setting_changed)
+            self.safety_border_show_vertical_checkbox.stateChanged.disconnect(self._on_safety_border_setting_changed)
+            self.safety_border_show_horizontal_checkbox.stateChanged.disconnect(self._on_safety_border_setting_changed)
+            self.safety_border_distance_spin.valueChanged.disconnect(self._on_safety_border_setting_changed)
+            self.safety_border_show_vertical_highlight_checkbox.stateChanged.disconnect(self._on_safety_border_setting_changed)
+            self.safety_border_show_horizontal_highlight_checkbox.stateChanged.disconnect(self._on_safety_border_setting_changed)
+            self.safety_border_show_vertical_normal_checkbox.stateChanged.disconnect(self._on_safety_border_setting_changed)
+            self.safety_border_show_horizontal_normal_checkbox.stateChanged.disconnect(self._on_safety_border_setting_changed)
 
             self.positive_input.setText(self._config.get("highlight_positive", ""))
             self.negative_input.setText(self._config.get("highlight_negative", ""))
             self.lock_input.setText(self._config.get("locked_labels", ""))
             self.lock_difficult_checkbox.setChecked(self._config.get("lock_difficult", False))
             self.lock_highlight_checkbox.setChecked(self._config.get("locked_can_highlight", False))
-            self.lock_hide_info_checkbox.setChecked(self._config.get("locked_hide_info", False))
-            self.lock_hide_order_checkbox.setChecked(self._config.get("locked_hide_order", True))
+            # 反转逻辑：原来True表示隐藏，现在True表示显示
+            self.lock_show_info_checkbox.setChecked(not self._config.get("locked_hide_info", False))
+            self.lock_show_order_checkbox.setChecked(not self._config.get("locked_hide_order", True))
             self.lock_show_point_checkbox.setChecked(self._config.get("locked_show_point", False))
             self.lock_show_square_checkbox.setChecked(self._config.get("locked_show_square", False))
             self.lock_show_crosshair_checkbox.setChecked(self._config.get("locked_show_crosshair", False))
+            self.lock_show_safety_border_checkbox.setChecked(self._config.get("locked_show_safety_border", False))
             self.pin_input.setText(self._config.get("pin_labels", ""))
             self.no_highlight_input.setText(self._config.get("no_highlight_labels", ""))
             self.mixed_mode_checkbox.setChecked(self._config.get("highlight_mixed_mode", False))
@@ -475,16 +544,26 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             # 画布平移设置
             self.canvas_pan_enabled_checkbox.setChecked(self._config.get("canvas_pan_ps_style", True))
 
+            # 安全边界设置
+            self.safety_border_show_vertical_checkbox.setChecked(self._config.get("safety_border_show_vertical", False))
+            self.safety_border_show_horizontal_checkbox.setChecked(self._config.get("safety_border_show_horizontal", False))
+            self.safety_border_distance_spin.setValue(self._config.get("safety_border_distance", 3))
+            self.safety_border_show_vertical_highlight_checkbox.setChecked(self._config.get("safety_border_show_vertical_highlight", True))
+            self.safety_border_show_horizontal_highlight_checkbox.setChecked(self._config.get("safety_border_show_horizontal_highlight", True))
+            self.safety_border_show_vertical_normal_checkbox.setChecked(self._config.get("safety_border_show_vertical_normal", False))
+            self.safety_border_show_horizontal_normal_checkbox.setChecked(self._config.get("safety_border_show_horizontal_normal", False))
+
             self.positive_input.textChanged.connect(self._realtime_save_settings)
             self.negative_input.textChanged.connect(self._realtime_save_settings)
             self.lock_input.textChanged.connect(self._realtime_save_settings)
             self.lock_difficult_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.lock_highlight_checkbox.stateChanged.connect(self._realtime_save_settings)
-            self.lock_hide_info_checkbox.stateChanged.connect(self._realtime_save_settings)
-            self.lock_hide_order_checkbox.stateChanged.connect(self._realtime_save_settings)
+            self.lock_show_info_checkbox.stateChanged.connect(self._realtime_save_settings)
+            self.lock_show_order_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.lock_show_point_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
             self.lock_show_square_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
             self.lock_show_crosshair_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
+            self.lock_show_safety_border_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
             self.pin_input.textChanged.connect(self._realtime_save_settings)
             self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
@@ -514,6 +593,13 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.canvas_overlay_enabled_checkbox.stateChanged.connect(self._on_canvas_overlay_setting_changed)
             self.canvas_overlay_position_combo.currentIndexChanged.connect(self._on_canvas_overlay_setting_changed)
             self.canvas_pan_enabled_checkbox.stateChanged.connect(self._on_canvas_pan_setting_changed)
+            self.safety_border_show_vertical_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+            self.safety_border_show_horizontal_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+            self.safety_border_distance_spin.valueChanged.connect(self._on_safety_border_setting_changed)
+            self.safety_border_show_vertical_highlight_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+            self.safety_border_show_horizontal_highlight_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+            self.safety_border_show_vertical_normal_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
+            self.safety_border_show_horizontal_normal_checkbox.stateChanged.connect(self._on_safety_border_setting_changed)
 
     def _realtime_save_settings(self):
         if self._config:
@@ -522,8 +608,9 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["locked_labels"] = self.lock_input.text()
             self._config["lock_difficult"] = self.lock_difficult_checkbox.isChecked()
             self._config["locked_can_highlight"] = self.lock_highlight_checkbox.isChecked()
-            self._config["locked_hide_info"] = self.lock_hide_info_checkbox.isChecked()
-            self._config["locked_hide_order"] = self.lock_hide_order_checkbox.isChecked()
+            # 反转逻辑：UI显示"显示"，但配置保存为"隐藏"（取反）
+            self._config["locked_hide_info"] = not self.lock_show_info_checkbox.isChecked()
+            self._config["locked_hide_order"] = not self.lock_show_order_checkbox.isChecked()
             self._config["pin_labels"] = self.pin_input.text()
             self._config["no_highlight_labels"] = self.no_highlight_input.text()
             self._config["highlight_mixed_mode"] = self.mixed_mode_checkbox.isChecked()
@@ -578,6 +665,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["locked_show_point"] = self.lock_show_point_checkbox.isChecked()
             self._config["locked_show_square"] = self.lock_show_square_checkbox.isChecked()
             self._config["locked_show_crosshair"] = self.lock_show_crosshair_checkbox.isChecked()
+            self._config["locked_show_safety_border"] = self.lock_show_safety_border_checkbox.isChecked()
             save_config(self._config)
             if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
                 self.parent().apply_handle_display_settings()
@@ -676,6 +764,28 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             # Update canvas pan mode
             if self.parent() and hasattr(self.parent(), 'canvas'):
                 self.parent().canvas.set_pan_ps_style(is_enabled)
+
+    def _on_safety_border_setting_changed(self, state=None):
+        if self._config:
+            self._config["safety_border_show_vertical"] = self.safety_border_show_vertical_checkbox.isChecked()
+            self._config["safety_border_show_horizontal"] = self.safety_border_show_horizontal_checkbox.isChecked()
+            self._config["safety_border_distance"] = self.safety_border_distance_spin.value()
+            self._config["safety_border_show_vertical_highlight"] = self.safety_border_show_vertical_highlight_checkbox.isChecked()
+            self._config["safety_border_show_horizontal_highlight"] = self.safety_border_show_horizontal_highlight_checkbox.isChecked()
+            self._config["safety_border_show_vertical_normal"] = self.safety_border_show_vertical_normal_checkbox.isChecked()
+            self._config["safety_border_show_horizontal_normal"] = self.safety_border_show_horizontal_normal_checkbox.isChecked()
+            save_config(self._config)
+            # 更新 Shape 类变量
+            from anylabeling.views.labeling.shape import Shape
+            Shape.safety_border_show_vertical = self._config["safety_border_show_vertical"]
+            Shape.safety_border_show_horizontal = self._config["safety_border_show_horizontal"]
+            Shape.safety_border_distance = self._config["safety_border_distance"]
+            Shape.safety_border_show_vertical_highlight = self._config["safety_border_show_vertical_highlight"]
+            Shape.safety_border_show_horizontal_highlight = self._config["safety_border_show_horizontal_highlight"]
+            Shape.safety_border_show_vertical_normal = self._config["safety_border_show_vertical_normal"]
+            Shape.safety_border_show_horizontal_normal = self._config["safety_border_show_horizontal_normal"]
+            if self.parent() and hasattr(self.parent(), 'canvas'):
+                self.parent().canvas.update()
 
     def showEvent(self, event):
         super().showEvent(event)

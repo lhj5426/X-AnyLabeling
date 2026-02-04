@@ -479,9 +479,18 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.locked_show_point = self._config.get("locked_show_point", False)
         Shape.locked_show_square = self._config.get("locked_show_square", False)
         Shape.locked_show_crosshair = self._config.get("locked_show_crosshair", False)
+        Shape.locked_show_safety_border = self._config.get("locked_show_safety_border", False)
         Shape.lock_difficult = self._config.get("lock_difficult", False)
         locked_labels_str = self._config.get("locked_labels", "")
         Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
+        # Safety border settings
+        Shape.safety_border_show_vertical = self._config.get("safety_border_show_vertical", False)
+        Shape.safety_border_show_horizontal = self._config.get("safety_border_show_horizontal", False)
+        Shape.safety_border_distance = self._config.get("safety_border_distance", 3)
+        Shape.safety_border_show_vertical_highlight = self._config.get("safety_border_show_vertical_highlight", True)
+        Shape.safety_border_show_horizontal_highlight = self._config.get("safety_border_show_horizontal_highlight", True)
+        Shape.safety_border_show_vertical_normal = self._config.get("safety_border_show_vertical_normal", False)
+        Shape.safety_border_show_horizontal_normal = self._config.get("safety_border_show_horizontal_normal", False)
 
         # Whether we need to save or not.
         self.dirty = False
@@ -927,6 +936,13 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         self.unique_label_list.batch_change_label_crosshair.connect(
             self.batch_change_label_crosshair
+        )
+        # 连接安全边界设置信号
+        self.unique_label_list.change_label_safety_border.connect(
+            self.change_label_safety_border
+        )
+        self.unique_label_list.batch_change_label_safety_border.connect(
+            self.batch_change_label_safety_border
         )
         # 创建标签控制按钮
         self.create_label_control_buttons()
@@ -3757,19 +3773,20 @@ class LabelingWidget(QtWidgets.QWidget):
             )
             if osp.exists(label_file):
                 label_file_list = [label_file]
-        elif self.image_list and not self.output_dir and self.filename:
-            file_list = os.listdir(osp.dirname(self.filename))
-            for file_name in file_list:
-                if not file_name.endswith(".json"):
-                    continue
-                label_file_list.append(
-                    osp.join(osp.dirname(self.filename), file_name)
-                )
-        if self.output_dir:
-            for file_name in os.listdir(self.output_dir):
-                if not file_name.endswith(".json"):
-                    continue
-                label_file_list.append(osp.join(self.output_dir, file_name))
+        elif self.image_list:
+            # 遍历所有图片，根据每个图片路径构建对应的JSON路径
+            for image_path in self.image_list:
+                label_file = osp.splitext(image_path)[0] + ".json"
+                if self.output_dir:
+                    # 如果有output_dir，需要计算相对路径并在output_dir中查找
+                    if self.last_open_dir:
+                        rel_path = osp.relpath(image_path, self.last_open_dir)
+                        label_file = osp.join(self.output_dir, osp.splitext(rel_path)[0] + ".json")
+                    else:
+                        label_file = osp.join(self.output_dir, osp.basename(label_file))
+                
+                if osp.exists(label_file):
+                    label_file_list.append(label_file)
         return label_file_list
 
     def _tag_sort_label_path_for_image(self, image_path: Optional[str]) -> Optional[str]:
@@ -3988,6 +4005,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # Update expand margins dialog colors after union operation
         self._update_expand_margins_colors()
         self._update_alignment_dialog_page_range()
+        self._update_tag_sort_dialog_page_range()
 
         # Update UI state
         if self.no_shape():
@@ -4533,6 +4551,11 @@ class LabelingWidget(QtWidgets.QWidget):
         except Exception:  # noqa: BLE001
             shapes_data = []
         self.tag_sort_dialog.set_context(pixmap, shapes_data)
+        
+        # 更新当前页码到范围选择
+        current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
+        total_pages = len(self.image_list) if self.image_list else 1
+        self.tag_sort_dialog.update_page_range(current_page, total_pages)
 
         if self.tag_sort_dialog.isVisible():
             self.tag_sort_dialog.raise_()
@@ -6128,21 +6151,19 @@ class LabelingWidget(QtWidgets.QWidget):
         
         return moves
 
-    def on_apply_specified_size(self, labels, width, height, scope):
+    def on_apply_specified_size(self, labels_data, scope):
         """应用指定尺寸到指定标签的矩形
         
         Args:
-            labels: 目标标签名列表
-            width: 目标宽度（0表示不修改）
-            height: 目标高度（0表示不修改）
+            labels_data: 标签宽高字典 {label: {'width': int, 'height': int}}
             scope: 范围 - "current"(本页), "selected"(选中), "all"(全部)
         """
         if scope == "current":
-            self._apply_specified_size_current(labels, width, height)
+            self._apply_specified_size_current(labels_data)
         elif scope == "selected":
-            self._apply_specified_size_selected(labels, width, height)
+            self._apply_specified_size_selected(labels_data)
         elif scope == "all":
-            self._apply_specified_size_all(labels, width, height)
+            self._apply_specified_size_all(labels_data)
         
         # 🎯 执行指定尺寸后，自动清除边缘连接关系
         if self.canvas.edge_connections:
@@ -6150,13 +6171,13 @@ class LabelingWidget(QtWidgets.QWidget):
             if self.alignment_dialog:
                 self.alignment_dialog.log(self.tr("已自动清除边缘连接关系"))
 
-    def _apply_specified_size_current(self, labels, width, height):
+    def _apply_specified_size_current(self, labels_data):
         """应用指定尺寸到当前页面的指定标签"""
-        labels_set = set(labels)
         modified_count = 0
         for shape in self.canvas.shapes:
-            if shape.label in labels_set and shape.shape_type in ['rectangle', 'rotation']:
-                if self._resize_shape_to_size(shape, width, height):
+            if shape.label in labels_data and shape.shape_type in ['rectangle', 'rotation']:
+                size_data = labels_data[shape.label]
+                if self._resize_shape_to_size(shape, size_data['width'], size_data['height']):
                     modified_count += 1
         
         if modified_count > 0:
@@ -6168,18 +6189,18 @@ class LabelingWidget(QtWidgets.QWidget):
             if self.alignment_dialog:
                 self.alignment_dialog.log(self.tr(f"本页: 未找到匹配标签的矩形"))
 
-    def _apply_specified_size_selected(self, labels, width, height):
+    def _apply_specified_size_selected(self, labels_data):
         """应用指定尺寸到选中的指定标签"""
         if not self.canvas.selected_shapes:
             if self.alignment_dialog:
                 self.alignment_dialog.log(self.tr("没有选中的标注框"))
             return
         
-        labels_set = set(labels)
         modified_count = 0
         for shape in self.canvas.selected_shapes:
-            if shape.label in labels_set and shape.shape_type in ['rectangle', 'rotation']:
-                if self._resize_shape_to_size(shape, width, height):
+            if shape.label in labels_data and shape.shape_type in ['rectangle', 'rotation']:
+                size_data = labels_data[shape.label]
+                if self._resize_shape_to_size(shape, size_data['width'], size_data['height']):
                     modified_count += 1
         
         if modified_count > 0:
@@ -6191,8 +6212,10 @@ class LabelingWidget(QtWidgets.QWidget):
             if self.alignment_dialog:
                 self.alignment_dialog.log(self.tr(f"选中: 未找到匹配标签的矩形"))
 
-    def _apply_specified_size_all(self, labels, width, height):
+    def _apply_specified_size_all(self, labels_data):
         """应用指定尺寸到全部页面的指定标签"""
+        labels = list(labels_data.keys())
+        
         if not self.image_list:
             if self.alignment_dialog:
                 self.alignment_dialog.log(self.tr("没有加载图像列表"))
@@ -6202,21 +6225,18 @@ class LabelingWidget(QtWidgets.QWidget):
         reply = QtWidgets.QMessageBox.question(
             self,
             self.tr("确认操作"),
-            self.tr(f"确定要将 '{labels_str}' 的尺寸调整为 宽:{width} 高:{height} 吗？\n"
+            self.tr(f"确定要调整 '{labels_str}' 的尺寸吗？\n"
                     f"这将影响全部 {len(self.image_list)} 个文件，且无法撤销。"),
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No,
         )
         if reply != QtWidgets.QMessageBox.Yes:
             return
-        
-        labels_set = set(labels)
 
         total_files = len(self.image_list)
         processed_files = 0
         modified_shapes_total = 0
 
-        # 创建进度对话框
         progress = QtWidgets.QProgressDialog(
             self.tr("正在调整尺寸..."),
             self.tr("取消"),
@@ -6253,8 +6273,12 @@ class LabelingWidget(QtWidgets.QWidget):
                 modified_count = 0
 
                 for shape_dict in shapes_data:
-                    if shape_dict.get("label") not in labels_set:
+                    label = shape_dict.get("label")
+                    if label not in labels_data:
                         continue
+                    
+                    width = labels_data[label]['width']
+                    height = labels_data[label]['height']
                     
                     shape_type = shape_dict.get("shape_type")
                     if shape_type not in ['rectangle', 'rotation']:
@@ -6326,8 +6350,10 @@ class LabelingWidget(QtWidgets.QWidget):
         if self.alignment_dialog:
             self.alignment_dialog.log(self.tr(f"全部: 处理了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框"))
 
-    def on_apply_specified_size_range(self, labels, width, height, start_index, end_index):
+    def on_apply_specified_size_range(self, labels_data, start_index, end_index):
         """应用指定尺寸到指定范围的页面"""
+        labels = list(labels_data.keys())
+        
         if not self.image_list:
             if self.alignment_dialog:
                 self.alignment_dialog.log(self.tr("没有加载图像列表"))
@@ -6340,13 +6366,12 @@ class LabelingWidget(QtWidgets.QWidget):
 
         files_to_process = self.image_list[start_index:end_index + 1]
         num_files = len(files_to_process)
-        labels_set = set(labels)
         labels_str = ", ".join(labels) if len(labels) <= 3 else f"{labels[0]}等{len(labels)}个标签"
 
         reply = QtWidgets.QMessageBox.question(
             self,
             self.tr("确认操作"),
-            self.tr(f"确定要将 '{labels_str}' 的尺寸调整为 宽:{width} 高:{height} 吗？\n"
+            self.tr(f"确定要调整 '{labels_str}' 的尺寸吗？\n"
                     f"范围: 第 {start_index + 1} 到 {end_index + 1} 页，共 {num_files} 个文件，且无法撤销。"),
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
             QtWidgets.QMessageBox.No,
@@ -6393,8 +6418,12 @@ class LabelingWidget(QtWidgets.QWidget):
                 modified_count = 0
 
                 for shape_dict in shapes_data:
-                    if shape_dict.get("label") not in labels_set:
+                    label = shape_dict.get("label")
+                    if label not in labels_data:
                         continue
+                    
+                    width = labels_data[label]['width']
+                    height = labels_data[label]['height']
                     
                     shape_type = shape_dict.get("shape_type")
                     if shape_type not in ['rectangle', 'rotation']:
@@ -6466,7 +6495,6 @@ class LabelingWidget(QtWidgets.QWidget):
         if self.alignment_dialog:
             self.alignment_dialog.log(self.tr(f"范围: 处理了 {processed_files} 个文件中的 {modified_shapes_total} 个标注框"))
         
-        # 🎯 执行指定尺寸后，自动清除边缘连接关系
         if self.canvas.edge_connections:
             self.canvas.edge_connections.clear()
             if self.alignment_dialog:
@@ -6627,11 +6655,13 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.locked_show_point = self._config.get("locked_show_point", False)
         Shape.locked_show_square = self._config.get("locked_show_square", False)
         Shape.locked_show_crosshair = self._config.get("locked_show_crosshair", False)
+        Shape.locked_show_safety_border = self._config.get("locked_show_safety_border", False)
         Shape.lock_difficult = self._config.get("lock_difficult", False)
         # 更新锁定标签集合
         locked_labels_str = self._config.get("locked_labels", "")
         Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
-        self.canvas.update()
+        if hasattr(self, 'canvas'):
+            self.canvas.update()
 
     def apply_highlight_border_setting(self, is_enabled):
         """应用高亮边框颜色设置，实时生效"""
@@ -9710,6 +9740,9 @@ class LabelingWidget(QtWidgets.QWidget):
         shape._crosshair_color_highlight = self._get_crosshair_color_highlight_by_label(shape.label)
         shape._crosshair_color_normal = self._get_crosshair_color_normal_by_label(shape.label)
         shape._crosshair_width = self._get_crosshair_width_by_label(shape.label)
+        
+        # 更新独立安全边界设置
+        shape._safety_border_settings = self._get_safety_border_settings_by_label(shape.label)
 
     def _get_rgb_by_label(self, label, skip_label_info=False):
         if label in self.label_info and not skip_label_info:
@@ -9812,6 +9845,15 @@ class LabelingWidget(QtWidgets.QWidget):
             and label in self._config["label_crosshair_widths"]
         ):
             return self._config["label_crosshair_widths"][label]
+        return None
+
+    def _get_safety_border_settings_by_label(self, label):
+        """获取标签的独立安全边界设置，如果没有设置则返回None"""
+        if (
+            self._config.get("label_safety_border_settings")
+            and label in self._config["label_safety_border_settings"]
+        ):
+            return self._config["label_safety_border_settings"][label].copy()
         return None
 
     def remove_labels(self, shapes):
@@ -11572,6 +11614,125 @@ class LabelingWidget(QtWidgets.QWidget):
 
         dialog.show()
 
+    def change_label_safety_border(self, label):
+        """修改单个标签的安全边界设置"""
+        self._change_label_safety_border_settings([label])
+
+    def batch_change_label_safety_border(self, labels):
+        """批量修改标签安全边界设置"""
+        if not labels:
+            return
+        self._change_label_safety_border_settings(labels)
+
+    def _change_label_safety_border_settings(self, labels):
+        """修改标签安全边界设置的内部实现（支持实时预览）"""
+        from anylabeling.views.labeling.widgets.safety_border_settings_dialog import SafetyBorderSettingsDialog
+        
+        if not labels:
+            return
+
+        # 保存原始设置用于取消时恢复
+        original_settings = {}
+        for shape in self.canvas.shapes:
+            if shape.label in labels:
+                original_settings[id(shape)] = {
+                    'safety_border_settings': shape._safety_border_settings.copy() if shape._safety_border_settings else None,
+                }
+
+        # 获取第一个标签的当前设置作为默认值
+        first_shape = None
+        for shape in self.canvas.shapes:
+            if shape.label in labels:
+                first_shape = shape
+                break
+
+        # 默认值（单一颜色，不分垂直/水平）
+        default_settings = {
+            "color_highlight": "#FF0000",
+            "color_normal": "#FF0000",
+            "opacity_highlight": 255,
+            "opacity_normal": 128,
+            "width": 2.0,
+        }
+
+        # 如果第一个shape有设置，使用它的设置
+        if first_shape and first_shape._safety_border_settings:
+            current_settings = first_shape._safety_border_settings.copy()
+        else:
+            current_settings = default_settings.copy()
+
+        # 创建对话框（已经是非模态的）
+        label_name = labels[0] if len(labels) == 1 else f"{len(labels)}个标签"
+        dialog = SafetyBorderSettingsDialog(
+            label_name=label_name,
+            color_highlight=current_settings.get("color_highlight", "#FF0000"),
+            opacity_highlight=current_settings.get("opacity_highlight", 255),
+            color_normal=current_settings.get("color_normal", "#FF0000"),
+            opacity_normal=current_settings.get("opacity_normal", 128),
+            width=current_settings.get("width", 2.0),
+            parent=self
+        )
+
+        # 实时预览函数
+        def update_preview():
+            """实时更新画布预览"""
+            settings = dialog.get_settings()
+            for shape in self.canvas.shapes:
+                if shape.label in labels:
+                    shape._safety_border_settings = settings.copy()
+            self.canvas.update()
+
+        # 连接所有控件的信号以实现实时预览
+        dialog.color_h_button.clicked.connect(lambda: update_preview())
+        dialog.color_n_button.clicked.connect(lambda: update_preview())
+        dialog.width_spinbox.valueChanged.connect(lambda: update_preview())
+        dialog.opacity_h_spinbox.valueChanged.connect(lambda: update_preview())
+        dialog.opacity_n_spinbox.valueChanged.connect(lambda: update_preview())
+
+        accepted = [False]
+
+        def on_accept():
+            """确定按钮点击"""
+            accepted[0] = True
+            settings = dialog.get_settings()
+
+            # 更新配置
+            if "label_safety_border_settings" not in self._config or self._config["label_safety_border_settings"] is None:
+                self._config["label_safety_border_settings"] = {}
+
+            for label in labels:
+                self._config["label_safety_border_settings"][label] = settings.copy()
+
+            # 保存配置到文件
+            from anylabeling.config import save_config
+            save_config(self._config)
+            
+            self.canvas.update()
+            self.set_dirty()
+
+        def on_reject():
+            """取消按钮点击或关闭窗口"""
+            if accepted[0]:
+                return
+            # 恢复原始设置
+            for shape in self.canvas.shapes:
+                if shape.label in labels and id(shape) in original_settings:
+                    orig = original_settings[id(shape)]
+                    shape._safety_border_settings = orig['safety_border_settings'].copy() if orig['safety_border_settings'] else None
+            self.canvas.update()
+
+        def on_finished(result):
+            """对话框关闭时处理"""
+            if result == SafetyBorderSettingsDialog.Accepted:
+                on_accept()
+            else:
+                on_reject()
+
+        dialog.accepted.connect(on_accept)
+        dialog.rejected.connect(on_reject)
+
+        dialog.show()
+
     def change_label_alpha(self, label):
         """修改单个标签的透明度"""
         self._change_labels_alpha([label])
@@ -13152,6 +13313,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Update alignment dialog page range if open
         self._update_alignment_dialog_page_range()
+        
+        # Update tag sort dialog page range if open
+        self._update_tag_sort_dialog_page_range()
 
         # Update rectangle scale dialog page range if open
         self._update_rectangle_scale_page_range()
@@ -13680,6 +13844,9 @@ class LabelingWidget(QtWidgets.QWidget):
         if answer != mb.Yes:
             return
 
+        # 保存当前索引，用于删除后定位
+        current_index = self.fn_to_index.get(str(self.filename), 0)
+        
         image_file = self.get_image_file()
         if osp.exists(image_file):
             image_path, image_name = osp.split(image_file)
@@ -13689,6 +13856,7 @@ class LabelingWidget(QtWidgets.QWidget):
             shutil.move(image_file, save_file)
             logger.info(f"Image file is moved to: {osp.realpath(save_file)}")
 
+            # 移动JSON文件到_delete_文件夹，而不是删除
             label_dir_path = osp.dirname(self.filename)
             if self.output_dir:
                 label_dir_path = self.output_dir
@@ -13697,23 +13865,33 @@ class LabelingWidget(QtWidgets.QWidget):
             if not osp.exists(label_file):
                 label_file = osp.join(osp.dirname(image_file), label_name)
             if osp.exists(label_file):
-                os.remove(label_file)
-                logger.info(f"Label file is removed: {image_file}")
+                label_save_file = osp.join(save_path, label_name)
+                shutil.move(label_file, label_save_file)
+                logger.info(f"Label file is moved to: {osp.realpath(label_save_file)}")
 
-            filename = None
-            if self.filename is None:
-                filename = self.image_list[0]
-            else:
-                current_index = self.fn_to_index[str(self.filename)]
-                if current_index + 1 < len(self.image_list):
-                    filename = self.image_list[current_index + 1]
-                else:
-                    filename = self.image_list[0]
-
+            # 保存原始的last_open_dir和当前索引
+            original_last_open_dir = self.last_open_dir
+            old_list_length = len(self.image_list)
+            
             self.reset_state()
-            if osp.isfile(image_path):
-                image_path = osp.dirname(image_path)
-            self.import_image_folder(image_path)
+            
+            # 重新导入原始文件夹，而不是当前图片所在的子文件夹
+            if original_last_open_dir and osp.isdir(original_last_open_dir):
+                self.import_image_folder(original_last_open_dir)
+            elif osp.isfile(image_path):
+                self.import_image_folder(osp.dirname(image_path))
+            else:
+                self.import_image_folder(image_path)
+
+            # 删除后定位到正确的图片
+            # 如果删除的是最后一张（索引 == 旧列表长度-1），显示新的最后一张
+            # 否则显示当前索引的图片（原来的下一张）
+            if current_index >= old_list_length - 1:
+                # 删除的是最后一张，显示新的最后一张
+                filename = self.image_list[-1] if self.image_list else None
+            else:
+                # 显示当前索引的图片（原来的下一张）
+                filename = self.image_list[current_index] if current_index < len(self.image_list) else self.image_list[-1]
 
             self.filename = filename
             if self.filename:
@@ -15143,6 +15321,15 @@ class LabelingWidget(QtWidgets.QWidget):
                       for i in range(self.unique_label_list.count())]
             label_colors = {label: self._get_rgb_by_label(label) for label in labels}
             self.alignment_dialog.update_label_list(labels, label_colors)
+
+    def _update_tag_sort_dialog_page_range(self):
+        """Update page range in tag sort dialog if it's open and visible."""
+        if (hasattr(self, 'tag_sort_dialog') and
+            self.tag_sort_dialog is not None and
+            self.tag_sort_dialog.isVisible()):
+            current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
+            total_pages = len(self.image_list) if self.image_list else 1
+            self.tag_sort_dialog.update_page_range(current_page, total_pages)
 
     def _update_rectangle_scale_page_range(self):
         """Update page range in rectangle scale dialog if it's open and visible."""

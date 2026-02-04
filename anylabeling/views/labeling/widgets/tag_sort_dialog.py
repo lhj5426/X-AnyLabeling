@@ -825,11 +825,11 @@ class TagSortGuideWidget(QtWidgets.QWidget):
                 exclude_labels = parent_dialog._collect_exclude_labels()
                 exclude_set = set(exclude_labels)
 
-        # 调试信息
-        print(f"所有shapes数量: {len(self.shapes_data)}")
-        print(f"排序后shapes数量: {len(sorted_shapes)}")
-        print(f"排除标签: {list(exclude_set)}")
-        print(f"序号显示时跳过排除标签: {hide_numbers}")
+        # 调试信息（已注释，如需调试可取消注释）
+        # print(f"所有shapes数量: {len(self.shapes_data)}")
+        # print(f"排序后shapes数量: {len(sorted_shapes)}")
+        # print(f"排除标签: {list(exclude_set)}")
+        # print(f"序号显示时跳过排除标签: {hide_numbers}")
 
         # 显示序号，但跳过排除的标签
         display_order = 1
@@ -849,10 +849,10 @@ class TagSortGuideWidget(QtWidgets.QWidget):
                         break
 
             if should_skip:
-                print(f"跳过显示序号: 标签='{label}' (包含排除标签)")
+                # print(f"跳过显示序号: 标签='{label}' (包含排除标签)")
                 continue
 
-            print(f"显示序号 {display_order}: 标签='{label}'")
+            # print(f"显示序号 {display_order}: 标签='{label}'")
             self._create_simple_order_label(center, display_order, shape)
             display_order += 1
 
@@ -1374,13 +1374,17 @@ class TagSortDialog(QtWidgets.QDialog):
         self.end_spinbox.setPrefix("到: ")
 
         total_files = 0
+        current_page = 1
         if self.parent() and hasattr(self.parent(), 'file_list_widget'):
             total_files = self.parent().file_list_widget.count()
+            current_index = self.parent().file_list_widget.currentRow()
+            if current_index >= 0:
+                current_page = current_index + 1
 
         if total_files > 0:
             self.start_spinbox.setRange(1, total_files)
             self.end_spinbox.setRange(1, total_files)
-            self.start_spinbox.setValue(1)
+            self.start_spinbox.setValue(current_page)
             self.end_spinbox.setValue(total_files)
 
         range_layout.addWidget(self.start_spinbox)
@@ -1441,8 +1445,16 @@ class TagSortDialog(QtWidgets.QDialog):
         if total_files > 0:
             self.start_spinbox.setRange(1, total_files)
             self.end_spinbox.setRange(1, total_files)
-            self.start_spinbox.setValue(1)
+            self.start_spinbox.setValue(current_page)
             self.end_spinbox.setValue(total_files)
+    
+    def update_page_range(self, current_page: int, total_pages: int) -> None:
+        """更新范围选择的页码范围"""
+        if total_pages > 0:
+            self.start_spinbox.setRange(1, total_pages)
+            self.end_spinbox.setRange(1, total_pages)
+            self.start_spinbox.setValue(current_page)
+            self.end_spinbox.setValue(total_pages)
 
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:

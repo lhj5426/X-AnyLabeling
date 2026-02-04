@@ -73,10 +73,11 @@ class AlignmentDialog(QtWidgets.QDialog):
     clear_edge_connections = QtCore.pyqtSignal()  # 清除全部边缘连接信号
     clear_selected_edge_connections = QtCore.pyqtSignal()  # 清除选中矩形的边缘连接信号
     
-    # 指定尺寸信号: (标签列表, 宽度, 高度, 范围) 范围: "current", "selected", "range", "all"
-    apply_specified_size = QtCore.pyqtSignal(list, int, int, str)
-    # 指定尺寸范围信号: (标签列表, 宽度, 高度, 起始索引, 结束索引)
-    apply_specified_size_range = QtCore.pyqtSignal(list, int, int, int, int)
+    # 指定尺寸信号: (标签宽高字典, 范围) 范围: "current", "selected", "range", "all"
+    # 标签宽高字典格式: {label: {'width': int, 'height': int}}
+    apply_specified_size = QtCore.pyqtSignal(dict, str)
+    # 指定尺寸范围信号: (标签宽高字典, 起始索引, 结束索引)
+    apply_specified_size_range = QtCore.pyqtSignal(dict, int, int)
 
     select_reference = QtCore.pyqtSignal(bool)
     reset_mode = QtCore.pyqtSignal()
@@ -294,7 +295,7 @@ class AlignmentDialog(QtWidgets.QDialog):
         separator.setFrameShadow(QtWidgets.QFrame.Sunken)
         unify_layout.addWidget(separator)
 
-        # 指定尺寸区域 - 标签选择列表（带复选框）
+        # 指定尺寸区域 - 改为表格形式
         label_select_layout = QtWidgets.QHBoxLayout()
         label_select_layout.addWidget(QtWidgets.QLabel(self.tr("选择标签:")))
         
@@ -317,36 +318,29 @@ class AlignmentDialog(QtWidgets.QDialog):
         label_select_layout.addStretch()
         unify_layout.addLayout(label_select_layout)
         
-        # 标签复选框列表（至少显示5行）
-        self.size_label_list = QtWidgets.QListWidget()
-        self.size_label_list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
-        self.size_label_list.setMinimumHeight(110)  # 约5行高度
-        self.size_label_list.setMaximumHeight(150)
-        unify_layout.addWidget(self.size_label_list)
+        # 改为表格形式：复选框、标签名、宽度、高度
+        self.size_label_table = QtWidgets.QTableWidget()
+        self.size_label_table.setColumnCount(4)
+        self.size_label_table.setHorizontalHeaderLabels([self.tr("选择"), self.tr("标签"), self.tr("宽"), self.tr("高")])
+        self.size_label_table.horizontalHeader().setStretchLastSection(False)
+        self.size_label_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Fixed)
+        self.size_label_table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        self.size_label_table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Fixed)
+        self.size_label_table.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.Fixed)
+        self.size_label_table.setColumnWidth(0, 50)
+        self.size_label_table.setColumnWidth(2, 70)
+        self.size_label_table.setColumnWidth(3, 70)
+        self.size_label_table.setMinimumHeight(150)
+        self.size_label_table.setMaximumHeight(200)
+        self.size_label_table.verticalHeader().setVisible(False)
+        self.size_label_table.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        unify_layout.addWidget(self.size_label_table)
         
-        # 第一行：宽 高 从 到
+        # 范围选择行：从 到
         row1_layout = QtWidgets.QHBoxLayout()
         row1_layout.setSpacing(5)
-        row1_layout.addWidget(QtWidgets.QLabel(self.tr("宽:")))
-        self.size_width_input = QtWidgets.QSpinBox()
-        self.size_width_input.setRange(0, 9999)
-        self.size_width_input.setValue(0)
-        self.size_width_input.setSpecialValueText(self.tr("不变"))
-        self.size_width_input.setToolTip(self.tr("0表示不修改宽度"))
-        self.size_width_input.setFixedWidth(60)
-        row1_layout.addWidget(self.size_width_input)
         
-        row1_layout.addWidget(QtWidgets.QLabel(self.tr("高:")))
-        self.size_height_input = QtWidgets.QSpinBox()
-        self.size_height_input.setRange(0, 9999)
-        self.size_height_input.setValue(0)
-        self.size_height_input.setSpecialValueText(self.tr("不变"))
-        self.size_height_input.setToolTip(self.tr("0表示不修改高度"))
-        self.size_height_input.setFixedWidth(60)
-        row1_layout.addWidget(self.size_height_input)
-        
-        row1_layout.addSpacing(15)
-        row1_layout.addWidget(QtWidgets.QLabel(self.tr("从:")))
+        row1_layout.addWidget(QtWidgets.QLabel(self.tr("范围选择 从:")))
         self.size_start_spinbox = QtWidgets.QSpinBox()
         self.size_start_spinbox.setRange(1, 9999)
         self.size_start_spinbox.setValue(1)
@@ -362,7 +356,7 @@ class AlignmentDialog(QtWidgets.QDialog):
         row1_layout.addStretch()
         unify_layout.addLayout(row1_layout)
         
-        # 第二行：4个按钮（和上面的范围输入框右边对齐）
+        # 第二行：4个按钮
         row2_layout = QtWidgets.QHBoxLayout()
         row2_layout.setSpacing(8)
         
@@ -370,8 +364,6 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_apply_size_selected = QtWidgets.QPushButton(self.tr("选中"))
         self.btn_apply_size_range = QtWidgets.QPushButton(self.tr("范围"))
         self.btn_apply_size_all = QtWidgets.QPushButton(self.tr("全部"))
-        
-        # 按钮不设固定宽度，让它们自动填充
         
         apply_btn_style = """
             QPushButton {
@@ -393,9 +385,9 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_apply_size_range.setStyleSheet(range_btn_style)
         self.btn_apply_size_all.setStyleSheet(all_btn_style)
         
-        # 创建一个容器来包含4个按钮，固定总宽度和上面对齐
+        # 创建一个容器来包含4个按钮
         btn_container = QtWidgets.QWidget()
-        btn_container.setFixedWidth(365)  # 和上面的控件总宽度对齐
+        btn_container.setFixedWidth(365)
         btn_inner_layout = QtWidgets.QHBoxLayout(btn_container)
         btn_inner_layout.setContentsMargins(0, 0, 0, 0)
         btn_inner_layout.setSpacing(8)
@@ -564,23 +556,54 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_apply_size_all.clicked.connect(lambda: self._emit_apply_size("all"))
 
     def _get_selected_labels(self):
-        """获取选中的标签列表"""
+        """获取选中的标签列表（仅标签名，用于保存状态）"""
         labels = []
-        for i in range(self.size_label_list.count()):
-            item = self.size_label_list.item(i)
-            if item.checkState() == QtCore.Qt.Checked:
-                labels.append(item.data(QtCore.Qt.UserRole))
+        for row in range(self.size_label_table.rowCount()):
+            checkbox_widget = self.size_label_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QtWidgets.QCheckBox)
+                if checkbox and checkbox.isChecked():
+                    label_item = self.size_label_table.item(row, 1)
+                    if label_item:
+                        labels.append(label_item.text())
         return labels
+    
+    def _get_selected_labels_with_size(self):
+        """获取选中的标签及其宽高设置"""
+        labels_data = {}
+        for row in range(self.size_label_table.rowCount()):
+            checkbox_widget = self.size_label_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QtWidgets.QCheckBox)
+                if checkbox and checkbox.isChecked():
+                    label_item = self.size_label_table.item(row, 1)
+                    width_spin = self.size_label_table.cellWidget(row, 2)
+                    height_spin = self.size_label_table.cellWidget(row, 3)
+                    if label_item and width_spin and height_spin:
+                        label = label_item.text()
+                        labels_data[label] = {
+                            'width': width_spin.value(),
+                            'height': height_spin.value()
+                        }
+        return labels_data
 
     def _select_all_size_labels(self):
         """全选标签"""
-        for i in range(self.size_label_list.count()):
-            self.size_label_list.item(i).setCheckState(QtCore.Qt.Checked)
+        for row in range(self.size_label_table.rowCount()):
+            checkbox_widget = self.size_label_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QtWidgets.QCheckBox)
+                if checkbox:
+                    checkbox.setChecked(True)
 
     def _select_none_size_labels(self):
         """全不选标签"""
-        for i in range(self.size_label_list.count()):
-            self.size_label_list.item(i).setCheckState(QtCore.Qt.Unchecked)
+        for row in range(self.size_label_table.rowCount()):
+            checkbox_widget = self.size_label_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QtWidgets.QCheckBox)
+                if checkbox:
+                    checkbox.setChecked(False)
 
     def _emit_apply_size(self, scope):
         """发送指定尺寸信号或修复方向信号（根据模式）"""
@@ -589,17 +612,19 @@ class AlignmentDialog(QtWidgets.QDialog):
             self.fix_direction.emit(scope)
             return
         
-        # 原来的指定尺寸逻辑
-        labels = self._get_selected_labels()
-        if not labels:
+        # 获取选中的标签及其宽高设置
+        labels_data = self._get_selected_labels_with_size()
+        if not labels_data:
             self.log(self.tr("请选择至少一个标签"))
             return
-        width = self.size_width_input.value()
-        height = self.size_height_input.value()
-        if width == 0 and height == 0:
-            self.log(self.tr("宽度和高度不能都为0"))
+        
+        # 检查是否所有标签的宽高都为0
+        all_zero = all(data['width'] == 0 and data['height'] == 0 for data in labels_data.values())
+        if all_zero:
+            self.log(self.tr("至少有一个标签的宽度或高度不能为0"))
             return
-        self.apply_specified_size.emit(labels, width, height, scope)
+        
+        self.apply_specified_size.emit(labels_data, scope)
 
     def _emit_apply_size_range(self):
         """发送指定尺寸范围信号或修复方向范围信号（根据模式）"""
@@ -614,17 +639,19 @@ class AlignmentDialog(QtWidgets.QDialog):
             self.fix_direction_range.emit(start, end)
             return
         
-        # 原来的指定尺寸逻辑
-        labels = self._get_selected_labels()
-        if not labels:
+        # 获取选中的标签及其宽高设置
+        labels_data = self._get_selected_labels_with_size()
+        if not labels_data:
             self.log(self.tr("请选择至少一个标签"))
             return
-        width = self.size_width_input.value()
-        height = self.size_height_input.value()
-        if width == 0 and height == 0:
-            self.log(self.tr("宽度和高度不能都为0"))
+        
+        # 检查是否所有标签的宽高都为0
+        all_zero = all(data['width'] == 0 and data['height'] == 0 for data in labels_data.values())
+        if all_zero:
+            self.log(self.tr("至少有一个标签的宽度或高度不能为0"))
             return
-        self.apply_specified_size_range.emit(labels, width, height, start, end)
+        
+        self.apply_specified_size_range.emit(labels_data, start, end)
 
     def _emit_fix_direction_range(self):
         """发送修复方向范围信号"""
@@ -753,27 +780,65 @@ class AlignmentDialog(QtWidgets.QDialog):
             self.size_end_spinbox.setValue(total_pages)
 
     def update_label_list(self, labels, label_colors=None):
-        """更新标签复选框列表"""
-        # 保存当前选中的标签
-        checked_labels = self._get_selected_labels()
+        """更新标签表格列表"""
+        # 保存当前选中的标签和它们的宽高设置
+        checked_labels_data = {}
+        for row in range(self.size_label_table.rowCount()):
+            checkbox_container = self.size_label_table.cellWidget(row, 0)
+            if checkbox_container:
+                checkbox = checkbox_container.findChild(QtWidgets.QCheckBox)
+                if checkbox and checkbox.isChecked():
+                    label_item = self.size_label_table.item(row, 1)
+                    width_spin = self.size_label_table.cellWidget(row, 2)
+                    height_spin = self.size_label_table.cellWidget(row, 3)
+                    if label_item and width_spin and height_spin:
+                        label = label_item.text()
+                        checked_labels_data[label] = {
+                            'width': width_spin.value(),
+                            'height': height_spin.value()
+                        }
         
-        self.size_label_list.clear()
-        for label in labels:
-            item = QtWidgets.QListWidgetItem()
-            item.setText(label)
-            item.setData(QtCore.Qt.UserRole, label)
-            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
-            # 恢复之前的选中状态
-            if label in checked_labels:
-                item.setCheckState(QtCore.Qt.Checked)
-            else:
-                item.setCheckState(QtCore.Qt.Unchecked)
-            # 设置背景颜色
+        self.size_label_table.setRowCount(len(labels))
+        for row, label in enumerate(labels):
+            # 复选框
+            checkbox = QtWidgets.QCheckBox()
+            if label in checked_labels_data:
+                checkbox.setChecked(True)
+            checkbox_container = QtWidgets.QWidget()
+            checkbox_layout = QtWidgets.QHBoxLayout(checkbox_container)
+            checkbox_layout.addWidget(checkbox)
+            checkbox_layout.setAlignment(QtCore.Qt.AlignCenter)
+            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            self.size_label_table.setCellWidget(row, 0, checkbox_container)
+            
+            # 标签名
+            label_item = QtWidgets.QTableWidgetItem(label)
+            label_item.setFlags(label_item.flags() & ~QtCore.Qt.ItemIsEditable)
             if label_colors and label in label_colors:
                 rgb = label_colors[label]
                 color = QtGui.QColor(rgb[0], rgb[1], rgb[2], 128)
-                item.setBackground(color)
-            self.size_label_list.addItem(item)
+                label_item.setBackground(color)
+            self.size_label_table.setItem(row, 1, label_item)
+            
+            # 宽度输入
+            width_spin = QtWidgets.QSpinBox()
+            width_spin.setRange(0, 9999)
+            width_spin.setSpecialValueText(self.tr("不变"))
+            if label in checked_labels_data:
+                width_spin.setValue(checked_labels_data[label]['width'])
+            else:
+                width_spin.setValue(0)
+            self.size_label_table.setCellWidget(row, 2, width_spin)
+            
+            # 高度输入
+            height_spin = QtWidgets.QSpinBox()
+            height_spin.setRange(0, 9999)
+            height_spin.setSpecialValueText(self.tr("不变"))
+            if label in checked_labels_data:
+                height_spin.setValue(checked_labels_data[label]['height'])
+            else:
+                height_spin.setValue(0)
+            self.size_label_table.setCellWidget(row, 3, height_spin)
 
     def _load_settings(self):
         """从配置文件加载设置"""

@@ -63,6 +63,9 @@ class UniqueLabelQListWidget(EscapableQListWidget):
     # 内十字设置信号
     change_label_crosshair = pyqtSignal(str)  # 修改单个标签内十字
     batch_change_label_crosshair = pyqtSignal(list)  # 批量修改标签内十字
+    # 安全边界设置信号
+    change_label_safety_border = pyqtSignal(str)  # 修改单个标签安全边界
+    batch_change_label_safety_border = pyqtSignal(list)  # 批量修改标签安全边界
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -269,6 +272,10 @@ class UniqueLabelQListWidget(EscapableQListWidget):
                 utils.new_icon('color'),
                 self.tr(f"批量修改内十字 ({len(selected_labels)}个)")
             )
+            change_safety_border_action = menu.addAction(
+                utils.new_icon('color'),
+                self.tr(f"批量修改安全边界 ({len(selected_labels)}个)")
+            )
             change_alpha_action = menu.addAction(
                 utils.new_icon('color'),
                 self.tr(f"批量修改透明度 ({len(selected_labels)}个)")
@@ -299,6 +306,10 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             change_crosshair_action = menu.addAction(
                 utils.new_icon('color'),
                 self.tr("修改内十字")
+            )
+            change_safety_border_action = menu.addAction(
+                utils.new_icon('color'),
+                self.tr("修改安全边界")
             )
             change_alpha_action = menu.addAction(
                 utils.new_icon('color'),
@@ -351,6 +362,13 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             else:
                 # 单个操作
                 self.change_label_crosshair.emit(selected_labels[0])
+        elif action == change_safety_border_action:
+            if is_multi_select:
+                # 批量操作：发送批量信号
+                self.batch_change_label_safety_border.emit(selected_labels)
+            else:
+                # 单个操作
+                self.change_label_safety_border.emit(selected_labels[0])
         elif action == change_alpha_action:
             if is_multi_select:
                 # 批量操作：发送批量信号

@@ -888,10 +888,13 @@ def upload_mask_annotation(self, LABEL_OPACITY):
                 )
 
     label_dir_path = path_edit.text()
-    image_dir_path = osp.dirname(self.filename)
-    image_file_list = os.listdir(image_dir_path)
-    label_file_list = os.listdir(label_dir_path)
-    output_dir_path = self.output_dir if self.output_dir else image_dir_path
+    # 确定输出基准目录
+    if self.output_dir:
+        output_base_dir = self.output_dir
+    elif self.last_open_dir:
+        output_base_dir = self.last_open_dir
+    else:
+        output_base_dir = osp.dirname(self.filename)
     converter = LabelConverter()
 
     image_list = self.image_list if self.image_list else [self.filename]
@@ -907,19 +910,40 @@ def upload_mask_annotation(self, LABEL_OPACITY):
     )
 
     try:
-        for i, image_filename in enumerate(image_file_list):
-            if image_filename.endswith(".json"):
+        for i, image_file in enumerate(image_list):
+            image_filename = osp.basename(image_file)
+            base_name = osp.splitext(image_filename)[0]
+            
+            # 尝试找到对应的mask文件（png或jpg）
+            # 支持扁平结构和子文件夹结构
+            input_file = None
+            for ext in ['.png', '.jpg']:
+                # 先尝试扁平结构
+                temp_file = osp.join(label_dir_path, base_name + ext)
+                if osp.exists(temp_file):
+                    input_file = temp_file
+                    break
+                # 再尝试子文件夹结构
+                if self.last_open_dir:
+                    rel_path = osp.relpath(image_file, self.last_open_dir)
+                    rel_dir = osp.dirname(rel_path)
+                    if rel_dir:
+                        temp_file = osp.join(label_dir_path, rel_dir, base_name + ext)
+                        if osp.exists(temp_file):
+                            input_file = temp_file
+                            break
+            
+            if not input_file:
                 continue
-            data_filename = osp.splitext(image_filename)[0] + ".json"
-            if osp.splitext(image_filename)[0] + ".png" in label_file_list:
-                label_filename = osp.splitext(image_filename)[0] + ".png"
-            elif osp.splitext(image_filename)[0] + ".jpg" in label_file_list:
-                label_filename = osp.splitext(image_filename)[0] + ".jpg"
+            
+            # 构建输出JSON路径，保持子文件夹结构
+            if self.last_open_dir:
+                rel_path = osp.relpath(image_file, self.last_open_dir)
+                output_file = osp.join(output_base_dir, osp.splitext(rel_path)[0] + ".json")
+                os.makedirs(osp.dirname(output_file), exist_ok=True)
             else:
-                continue
-            input_file = osp.join(label_dir_path, label_filename)
-            output_file = osp.join(output_dir_path, data_filename)
-            image_file = osp.join(image_dir_path, image_filename)
+                output_file = osp.join(output_base_dir, base_name + ".json")
+            
             converter.mask_to_custom(
                 input_file=input_file,
                 output_file=output_file,
@@ -937,7 +961,7 @@ def upload_mask_annotation(self, LABEL_OPACITY):
             "结果已保存到：\n"
             "%s"
         )
-        message_text = template % output_dir_path
+        message_text = template % output_base_dir
         popup = Popup(
             message_text,
             self,
@@ -1030,9 +1054,13 @@ def upload_dota_annotation(self):
         return
 
     label_dir_path = path_edit.text()
-    image_dir_path = osp.dirname(self.filename)
-    label_file_list = os.listdir(label_dir_path)
-    output_dir_path = self.output_dir if self.output_dir else image_dir_path
+    # 确定输出基准目录
+    if self.output_dir:
+        output_base_dir = self.output_dir
+    elif self.last_open_dir:
+        output_base_dir = self.last_open_dir
+    else:
+        output_base_dir = osp.dirname(self.filename)
     converter = LabelConverter()
 
     response = QtWidgets.QMessageBox()
@@ -1065,17 +1093,28 @@ def upload_dota_annotation(self):
     )
 
     try:
-        for i, image_path in enumerate(image_list):
-            image_filename = osp.basename(image_path)
+        for i, image_file in enumerate(image_list):
+            image_filename = osp.basename(image_file)
             label_filename = osp.splitext(image_filename)[0] + ".txt"
-            if label_filename not in label_file_list:
+            
+            # 支持扁平结构和子文件夹结构
+            input_file = osp.join(label_dir_path, label_filename)
+            if not osp.exists(input_file) and self.last_open_dir:
+                rel_path = osp.relpath(image_file, self.last_open_dir)
+                rel_dir = osp.dirname(rel_path)
+                if rel_dir:
+                    input_file = osp.join(label_dir_path, rel_dir, label_filename)
+            
+            if not osp.exists(input_file):
                 continue
 
-            input_file = osp.join(label_dir_path, label_filename)
-            output_file = osp.join(
-                output_dir_path, osp.splitext(image_filename)[0] + ".json"
-            )
-            image_file = osp.join(image_dir_path, image_filename)
+            # 构建输出JSON路径，保持子文件夹结构
+            if self.last_open_dir:
+                rel_path = osp.relpath(image_file, self.last_open_dir)
+                output_file = osp.join(output_base_dir, osp.splitext(rel_path)[0] + ".json")
+                os.makedirs(osp.dirname(output_file), exist_ok=True)
+            else:
+                output_file = osp.join(output_base_dir, osp.splitext(image_filename)[0] + ".json")
 
             converter.dota_to_custom(
                 input_file=input_file,
@@ -1093,7 +1132,7 @@ def upload_dota_annotation(self):
             "结果已保存到：\n"
             "%s"
         )
-        message_text = template % output_dir_path
+        message_text = template % output_base_dir
         popup = Popup(
             message_text,
             self,
@@ -1267,9 +1306,13 @@ def upload_voc_annotation(self, mode):
         return
 
     label_dir_path = path_edit.text()
-    image_dir_path = osp.dirname(self.filename)
-    label_file_list = os.listdir(label_dir_path)
-    output_dir_path = self.output_dir if self.output_dir else image_dir_path
+    # 确定输出基准目录
+    if self.output_dir:
+        output_base_dir = self.output_dir
+    elif self.last_open_dir:
+        output_base_dir = self.last_open_dir
+    else:
+        output_base_dir = osp.dirname(self.filename)
     converter = LabelConverter()
 
     response = QtWidgets.QMessageBox()
@@ -1302,16 +1345,29 @@ def upload_voc_annotation(self, mode):
     )
 
     try:
-        for i, image_path in enumerate(image_list):
-            image_filename = osp.basename(image_path)
+        for i, image_file in enumerate(image_list):
+            image_filename = osp.basename(image_file)
             label_filename = osp.splitext(image_filename)[0] + ".xml"
-            if label_filename not in label_file_list:
-                continue
-
+            
+            # 支持扁平结构和子文件夹结构
             input_file = osp.join(label_dir_path, label_filename)
-            output_file = osp.join(
-                output_dir_path, osp.splitext(image_filename)[0] + ".json"
-            )
+            if not osp.exists(input_file) and self.last_open_dir:
+                rel_path = osp.relpath(image_file, self.last_open_dir)
+                rel_dir = osp.dirname(rel_path)
+                if rel_dir:
+                    input_file = osp.join(label_dir_path, rel_dir, label_filename)
+            
+            if not osp.exists(input_file):
+                continue
+            
+            # 构建输出JSON路径，保持子文件夹结构
+            if self.last_open_dir:
+                rel_path = osp.relpath(image_file, self.last_open_dir)
+                output_file = osp.join(output_base_dir, osp.splitext(rel_path)[0] + ".json")
+                os.makedirs(osp.dirname(output_file), exist_ok=True)
+            else:
+                output_file = osp.join(output_base_dir, osp.splitext(image_filename)[0] + ".json")
+            
             converter.voc_to_custom(
                 input_file=input_file,
                 output_file=output_file,
@@ -1329,7 +1385,7 @@ def upload_voc_annotation(self, mode):
             "结果已保存到：\n"
             "%s"
         )
-        message_text = template % output_dir_path
+        message_text = template % output_base_dir
         popup = Popup(
             message_text,
             self,
@@ -1455,10 +1511,22 @@ def upload_yolo_annotation(self, mode, LABEL_OPACITY):
         return
 
     label_dir_path = path_edit.text()
-    image_dir_path = osp.dirname(self.filename)
-    image_file_list = os.listdir(image_dir_path)
-    label_file_list = os.listdir(label_dir_path)
-    output_dir_path = self.output_dir if self.output_dir else image_dir_path
+    # 确定输出基准目录
+    if self.output_dir:
+        output_base_dir = self.output_dir
+    elif self.last_open_dir:
+        output_base_dir = self.last_open_dir
+    else:
+        output_base_dir = osp.dirname(self.filename)
+
+    # 使用image_list而不是扫描单个目录
+    if not self.image_list:
+        QtWidgets.QMessageBox.warning(
+            self,
+            self.tr("警告"),
+            self.tr("没有加载图像列表")
+        )
+        return
 
     # Create a custom message box
     msg_box = QtWidgets.QMessageBox(self)
@@ -1488,7 +1556,7 @@ def upload_yolo_annotation(self, mode, LABEL_OPACITY):
         self.tr("Uploading..."),
         self.tr("Cancel"),
         0,
-        len(image_file_list),
+        len(self.image_list),
         self,
     )
     progress_dialog.setWindowModality(Qt.WindowModal)
@@ -1498,23 +1566,35 @@ def upload_yolo_annotation(self, mode, LABEL_OPACITY):
     progress_dialog.setStyleSheet(
         get_progress_dialog_style(color="#1d1d1f", height=20)
     )
-
-    # 定义支持的图片扩展名
-    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.tif', '.webp'}
     
     try:
-        for i, image_filename in enumerate(image_file_list):
-            # 跳过非图片文件（包括.json, .txt等）
-            file_ext = osp.splitext(image_filename)[1].lower()
-            if file_ext not in image_extensions:
-                continue
+        for i, image_file in enumerate(self.image_list):
+            image_filename = osp.basename(image_file)
             label_filename = osp.splitext(image_filename)[0] + ".txt"
-            data_filename = osp.splitext(image_filename)[0] + ".json"
-            if label_filename not in label_file_list:
-                continue
+            
+            # 构建标签文件路径 - 支持两种情况：
+            # 1. 扁平结构：所有TXT在label_dir_path根目录（优先尝试）
             input_file = osp.join(label_dir_path, label_filename)
-            output_file = osp.join(output_dir_path, data_filename)
-            image_file = osp.join(image_dir_path, image_filename)
+            
+            # 2. 子文件夹结构：TXT文件和图片有相同的子文件夹结构
+            if not osp.exists(input_file) and self.last_open_dir:
+                rel_path = osp.relpath(image_file, self.last_open_dir)
+                rel_dir = osp.dirname(rel_path)
+                if rel_dir:
+                    input_file_subdir = osp.join(label_dir_path, rel_dir, label_filename)
+                    if osp.exists(input_file_subdir):
+                        input_file = input_file_subdir
+            
+            if not osp.exists(input_file):
+                continue
+            
+            # 构建输出JSON路径，保持子文件夹结构
+            if self.last_open_dir:
+                rel_path = osp.relpath(image_file, self.last_open_dir)
+                output_file = osp.join(output_base_dir, osp.splitext(rel_path)[0] + ".json")
+                os.makedirs(osp.dirname(output_file), exist_ok=True)
+            else:
+                output_file = osp.join(output_base_dir, osp.splitext(image_filename)[0] + ".json")
 
             if mode in ["hbb", "seg"]:
                 converter.yolo_to_custom(
