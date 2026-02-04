@@ -390,6 +390,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.items_map = {} 
         self.items_list = [] 
         self.dividers_list = []
+        self.is_fullscreen = False  # 全屏状态标记
         layout = QtWidgets.QVBoxLayout(self) # Assuming 'layout' was missing its definition
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -1190,15 +1191,27 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         return super().event(event)
 
     def keyPressEvent(self, event):
-        """处理键盘事件，支持 A/D 翻页"""
+        """处理键盘事件，支持 A/D 翻页和 F11 全屏"""
         if event.key() == QtCore.Qt.Key_D:
             self.go_to_next_image()
             event.accept()
         elif event.key() == QtCore.Qt.Key_A:
             self.go_to_prev_image()
             event.accept()
+        elif event.key() == QtCore.Qt.Key_F11:
+            self.toggle_fullscreen()
+            event.accept()
         else:
             super().keyPressEvent(event)
+    
+    def toggle_fullscreen(self):
+        """切换全屏模式"""
+        if self.is_fullscreen:
+            self.showNormal()
+            self.is_fullscreen = False
+        else:
+            self.showFullScreen()
+            self.is_fullscreen = True
 
     def closeEvent(self, event):
         self.closing = True

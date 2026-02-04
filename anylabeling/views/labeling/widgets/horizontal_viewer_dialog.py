@@ -279,7 +279,8 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.view_scale = 1.0
         self.fit_height_mode = True
         self.thread_pool = QtCore.QThreadPool()
-        self.thread_pool.setMaxThreadCount(4) 
+        self.thread_pool.setMaxThreadCount(4)
+        self.is_fullscreen = False  # 全屏状态标记 
         
         # UI Setup
         layout = QtWidgets.QVBoxLayout(self)
@@ -1158,15 +1159,27 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         return super().event(event)
 
     def keyPressEvent(self, event):
-        """处理键盘事件，支持 A/D 翻页"""
+        """处理键盘事件，支持 A/D 翻页和 F11 全屏"""
         if event.key() == QtCore.Qt.Key_D:
             self.go_to_next_image()
             event.accept()
         elif event.key() == QtCore.Qt.Key_A:
             self.go_to_prev_image()
             event.accept()
+        elif event.key() == QtCore.Qt.Key_F11:
+            self.toggle_fullscreen()
+            event.accept()
         else:
             super().keyPressEvent(event)
+    
+    def toggle_fullscreen(self):
+        """切换全屏模式"""
+        if self.is_fullscreen:
+            self.showNormal()
+            self.is_fullscreen = False
+        else:
+            self.showFullScreen()
+            self.is_fullscreen = True
 
     def closeEvent(self, event):
         self.closing = True
