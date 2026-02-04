@@ -716,6 +716,9 @@ https://github.com/user-attachments/assets/8ff7f6f9-1443-4ed2-92f5-b98ad504d263
 
 https://github.com/user-attachments/assets/77dd3504-2080-452f-91c7-b486fb11c32c
 
+149.添加安全边界显示
+
+https://github.com/user-attachments/assets/4ee16cb9-250f-48e6-a94a-ce66f0a1dcdd
 
 
 
