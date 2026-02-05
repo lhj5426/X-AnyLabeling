@@ -391,6 +391,10 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.items_list = [] 
         self.dividers_list = []
         self.is_fullscreen = False  # 全屏状态标记
+        
+        # 启用拖放功能
+        self.setAcceptDrops(True)
+        
         layout = QtWidgets.QVBoxLayout(self) # Assuming 'layout' was missing its definition
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -448,6 +452,9 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.view.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.view.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.view.setOptimizationFlags(QtWidgets.QGraphicsView.DontSavePainterState)
+        
+        # 禁用view的拖放，让dialog处理
+        self.view.setAcceptDrops(False)
         
         self.view.ctrlWheelZoomIn.connect(self.zoom_in)
         self.view.ctrlWheelZoomOut.connect(self.zoom_out)
@@ -1212,6 +1219,83 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         else:
             self.showFullScreen()
             self.is_fullscreen = True
+    
+    def dragEnterEvent(self, event):
+        """拖拽进入事件"""
+        if event.mimeData().hasUrls():
+            items = [i.toLocalFile() for i in event.mimeData().urls()]
+            # 获取支持的图片格式
+            extensions = [
+                f".{fmt.data().decode().lower()}"
+                for fmt in QtGui.QImageReader.supportedImageFormats()
+            ]
+            # 接受文件夹或图片文件的拖放
+            if any(os.path.isdir(i) or i.lower().endswith(tuple(extensions)) for i in items):
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event):
+        """拖放事件"""
+        if not self.labeling_widget:
+            event.ignore()
+            return
+        
+        items = [i.toLocalFile() for i in event.mimeData().urls()]
+        
+        # 检查是否有文件夹被拖放
+        folders = [i for i in items if os.path.isdir(i)]
+        if folders:
+            # 如果拖放了文件夹，通知主窗口打开第一个文件夹
+            folder_path = folders[0]
+            # 获取主窗口的递归加载设置
+            recursive = False
+            if hasattr(self.labeling_widget, '_config'):
+                recursive = self.labeling_widget._config.get("load_subfolders", False)
+            
+            # 调用主窗口的import_image_folder方法
+            if hasattr(self.labeling_widget, 'import_image_folder'):
+                self.labeling_widget.import_image_folder(folder_path, recursive=recursive)
+                event.accept()
+            else:
+                event.ignore()
+            return
+        
+        # 检查是否有图片文件被拖放
+        extensions = [
+            f".{fmt.data().decode().lower()}"
+            for fmt in QtGui.QImageReader.supportedImageFormats()
+        ]
+        image_files = [i for i in items if i.lower().endswith(tuple(extensions))]
+        if image_files:
+            # 取第一个图片文件，打开其所在文件夹
+            first_image = image_files[0]
+            folder_path = os.path.dirname(first_image)
+            # 获取主窗口的递归加载设置
+            recursive = False
+            if hasattr(self.labeling_widget, '_config'):
+                recursive = self.labeling_widget._config.get("load_subfolders", False)
+            
+            # 调用主窗口的import_image_folder方法
+            if hasattr(self.labeling_widget, 'import_image_folder'):
+                self.labeling_widget.import_image_folder(folder_path, recursive=recursive)
+                # 加载完文件夹后，定位到拖放的图片
+                # 使用延迟调用，确保文件夹加载完成
+                QtCore.QTimer.singleShot(100, lambda: self._load_dropped_image(first_image))
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.ignore()
+    
+    def _load_dropped_image(self, image_path):
+        """加载拖放的图片（延迟调用）"""
+        if self.labeling_widget and hasattr(self.labeling_widget, 'load_file'):
+            # 检查图片是否在文件列表中
+            if hasattr(self.labeling_widget, 'fn_to_index') and image_path in self.labeling_widget.fn_to_index:
+                self.labeling_widget.load_file(image_path)
 
     def closeEvent(self, event):
         self.closing = True
