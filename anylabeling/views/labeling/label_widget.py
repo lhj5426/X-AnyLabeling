@@ -1751,6 +1751,13 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="objects",
             tip=self.tr("在新窗口中以瀑布流方式预览所有图片缩略图"),
         )
+        # 右键菜单专用：打开瀑布流并定位到当前图片
+        thumbnail_viewer_tool_with_target = action(
+            self.tr("瀑布流缩略图"),
+            lambda: self.open_thumbnail_viewer(self.filename),
+            icon="objects",
+            tip=self.tr("在新窗口中以瀑布流方式预览所有图片缩略图（定位到当前图片）"),
+        )
         merge_shapes = action(
             self.tr("区域合并工具"),
             self.toggle_merge_tool,
@@ -2799,7 +2806,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 refresh_canvas,
                 horizontal_viewer_tool,
                 vertical_viewer_tool,
-                thumbnail_viewer_tool,
+                thumbnail_viewer_tool_with_target,
             ),
             on_load_active=(
                 close,
@@ -15946,32 +15953,30 @@ class LabelingWidget(QtWidgets.QWidget):
             )
             return
         
-        # If target_filename is not provided, use current image
-        if not isinstance(target_filename, str):
-            target_filename = self.image_path
-        
         if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog and self.thumbnail_viewer_dialog.isVisible():
-            # 如果窗口已经打开，只需要激活并定位到当前图片
-            # 如果窗口被最小化，先还原它（保持原有的最大化状态）
+            # 如果窗口已经打开，只需要激活
             if self.thumbnail_viewer_dialog.isMinimized():
-                # 恢复到之前的状态（最大化或正常）
                 if self.thumbnail_viewer_dialog.windowState() & Qt.WindowMaximized:
                     self.thumbnail_viewer_dialog.showMaximized()
                 else:
                     self.thumbnail_viewer_dialog.showNormal()
             self.thumbnail_viewer_dialog.raise_()
             self.thumbnail_viewer_dialog.activateWindow()
-            # 滚动到当前图片
-            self.thumbnail_viewer_dialog.scroll_to_image(target_filename)
+            # 如果传了文件名，滚动到对应位置
+            if target_filename:
+                self.thumbnail_viewer_dialog.scroll_to_image(target_filename)
             return
         
         if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog:
             self.thumbnail_viewer_dialog.close()
         
+        # 创建新窗口：传递 target_filename（可能是 None 或具体文件名）
+        # auto_scroll_to_current: 如果传入了target_filename（右键打开），则自动滚动；否则从第一张开始
         self.thumbnail_viewer_dialog = MasonryThumbnailDialog(
             self.image_list,
             current_filename=target_filename,
-            parent=self
+            parent=self,
+            auto_scroll_to_current=bool(target_filename)  # 右键打开时为True，工具栏按钮打开时为False
         )
         self.thumbnail_viewer_dialog.image_switched.connect(self.load_file)
         self.thumbnail_viewer_dialog.open_horizontal_viewer.connect(self.open_horizontal_viewer)

@@ -57,6 +57,199 @@ class SpaceConfirmMessageBox(QtWidgets.QMessageBox):
         return super().eventFilter(obj, event)
 
 
+class LayoutSettingsDialog(QtWidgets.QDialog):
+    """布局设置对话框"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("布局设置")
+        self.setModal(False)  # 非模态对话框
+        
+        # 设置窗口标志：移除问号，添加最小化按钮
+        self.setWindowFlags(
+            Qt.Window |
+            Qt.WindowCloseButtonHint |
+            Qt.WindowMinimizeButtonHint
+        )
+        
+        # 不固定宽度，让窗口自适应内容大小
+        # self.setFixedWidth(380)  # 删除固定宽度
+        
+        # 从父对话框获取当前设置
+        self.parent_dialog = parent
+        
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # 布局模式选择
+        mode_group = QtWidgets.QGroupBox("布局模式")
+        mode_layout = QtWidgets.QVBoxLayout()
+        
+        # 纵向模式 + 列数
+        vertical_row = QtWidgets.QHBoxLayout()
+        self.vertical_radio = QtWidgets.QRadioButton("纵向模式")
+        vertical_row.addWidget(self.vertical_radio)
+        vertical_row.addSpacing(10)
+        vertical_row.addWidget(QtWidgets.QLabel("列数:"))
+        self.columns_spinbox = QtWidgets.QSpinBox()
+        self.columns_spinbox.setRange(1, 10)
+        self.columns_spinbox.setValue(parent.columns)
+        self.columns_spinbox.setFixedWidth(70)
+        vertical_row.addWidget(self.columns_spinbox)
+        vertical_row.addStretch()  # 把多余空间推到右边
+        
+        # 横向模式 + 行高
+        horizontal_row = QtWidgets.QHBoxLayout()
+        self.horizontal_radio = QtWidgets.QRadioButton("横向模式")
+        horizontal_row.addWidget(self.horizontal_radio)
+        horizontal_row.addSpacing(10)
+        horizontal_row.addWidget(QtWidgets.QLabel("行高:"))
+        self.height_spinbox = QtWidgets.QSpinBox()
+        self.height_spinbox.setRange(50, 9999)
+        self.height_spinbox.setValue(parent.row_height)
+        self.height_spinbox.setFixedWidth(70)
+        horizontal_row.addWidget(self.height_spinbox)
+        horizontal_row.addStretch()  # 把多余空间推到右边
+        
+        if not parent.horizontal_mode:
+            self.vertical_radio.setChecked(True)
+        else:
+            self.horizontal_radio.setChecked(True)
+        
+        mode_layout.addLayout(vertical_row)
+        mode_layout.addLayout(horizontal_row)
+        
+        # 通用设置（间距、边距、边框、圆角）2×2田字格布局
+        # 第一行：间距、边距
+        common_row1 = QtWidgets.QHBoxLayout()
+        common_row1.addWidget(QtWidgets.QLabel("间距:"))
+        self.spacing_spinbox = QtWidgets.QSpinBox()
+        self.spacing_spinbox.setRange(0, 50)
+        self.spacing_spinbox.setValue(parent.spacing)
+        self.spacing_spinbox.setFixedWidth(70)
+        common_row1.addWidget(self.spacing_spinbox)
+        
+        common_row1.addSpacing(20)
+        
+        common_row1.addWidget(QtWidgets.QLabel("边距:"))
+        self.margin_spinbox = QtWidgets.QSpinBox()
+        self.margin_spinbox.setRange(0, 50)
+        self.margin_spinbox.setValue(parent.masonry_widget.margin)
+        self.margin_spinbox.setFixedWidth(70)
+        common_row1.addWidget(self.margin_spinbox)
+        common_row1.addStretch()  # 把多余空间推到右边
+        
+        # 第二行：边框、圆角
+        common_row2 = QtWidgets.QHBoxLayout()
+        common_row2.addWidget(QtWidgets.QLabel("边框:"))
+        self.border_width_spinbox = QtWidgets.QSpinBox()
+        self.border_width_spinbox.setRange(0, 20)
+        self.border_width_spinbox.setValue(parent.border_width)
+        self.border_width_spinbox.setFixedWidth(70)
+        common_row2.addWidget(self.border_width_spinbox)
+        
+        common_row2.addSpacing(20)
+        
+        common_row2.addWidget(QtWidgets.QLabel("圆角:"))
+        self.radius_spinbox = QtWidgets.QSpinBox()
+        self.radius_spinbox.setRange(0, 50)
+        self.radius_spinbox.setValue(parent.border_radius)
+        self.radius_spinbox.setFixedWidth(70)
+        common_row2.addWidget(self.radius_spinbox)
+        common_row2.addStretch()  # 把多余空间推到右边
+        
+        mode_layout.addLayout(common_row1)
+        mode_layout.addLayout(common_row2)
+        mode_group.setLayout(mode_layout)
+        layout.addWidget(mode_group)
+        
+        # 方格子特殊设置
+        grid_group = QtWidgets.QGroupBox("方格子特殊设置")
+        grid_layout = QtWidgets.QVBoxLayout()
+        
+        # Justified布局（两端对齐）
+        self.justified_radio = QtWidgets.QRadioButton("两端对齐（适合混合图片，横向铺满）")
+        grid_layout.addWidget(self.justified_radio)
+        
+        # 固定列宽布局
+        self.fixed_width_radio = QtWidgets.QRadioButton("固定列宽（适合长条图，可调整列数）")
+        grid_layout.addWidget(self.fixed_width_radio)
+        
+        # 设置初始选中状态（从parent获取）
+        use_justified = getattr(parent.masonry_widget, 'use_justified_layout', True)
+        if use_justified:
+            self.justified_radio.setChecked(True)
+        else:
+            self.fixed_width_radio.setChecked(True)
+        
+        grid_group.setLayout(grid_layout)
+        layout.addWidget(grid_group)
+        
+        # 所有控件创建完成后，连接信号实现实时预览
+        self.vertical_radio.toggled.connect(self._apply_settings)
+        self.columns_spinbox.valueChanged.connect(self._apply_settings)
+        self.justified_radio.toggled.connect(self._apply_settings)
+        self.height_spinbox.valueChanged.connect(self._apply_settings)
+        self.spacing_spinbox.valueChanged.connect(self._apply_settings)
+        self.margin_spinbox.valueChanged.connect(self._apply_settings)
+        self.border_width_spinbox.valueChanged.connect(self._apply_settings)
+        self.radius_spinbox.valueChanged.connect(self._apply_settings)
+    
+    def _apply_settings(self):
+        """实时应用设置"""
+        parent = self.parent_dialog
+        
+        # 检查父对话框是否完全初始化（layout_mode_btn是工具栏按钮之一）
+        if not hasattr(parent, 'layout_mode_btn'):
+            return  # 父对话框还未完全初始化，跳过
+        
+        settings = self.get_settings()
+        
+        # 应用设置
+        parent.columns = settings['columns']
+        parent.row_height = settings['row_height']
+        parent.spacing = settings['spacing']
+        parent.border_width = settings['border_width']
+        parent.border_radius = settings['border_radius']
+        
+        parent.masonry_widget.columns = parent.columns
+        parent.masonry_widget.row_height = parent.row_height
+        parent.masonry_widget.spacing = parent.spacing
+        parent.masonry_widget.margin = settings['margin']
+        parent.masonry_widget.use_justified_layout = settings['use_justified_layout']
+        
+        # 更新所有item的边框和圆角
+        for item in parent.masonry_widget.items:
+            item.set_border_width(parent.border_width)
+            item.update_radius(parent.border_radius)
+        
+        # 切换横向/纵向模式
+        if settings['horizontal_mode'] != parent.horizontal_mode:
+            if settings['horizontal_mode']:
+                parent.set_horizontal_mode()
+            else:
+                parent.set_vertical_mode()
+        else:
+            # 如果模式没变，只是参数变了，强制立即重新布局
+            parent.masonry_widget._do_relayout()  # 立即布局，不延迟
+        
+        parent.save_masonry_settings()
+    
+    def get_settings(self):
+        """获取设置"""
+        return {
+            'horizontal_mode': self.horizontal_radio.isChecked(),
+            'columns': self.columns_spinbox.value(),
+            'row_height': self.height_spinbox.value(),
+            'use_justified_layout': self.justified_radio.isChecked(),  # 纵向模式下是否使用两端对齐布局
+            'spacing': self.spacing_spinbox.value(),
+            'margin': self.margin_spinbox.value(),
+            'border_width': self.border_width_spinbox.value(),
+            'border_radius': self.radius_spinbox.value()
+        }
+
+
 class ThumbnailLoaderSignals(QtCore.QObject):
     """缩略图加载信号"""
     loaded = QtCore.pyqtSignal(str, QtGui.QPixmap, int, int, int)  # path, pixmap, orig_w, orig_h, load_width
@@ -337,6 +530,9 @@ class ThumbnailItem(QtWidgets.QWidget):
         
         # 强制设置尺寸
         self.setFixedSize(self.actual_width, self.actual_height)
+        
+        # 强制重绘
+        self.update()
         
         # 检查是否需要重新加载
         if self.loaded and self.needs_reload(new_width):
@@ -937,6 +1133,8 @@ class MasonryWidget(QtWidgets.QWidget):
         self.row_height = 200  # 横向模式的行高
         self.grid_mode = False  # 方格子模式
         self.grid_size = 200  # 方格子尺寸
+        self.use_fixed_columns = False  # 横向模式是否使用固定列数（False=自动，True=固定）
+        self.use_justified_layout = True  # 方格子模式是否使用两端对齐布局（True=两端对齐，False=固定列宽）
         self._resize_timer = QtCore.QTimer()
         self._resize_timer.setSingleShot(True)
         self._resize_timer.timeout.connect(self._do_relayout)
@@ -998,7 +1196,12 @@ class MasonryWidget(QtWidgets.QWidget):
         for item in self.items:
             item.horizontal_mode = False
             item.keep_aspect = False  # 瀑布流模式不保持比例
+            old_width = item.actual_width
             item.update_geometry_only(col_width)
+            # 如果宽度变化较大，触发重新加载
+            if abs(old_width - col_width) > 50:
+                if item.loaded:
+                    item.need_reload.emit(item)
         
         # 按顺序轮流分配到各列（瀑布流，但按序号顺序）
         column_heights = [self.margin] * actual_columns
@@ -1018,7 +1221,14 @@ class MasonryWidget(QtWidgets.QWidget):
         self.setMinimumHeight(int(max_height))
     
     def _do_grid_layout(self):
-        """缩略图纵向布局（固定列数，高度统一，宽度按比例，横向铺满窗口，无黑边）"""
+        """缩略图纵向布局（根据设置选择算法）"""
+        if self.use_justified_layout:
+            self._do_grid_layout_justified()
+        else:
+            self._do_grid_layout_fixed_width()
+    
+    def _do_grid_layout_justified(self):
+        """缩略图纵向布局 - 两端对齐算法（适合混合图片）"""
         available_width = self.width() - 2 * self.margin
         if available_width <= 0:
             available_width = 800
@@ -1079,14 +1289,24 @@ class MasonryWidget(QtWidgets.QWidget):
                     total_used = sum(widths) + total_spacing
                     diff = available_width - total_used
                     if diff != 0 and widths:
+                        # 限制补齐误差：不超过原宽度的15%，并且不超过剩余空间
+                        max_diff = int(widths[-1] * 0.15)
+                        # 确保补齐后不会超出窗口
+                        remaining_space = available_width - (x + sum(widths[:-1]) + (num_items - 1) * self.spacing)
+                        diff = max(-max_diff, min(diff, min(max_diff, remaining_space - widths[-1])))
                         widths[-1] += diff
+                        # 保护：确保宽度在合理范围内
+                        widths[-1] = max(50, min(widths[-1], available_width - total_spacing))
             
             # 布局这一行的图片
             for i, (item, ratio) in enumerate(row):
-                item_width = widths[i]
+                item_width = max(50, widths[i])  # 确保最小宽度50
+                # 再次检查：确保不会超出窗口
+                if x + item_width > available_width + self.margin:
+                    item_width = max(50, available_width + self.margin - x)
                 
                 item.horizontal_mode = False
-                item.keep_aspect = False  # 不保持比例，无黑边
+                item.keep_aspect = False  # 不保持比例，无黑边（图片填满整个区域）
                 item.actual_width = item_width
                 item.actual_height = row_height
                 item.setFixedSize(item_width, row_height)
@@ -1098,6 +1318,68 @@ class MasonryWidget(QtWidgets.QWidget):
                 item.show()
                 
                 x += item_width + self.spacing
+            
+            y += row_height + self.spacing
+        
+        self.setMinimumHeight(int(y + self.margin))
+    
+    def _do_grid_layout_fixed_width(self):
+        """缩略图纵向布局 - 固定列宽算法（适合长条图）"""
+        available_width = self.width() - 2 * self.margin
+        if available_width <= 0:
+            available_width = 800
+        
+        # 直接使用用户设置的列数
+        cols = max(1, self.columns)
+        
+        # 计算每列的宽度（所有图片等宽）
+        total_spacing = (cols - 1) * self.spacing
+        col_width = (available_width - total_spacing) // cols
+        col_width = max(50, col_width)  # 最小宽度50
+        
+        # 计算每张图片的高度（根据宽度和宽高比）
+        items_data = []
+        for item in self.items:
+            if item.image_width > 0 and item.image_height > 0:
+                # 根据固定宽度计算高度
+                item_height = int(col_width * item.image_height / item.image_width)
+            else:
+                item_height = col_width
+            items_data.append((item, item_height))
+        
+        # 按列数分行（每行固定 cols 张图片）
+        rows = []
+        for i in range(0, len(items_data), cols):
+            row = items_data[i:i + cols]
+            rows.append(row)
+        
+        # 布局每一行
+        y = self.margin
+        
+        for row_idx, row in enumerate(rows):
+            if not row:
+                continue
+            
+            # 这一行的高度 = 这一行中最高的图片的高度
+            row_height = max(h for _, h in row)
+            row_height = max(50, row_height)  # 最小高度50
+            
+            # 布局这一行的图片
+            x = self.margin
+            for i, (item, item_height) in enumerate(row):
+                item.horizontal_mode = False
+                item.keep_aspect = True  # 保持比例，居中显示（方格子模式）
+                item.actual_width = col_width
+                item.actual_height = row_height  # 使用行高，不是单个图片的高度
+                item.setFixedSize(col_width, row_height)
+                
+                if item.loaded and item.needs_reload(max(col_width, row_height)):
+                    item.need_reload.emit(item)
+                
+                item.move(int(x), int(y))
+                item.show()
+                
+                x += col_width + self.spacing
             
             y += row_height + self.spacing
         
@@ -1206,7 +1488,7 @@ class MasonryWidget(QtWidgets.QWidget):
         self.setMinimumHeight(int(total_height))
     
     def _do_horizontal_layout(self):
-        """横向justified布局（按行高，自动填满每行）"""
+        """横向justified布局（按行高，自动分行）"""
         available_width = self.width() - 2 * self.margin
         if available_width <= 0:
             available_width = 800
@@ -1223,7 +1505,7 @@ class MasonryWidget(QtWidgets.QWidget):
                 ratio = 1.0
             items_with_ratio.append((item, ratio))
         
-        # 分行：计算每行应该包含哪些图片
+        # 自动分行：计算每行应该包含哪些图片
         rows = []
         current_row = []
         current_row_width = 0
@@ -1259,7 +1541,8 @@ class MasonryWidget(QtWidgets.QWidget):
             total_spacing = (num_items - 1) * self.spacing
             
             is_last_row = row_idx == len(rows) - 1
-            is_incomplete = len(row) < 3
+            threshold = 3
+            is_incomplete = len(row) < threshold
             
             # 计算这一行的实际高度，使得所有图片正好填满宽度
             if is_last_row and is_incomplete and len(rows) > 1:
@@ -1277,14 +1560,13 @@ class MasonryWidget(QtWidgets.QWidget):
             for item, ratio in row:
                 widths.append(int(row_height * ratio))
             
-            # 只有完整行才补齐误差,最后一行不足时不补齐
-            if not (is_last_row and is_incomplete):
-                if num_items > 0:
-                    total_used = sum(widths) + total_spacing
-                    diff = available_width - total_used
-                    # 限制补齐的误差范围,避免过度拉伸
-                    if diff != 0 and widths and abs(diff) < widths[-1] * 0.1:  # 误差不超过10%
-                        widths[-1] += diff
+            # 只有完整行才补齐误差
+            if not (is_last_row and is_incomplete) and num_items > 0:
+                total_used = sum(widths) + total_spacing
+                diff = available_width - total_used
+                # 限制补齐的误差范围
+                if diff != 0 and widths and abs(diff) < widths[-1] * 0.1:
+                    widths[-1] += diff
             
             # 布局这一行的图片
             x = self.margin
@@ -1342,7 +1624,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     open_vertical_viewer = QtCore.pyqtSignal(str)
     files_changed = QtCore.pyqtSignal()  # 文件列表变化信号（合并/删除后）
     
-    def __init__(self, image_list, current_filename=None, parent=None):
+    def __init__(self, image_list, current_filename=None, parent=None, auto_scroll_to_current=False):
         super().__init__(parent)
         self.setWindowTitle("瀑布流缩略图")
         self.resize(1200, 800)
@@ -1360,6 +1642,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         self.image_list = image_list
         self.current_filename = current_filename
+        self.auto_scroll_to_current = auto_scroll_to_current  # 是否自动滚动到当前图片（右键打开时为True）
         self.labeling_widget = parent  # 保存父窗口引用
         
         self.thumbnail_width = 200
@@ -1406,12 +1689,17 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # 不在这里启动加载，等showEvent时再启动
         self._loading_started = False
+        
+        # 初始隐藏内容区域，等第一批图片加载完成后再显示
+        self._initial_load_complete = False
     
     def showEvent(self, event):
         """窗口显示事件"""
         super().showEvent(event)
         if not self._loading_started:
             self._loading_started = True
+            # 初始隐藏masonry_widget，避免显示空白占位符
+            self.masonry_widget.hide()
             # 窗口显示后再开始加载，确保尺寸正确
             QtCore.QTimer.singleShot(50, self.start_loading)
         
@@ -1509,6 +1797,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self._resize_reload_timer.setSingleShot(True)
         self._resize_reload_timer.timeout.connect(self.process_reload_queue)
         
+        # 在创建items之前，先计算正确的缩略图尺寸，避免显示小图
+        self._update_thumbnail_size()
+        
         self.create_thumbnail_items()
 
     def create_toolbar(self):
@@ -1517,123 +1808,28 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         toolbar.setStyleSheet("""
             QWidget { background-color: #2b2b2b; }
             QLabel { color: #fff; padding: 0 3px; font-size: 12px; }
-            QSlider { min-width: 80px; max-width: 120px; }
-            QSlider::groove:horizontal { border: 1px solid #555; height: 4px; background: #444; border-radius: 2px; }
-            QSlider::handle:horizontal { background: #888; border: 1px solid #666; width: 14px; margin: -5px 0; border-radius: 7px; }
-            QSlider::handle:horizontal:hover { background: #aaa; }
         """)
         
         layout = QtWidgets.QHBoxLayout(toolbar)
         layout.setContentsMargins(10, 5, 10, 5)
         layout.setSpacing(10)
         
-        # 列距
-        self.spacing_label_text = QtWidgets.QLabel("列距:")
-        layout.addWidget(self.spacing_label_text)
-        self.spacing_slider = QtWidgets.QSlider(Qt.Horizontal)
-        self.spacing_slider.setRange(0, 40)
-        self.spacing_slider.setValue(self.spacing)
-        self.spacing_slider.sliderReleased.connect(self.on_spacing_released)
-        self.spacing_slider.valueChanged.connect(lambda v: self.spacing_label.setText(str(v)))
-        layout.addWidget(self.spacing_slider)
-        self.spacing_label = QtWidgets.QLabel(str(self.spacing))
-        self.spacing_label.setFixedWidth(25)
-        layout.addWidget(self.spacing_label)
-        
-        self._add_sep(layout)
-        
-        # 圆角
-        self.radius_label_text = QtWidgets.QLabel("圆角:")
-        layout.addWidget(self.radius_label_text)
-        self.radius_slider = QtWidgets.QSlider(Qt.Horizontal)
-        self.radius_slider.setRange(0, 40)
-        self.radius_slider.setValue(self.border_radius)
-        self.radius_slider.sliderReleased.connect(self.on_radius_released)
-        self.radius_slider.valueChanged.connect(lambda v: self.radius_label.setText(str(v)))
-        layout.addWidget(self.radius_slider)
-        self.radius_label = QtWidgets.QLabel(str(self.border_radius))
-        self.radius_label.setFixedWidth(25)
-        layout.addWidget(self.radius_label)
-        
-        self._add_sep(layout)
-        
-        # 边框
-        self.border_label_text = QtWidgets.QLabel("边框:")
-        layout.addWidget(self.border_label_text)
-        self.border_slider = QtWidgets.QSlider(Qt.Horizontal)
-        self.border_slider.setRange(0, 10)
-        self.border_slider.setValue(self.border_width)
-        self.border_slider.sliderReleased.connect(self.on_border_released)
-        self.border_slider.valueChanged.connect(lambda v: self.border_label.setText(str(v)))
-        layout.addWidget(self.border_slider)
-        self.border_label = QtWidgets.QLabel(str(self.border_width))
-        self.border_label.setFixedWidth(25)
-        layout.addWidget(self.border_label)
-        
-        self._add_sep(layout)
-        
-        # 列数（纵向模式）
-        self.columns_label_text = QtWidgets.QLabel("列数:")
-        layout.addWidget(self.columns_label_text)
-        self.mode_btn = QtWidgets.QPushButton("纵向")
-        self.mode_btn.setFixedWidth(40)
-        self.mode_btn.setStyleSheet("""
-            QPushButton { background: #444; color: #fff; border: 1px solid #666; border-radius: 3px; padding: 2px 5px; }
-            QPushButton:hover { background: #555; }
+        # 布局设置按钮
+        self.layout_settings_btn = QtWidgets.QPushButton("布局设置")
+        self.layout_settings_btn.setFixedSize(80, 28)
+        self.layout_settings_btn.setStyleSheet("""
+            QPushButton { background: #0078d4; color: #fff; border: 1px solid #005a9e; border-radius: 3px; padding: 4px 8px; font-weight: bold; }
+            QPushButton:hover { background: #1084d8; }
         """)
-        self.mode_btn.clicked.connect(self.set_vertical_mode)
-        layout.addWidget(self.mode_btn)
-        
-        self.columns_slider = QtWidgets.QSlider(Qt.Horizontal)
-        self.columns_slider.setRange(1, 10)
-        self.columns_slider.setValue(self.columns)
-        self.columns_slider.setEnabled(not self.horizontal_mode)
-        self.columns_slider.sliderReleased.connect(self.on_columns_released)
-        self.columns_slider.valueChanged.connect(lambda v: self.columns_label.setText(str(v)))
-        layout.addWidget(self.columns_slider)
-        self.columns_label = QtWidgets.QLabel(str(self.columns))
-        self.columns_label.setFixedWidth(25)
-        layout.addWidget(self.columns_label)
-        
-        self._add_sep(layout)
-        # 高度（横向模式）
-        self.height_label_text = QtWidgets.QLabel("高度:")
-        layout.addWidget(self.height_label_text)
-        self.height_mode_btn = QtWidgets.QPushButton("横向")
-        self.height_mode_btn.setFixedWidth(40)
-        if self.horizontal_mode:
-            self.height_mode_btn.setStyleSheet("""
-                QPushButton { background: #444; color: #fff; border: 1px solid #666; border-radius: 3px; padding: 2px 5px; }
-                QPushButton:hover { background: #555; }
-            """)
-        else:
-            self.height_mode_btn.setStyleSheet("""
-                QPushButton { background: #333; color: #888; border: 1px solid #555; border-radius: 3px; padding: 2px 5px; }
-                QPushButton:hover { background: #444; }
-            """)
-        self.height_mode_btn.clicked.connect(self.set_horizontal_mode)
-        layout.addWidget(self.height_mode_btn)
-        
-        self.height_slider = QtWidgets.QSlider(Qt.Horizontal)
-        self.height_slider.setRange(100, 600)
-        self.height_slider.setValue(self.row_height)
-        self.height_slider.sliderReleased.connect(self.on_height_released)
-        self.height_slider.valueChanged.connect(lambda v: self.height_label.setText(str(v)))
-        self.height_slider.setEnabled(self.horizontal_mode)
-        layout.addWidget(self.height_slider)
-        self.height_label = QtWidgets.QLabel(str(self.row_height))
-        self.height_label.setFixedWidth(30)
-        layout.addWidget(self.height_label)
+        self.layout_settings_btn.clicked.connect(self.open_layout_settings)
+        layout.addWidget(self.layout_settings_btn)
         
         self._add_sep(layout)
         
         # 瀑布流/方格子切换
-        self.layout_mode_btn = QtWidgets.QPushButton("缩略图" if self.grid_mode else "瀑布流")
-        self.layout_mode_btn.setFixedSize(60, 28)
-        self.layout_mode_btn.setStyleSheet("""
-            QPushButton { background: #0078d4; color: #fff; border: 1px solid #005a9e; border-radius: 3px; padding: 4px 8px; font-weight: bold; }
-            QPushButton:hover { background: #1084d8; }
-        """)
+        self.layout_mode_btn = QtWidgets.QPushButton("切瀑布流" if self.grid_mode else "切缩略图")
+        self.layout_mode_btn.setFixedSize(80, 28)  # 80px容纳4个字
+        self._update_layout_mode_btn_style()  # 设置初始样式
         self.layout_mode_btn.clicked.connect(self.toggle_layout_mode)
         layout.addWidget(self.layout_mode_btn)
         
@@ -1745,6 +1941,28 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         if self.labeling_widget and hasattr(self.labeling_widget, '_get_rgb_by_label'):
             return self.labeling_widget._get_rgb_by_label(label)
         return None
+    
+    def _update_thumbnail_size(self):
+        """在创建items之前更新缩略图尺寸，避免显示小图"""
+        # 使用窗口的初始尺寸计算正确的缩略图大小
+        window_width = self.width()
+        if window_width < 100:
+            window_width = 1200  # 使用默认宽度
+        
+        available_width = window_width - 2 * self.masonry_widget.margin - 20
+        
+        if self.grid_mode:
+            # 缩略图模式：根据列数估算最大尺寸
+            estimated_size = available_width // max(1, self.columns)
+            self.thumbnail_width = max(300, int(estimated_size * 1.5))
+        elif self.horizontal_mode:
+            # 横向模式：使用行高
+            self.thumbnail_width = max(250, self.row_height)
+        else:
+            # 纵向瀑布流模式：使用列宽
+            total_spacing = (self.columns - 1) * self.spacing
+            col_width = (available_width - total_spacing) // self.columns
+            self.thumbnail_width = max(250, col_width)
     
     def create_thumbnail_items(self):
         """创建所有缩略图项"""
@@ -1878,8 +2096,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.load_timer.timeout.connect(self.load_next_batch)
         self.load_timer.start(30)
         
-        # 初始化标题显示
-        self.update_title_with_position()
+        # 延迟初始化标题显示，等待布局完成后再更新
+        # 避免在布局未完成时计算错误的序号
+        QtCore.QTimer.singleShot(200, self.update_title_with_position)
     
     def scroll_to_image(self, filename):
         """滚动到指定图片并高亮显示"""
@@ -1904,8 +2123,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         # 获取滚动区域的可见高度
         viewport_height = self.scroll_area.viewport().height()
         
-        # 计算滚动位置，让目标图片显示在可见区域的中间偏上位置
-        scroll_value = item_y - viewport_height // 3
+        # 计算滚动位置，让目标图片对齐到左上角（减去边距）
+        scroll_value = item_y - self.masonry_widget.margin
         
         # 确保滚动值在有效范围内
         scroll_bar = self.scroll_area.verticalScrollBar()
@@ -1949,8 +2168,10 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             self.update_edited_count()
             # 处理重新加载队列
             self.process_reload_queue()
-            # 首次加载完成后，滚动到当前图片并高亮
-            if self.current_filename and not hasattr(self, '_initial_scroll_done'):
+            # 根据打开方式决定是否滚动到当前图片
+            # auto_scroll_to_current=True: 右键打开，滚动到当前图片
+            # auto_scroll_to_current=False: 工具栏按钮打开，从第一张开始显示
+            if self.auto_scroll_to_current and self.current_filename and not hasattr(self, '_initial_scroll_done'):
                 self._initial_scroll_done = True
                 # 延迟执行，确保布局完成
                 QtCore.QTimer.singleShot(300, lambda: self.scroll_to_image(self.current_filename))
@@ -1969,6 +2190,12 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         self.loaded_count = end_idx
         self.count_label.setText(f"总数: {len(self.image_list)} | 加载: {self.loaded_count}")
+        
+        # 第一批加载完成后，显示内容区域
+        if not self._initial_load_complete and self.loaded_count >= self.load_batch_size:
+            self._initial_load_complete = True
+            # 延迟显示，确保图片已经渲染
+            QtCore.QTimer.singleShot(100, self.masonry_widget.show)
     
     def on_thumbnail_loaded(self, path, pixmap, orig_w, orig_h, load_width):
         """缩略图加载完成"""
@@ -2093,21 +2320,58 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             item.set_border_width(self.border_width)
         self.save_masonry_settings()
     
+    
+    def open_layout_settings(self):
+        """打开布局设置对话框"""
+        dialog = LayoutSettingsDialog(self)
+        dialog.show()  # 非模态显示，不阻塞
+    
     def toggle_layout_mode(self):
         """切换瀑布流/方格子模式"""
         self.grid_mode = not self.grid_mode
         self.masonry_widget.grid_mode = self.grid_mode
         
         if self.grid_mode:
-            self.layout_mode_btn.setText("缩略图")
+            self.layout_mode_btn.setText("切瀑布流")
         else:
-            self.layout_mode_btn.setText("瀑布流")
+            self.layout_mode_btn.setText("切缩略图")
+        
+        self._update_layout_mode_btn_style()  # 更新按钮样式
         
         self.masonry_widget.schedule_relayout(0)
         self._resize_reload_timer.start(300)
         self.save_masonry_settings()
         # 延迟更新标题以确保布局完成
         QtCore.QTimer.singleShot(350, self.update_title_with_position)
+    
+    def _update_layout_mode_btn_style(self):
+        """更新布局模式按钮的样式"""
+        if self.grid_mode:
+            # 缩略图模式：橘色
+            self.layout_mode_btn.setStyleSheet("""
+                QPushButton { 
+                    background: #ff8c00; 
+                    color: #fff; 
+                    border: 1px solid #e67e00; 
+                    border-radius: 3px; 
+                    padding: 4px 8px; 
+                    font-weight: bold; 
+                }
+                QPushButton:hover { background: #ffa500; }
+            """)
+        else:
+            # 瀑布流模式：绿色
+            self.layout_mode_btn.setStyleSheet("""
+                QPushButton { 
+                    background: #28a745; 
+                    color: #fff; 
+                    border: 1px solid #1e7e34; 
+                    border-radius: 3px; 
+                    padding: 4px 8px; 
+                    font-weight: bold; 
+                }
+                QPushButton:hover { background: #34ce57; }
+            """)
     
     def toggle_hover_info(self):
         """切换悬停信息显示"""
@@ -2594,7 +2858,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self._last_selected_index = None
         
         # 重新加载图片列表
-        self.update_image_list(new_image_list, new_path)
+        self.update_image_list(new_image_list, new_path, keep_scroll_position=True)
         
         # 更新统计信息
         self.update_merge_stats()
@@ -2685,7 +2949,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # 重新加载图片列表
         current_file = self.current_filename if self.current_filename not in deleted_list else None
-        self.update_image_list(new_image_list, current_file)
+        self.update_image_list(new_image_list, current_file, keep_scroll_position=True)
         
         # 更新统计信息
         self.update_merge_stats()
@@ -2816,7 +3080,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         # 更新界面
         new_image_list = [p for p in self.image_list if p not in deleted]
         current_file = self.current_filename if self.current_filename not in deleted else None
-        self.update_image_list(new_image_list, current_file)
+        self.update_image_list(new_image_list, current_file, keep_scroll_position=True)
         
         # 发出文件列表变化信号
         self.files_changed.emit()
@@ -2853,19 +3117,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.horizontal_mode = False
         self.masonry_widget.horizontal_mode = False
         
-        # 更新按钮样式
-        self.mode_btn.setStyleSheet("""
-            QPushButton { background: #444; color: #fff; border: 1px solid #666; border-radius: 3px; padding: 2px 5px; }
-            QPushButton:hover { background: #555; }
-        """)
-        self.columns_slider.setEnabled(True)
-        
-        self.height_mode_btn.setStyleSheet("""
-            QPushButton { background: #333; color: #888; border: 1px solid #555; border-radius: 3px; padding: 2px 5px; }
-            QPushButton:hover { background: #444; }
-        """)
-        self.height_slider.setEnabled(False)
-        
         self.masonry_widget.schedule_relayout(0)
         self._resize_reload_timer.start(300)
         self.save_masonry_settings()
@@ -2879,19 +3130,6 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         self.horizontal_mode = True
         self.masonry_widget.horizontal_mode = True
-        
-        # 更新按钮样式
-        self.mode_btn.setStyleSheet("""
-            QPushButton { background: #333; color: #888; border: 1px solid #555; border-radius: 3px; padding: 2px 5px; }
-            QPushButton:hover { background: #444; }
-        """)
-        self.columns_slider.setEnabled(False)
-        
-        self.height_mode_btn.setStyleSheet("""
-            QPushButton { background: #444; color: #fff; border: 1px solid #666; border-radius: 3px; padding: 2px 5px; }
-            QPushButton:hover { background: #555; }
-        """)
-        self.height_slider.setEnabled(True)
         
         self.masonry_widget.schedule_relayout(0)
         self._resize_reload_timer.start(300)
@@ -3020,40 +3258,59 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # 删合模式：按一屏高度翻页（快速浏览多张图）
         if self.merge_mode:
-            # 计算目标滚动位置（当前位置 + 一屏高度）
-            target_scroll = current_scroll + (viewport_height * direction)
+            visible_top = current_scroll
+            visible_bottom = visible_top + viewport_height
             
-            # 限制在有效范围内
-            max_value = scroll_bar.maximum()
-            target_scroll = max(0, min(target_scroll, max_value))
-            
-            # 找到目标位置附近最近的图片顶部
-            closest_item_top = None
-            min_distance = float('inf')
-            
-            for item in self.masonry_widget.items:
-                item_top = item.y()
+            if direction > 0:
+                # 向下翻页：找第一张部分可见的图片（顶部在可见区域内，但底部在可见区域外）
+                # 如果没有部分可见的，就找第一张完全不可见的
+                target_item_top = None
                 
-                # 向下翻页：找目标位置之后最近的图片顶部
-                if direction > 0:
-                    if item_top >= target_scroll:
-                        distance = item_top - target_scroll
-                        if distance < min_distance:
-                            min_distance = distance
-                            closest_item_top = item_top
-                # 向上翻页：找目标位置之前最近的图片顶部
+                for item in self.masonry_widget.items:
+                    item_top = item.y()
+                    item_bottom = item_top + item.height()
+                    
+                    # 检查是否是部分可见的图片（顶部在可见区域内，底部在可见区域外）
+                    # 并且顶部不在最顶部（容差50像素，避免已经对齐的图片）
+                    if item_top > visible_top + 50 and item_top < visible_bottom and item_bottom > visible_bottom:
+                        target_item_top = item_top
+                        break
+                
+                # 如果没找到部分可见的，就找第一张完全不可见的
+                if target_item_top is None:
+                    for item in self.masonry_widget.items:
+                        item_top = item.y()
+                        if item_top >= visible_bottom:
+                            target_item_top = item_top
+                            break
+                
+                if target_item_top is not None:
+                    final_scroll = target_item_top
                 else:
-                    if item_top <= target_scroll:
-                        distance = target_scroll - item_top
-                        if distance < min_distance:
-                            min_distance = distance
-                            closest_item_top = item_top
-            
-            # 如果找到了对齐的图片，滚动到该位置
-            if closest_item_top is not None:
-                final_scroll = closest_item_top
+                    # 如果没有找到，说明已经到底了
+                    final_scroll = scroll_bar.maximum()
             else:
-                final_scroll = target_scroll
+                # 向上翻页：往上滚一屏，找目标位置之后的第一张图片
+                # 计算目标位置（当前位置 - 一屏高度）
+                target_scroll = current_scroll - viewport_height
+                target_scroll = max(0, target_scroll)
+                
+                # 找到目标位置之后的第一张图片顶部
+                target_item_top = None
+                
+                for item in self.masonry_widget.items:
+                    item_top = item.y()
+                    
+                    # 找第一张顶部在目标位置之后的图片
+                    if item_top >= target_scroll:
+                        target_item_top = item_top
+                        break
+                
+                if target_item_top is not None:
+                    final_scroll = target_item_top
+                else:
+                    # 如果没有找到，说明已经到顶了
+                    final_scroll = 0
         else:
             # 普通模式（瀑布流或方格子）：找第一张部分可见的图片，对齐到顶部
             visible_top = current_scroll
@@ -3135,8 +3392,19 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         # 延迟处理重新加载队列
         self._resize_reload_timer.start(300)
     
-    def update_image_list(self, new_image_list, current_filename=None):
-        """更新图片列表"""
+    def update_image_list(self, new_image_list, current_filename=None, keep_scroll_position=False):
+        """更新图片列表
+        
+        Args:
+            new_image_list: 新的图片列表
+            current_filename: 当前文件名
+            keep_scroll_position: 是否保持滚动位置（删除图片后刷新时使用）
+        """
+        # 保存当前滚动位置
+        saved_scroll_position = 0
+        if keep_scroll_position and hasattr(self, 'scroll_area') and self.scroll_area is not None:
+            saved_scroll_position = self.scroll_area.verticalScrollBar().value()
+        
         self.image_list = new_image_list
         if current_filename:
             self.current_filename = current_filename
@@ -3149,9 +3417,14 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.create_thumbnail_items()
         self.start_loading()
         
-        # 重置滚动位置到顶部
+        # 恢复或重置滚动位置
         if hasattr(self, 'scroll_area') and self.scroll_area is not None:
-            self.scroll_area.verticalScrollBar().setValue(0)
+            if keep_scroll_position:
+                # 延迟恢复滚动位置，等待布局完成
+                QtCore.QTimer.singleShot(100, lambda: self.scroll_area.verticalScrollBar().setValue(saved_scroll_position))
+            else:
+                # 重置滚动位置到顶部
+                self.scroll_area.verticalScrollBar().setValue(0)
         
         # 如果处于删合模式，重新应用鼠标指针
         if self.merge_mode:
@@ -3211,8 +3484,15 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         viewport_height = self.scroll_area.viewport().height()
         visible_bottom = scroll_value + viewport_height
         
+        # 如果滚动位置在顶部（容差10像素），直接显示第一张
+        if scroll_value <= 10:
+            self.setWindowTitle(f"瀑布流缩略图 - 1/{len(self.masonry_widget.items)}")
+            return
+        
         # 找到最后一张完全可见的图片
         last_visible_index = 0
+        found_fully_visible = False
+        
         for i, item in enumerate(self.masonry_widget.items):
             item_top = item.y()
             item_bottom = item.y() + item.height()
@@ -3220,9 +3500,25 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             # 图片必须完全在可见区域内：顶部和底部都要在可见范围内
             if item_top >= scroll_value and item_bottom <= visible_bottom:
                 last_visible_index = i
+                found_fully_visible = True
             elif item_bottom > visible_bottom:
                 # 图片底部超出可见区域，停止查找
                 break
+        
+        # 如果没有找到完全可见的图片（滚轮快速滚动时），使用部分可见的图片
+        if not found_fully_visible:
+            # 找到第一张至少部分可见的图片（顶部在可见区域内，或者跨越可见区域顶部）
+            for i, item in enumerate(self.masonry_widget.items):
+                item_top = item.y()
+                item_bottom = item.y() + item.height()
+                
+                # 图片至少部分可见：底部在可见区域内，或者跨越整个可见区域
+                if item_bottom > scroll_value and item_top < visible_bottom:
+                    last_visible_index = i
+                    # 继续查找，直到找到最后一张部分可见的
+                elif item_top >= visible_bottom:
+                    # 图片完全在可见区域下方，停止查找
+                    break
         
         # 更新标题：显示 "序号/总数"
         current_num = last_visible_index + 1  # 从1开始计数
