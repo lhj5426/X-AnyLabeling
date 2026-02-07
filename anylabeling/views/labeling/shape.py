@@ -74,7 +74,11 @@ class Shape:
     handle_detect_chaotic = True  # 检测混沌状态（高亮下被点击过的图形用非高亮设置）
     # Inner crosshair display settings
     crosshair_highlight = True  # 高亮时显示内十字
+    crosshair_highlight_horizontal = True  # 高亮时显示水平线
+    crosshair_highlight_vertical = True  # 高亮时显示垂直线
     crosshair_normal = False  # 非高亮时显示内十字
+    crosshair_normal_horizontal = False  # 非高亮时显示水平线
+    crosshair_normal_vertical = False  # 非高亮时显示垂直线
     # Highlight border color settings
     highlight_use_border_color = False  # 高亮时直接使用独立边框颜色（状态5）
     # Locked shape handle display settings
@@ -919,17 +923,27 @@ class Shape:
         crosshair_pen.setStyle(QtCore.Qt.SolidLine)  # 使用实线样式
         painter.setPen(crosshair_pen)
         
-        # 从上边中点到中心
-        painter.drawLine(midpoints[0], center)
+        # 根据配置决定是否绘制水平线和垂直线
+        if is_highlighted:
+            show_horizontal = Shape.crosshair_highlight_horizontal
+            show_vertical = Shape.crosshair_highlight_vertical
+        else:
+            show_horizontal = Shape.crosshair_normal_horizontal
+            show_vertical = Shape.crosshair_normal_vertical
         
-        # 从右边中点到中心
-        painter.drawLine(midpoints[1], center)
+        # 绘制垂直线（上边中点到中心 + 下边中点到中心）
+        if show_vertical:
+            # 从上边中点到中心
+            painter.drawLine(midpoints[0], center)
+            # 从下边中点到中心
+            painter.drawLine(midpoints[2], center)
         
-        # 从下边中点到中心
-        painter.drawLine(midpoints[2], center)
-        
-        # 从左边中点到中心
-        painter.drawLine(midpoints[3], center)
+        # 绘制水平线（左边中点到中心 + 右边中点到中心）
+        if show_horizontal:
+            # 从右边中点到中心
+            painter.drawLine(midpoints[1], center)
+            # 从左边中点到中心
+            painter.drawLine(midpoints[3], center)
         
         # 恢复原来的画笔
         painter.setPen(old_pen)

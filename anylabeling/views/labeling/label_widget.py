@@ -472,7 +472,11 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.handle_detect_chaotic = self._config.get("handle_detect_chaotic", True)
         # Inner crosshair display settings
         Shape.crosshair_highlight = self._config.get("crosshair_highlight", True)
+        Shape.crosshair_highlight_horizontal = self._config.get("crosshair_highlight_horizontal", True)
+        Shape.crosshair_highlight_vertical = self._config.get("crosshair_highlight_vertical", True)
         Shape.crosshair_normal = self._config.get("crosshair_normal", False)
+        Shape.crosshair_normal_horizontal = self._config.get("crosshair_normal_horizontal", False)
+        Shape.crosshair_normal_vertical = self._config.get("crosshair_normal_vertical", False)
         # Highlight border color settings
         Shape.highlight_use_border_color = self._config.get("highlight_use_border_color", False)
         # Locked shape handle display settings
@@ -591,13 +595,14 @@ class LabelingWidget(QtWidgets.QWidget):
         def deselect_all_objects():
             # 获取取消功能增强设置
             exclude_locked = self._config.get("deselect_exclude_locked", True)
+            hide_locked = self._config.get("deselect_hide_locked", False)
             deselect_even = self._config.get("deselect_even", False)
             deselect_odd = self._config.get("deselect_odd", False)
             deselect_edited = self._config.get("deselect_edited", False)
             
             # 获取锁定的标签
             locked_labels = set()
-            if exclude_locked:
+            if exclude_locked or hide_locked:
                 locked_labels_str = self._config.get("locked_labels", "")
                 locked_labels = {label.strip() for label in locked_labels_str.split(",") if label.strip()}
             
@@ -611,20 +616,36 @@ class LabelingWidget(QtWidgets.QWidget):
                         return True
                 return False
             
+            # 判断是否应该隐藏锁定的标签
+            def should_hide_locked(shape):
+                if not hide_locked:
+                    return False
+                if shape and shape.label in locked_labels:
+                    # 检查是否被会话解锁
+                    if not getattr(shape, "is_session_unlocked", False):
+                        return True
+                return False
+            
             # 根据偶数/奇数/已编辑设置决定取消哪些项
             if deselect_even:
                 # 按偶数取消（2, 4, 6...）- 按原始列表序号
                 for i, item in enumerate(self.label_list):
-                    if (i + 1) % 2 == 0:  # 偶数位置
-                        shape = item.shape()
+                    shape = item.shape()
+                    # 如果勾选了"隐藏锁定的标签"，也要隐藏锁定的标签
+                    if should_hide_locked(shape):
+                        item.setCheckState(Qt.Unchecked)
+                    elif (i + 1) % 2 == 0:  # 偶数位置
                         if should_skip_locked(shape):
                             continue
                         item.setCheckState(Qt.Unchecked)
             elif deselect_odd:
                 # 按奇数取消（1, 3, 5...）- 按原始列表序号
                 for i, item in enumerate(self.label_list):
-                    if (i + 1) % 2 == 1:  # 奇数位置
-                        shape = item.shape()
+                    shape = item.shape()
+                    # 如果勾选了"隐藏锁定的标签"，也要隐藏锁定的标签
+                    if should_hide_locked(shape):
+                        item.setCheckState(Qt.Unchecked)
+                    elif (i + 1) % 2 == 1:  # 奇数位置
                         if should_skip_locked(shape):
                             continue
                         item.setCheckState(Qt.Unchecked)
@@ -632,28 +653,39 @@ class LabelingWidget(QtWidgets.QWidget):
                 # 按已编辑取消 - 隐藏有绿色信号灯的项目，保留未编辑的
                 for item in self.label_list:
                     shape = item.shape()
-                    if should_skip_locked(shape):
+                    # 如果勾选了"隐藏锁定的标签"，也要隐藏锁定的标签
+                    if should_hide_locked(shape):
+                        item.setCheckState(Qt.Unchecked)
+                    elif should_skip_locked(shape):
                         continue
                     # 只隐藏明确有 is_edited=True 的（有绿灯的）
-                    if shape and hasattr(shape, "is_edited") and shape.is_edited:
+                    elif shape and hasattr(shape, "is_edited") and shape.is_edited:
                         item.setCheckState(Qt.Unchecked)
             else:
                 # 正常取消所有（排除锁定且未解锁的）
                 for item in self.label_list:
                     shape = item.shape()
-                    if should_skip_locked(shape):
+                    # 如果勾选了"隐藏锁定的标签"，也要隐藏锁定的标签
+                    if should_hide_locked(shape):
+                        item.setCheckState(Qt.Unchecked)
+                    elif should_skip_locked(shape):
                         continue
-                    item.setCheckState(Qt.Unchecked)
+                    else:
+                        item.setCheckState(Qt.Unchecked)
                 # 只有在正常取消所有时才取消标签列表的勾选（排除锁定的标签）
                 for i in range(self.unique_label_list.count()):
                     item = self.unique_label_list.item(i)
                     label_text = item.data(Qt.UserRole)
                     if label_text is None:
                         label_text = item.text()
+                    # 如果启用了隐藏锁定，且该标签在锁定列表中，也要取消勾选
+                    if hide_locked and label_text in locked_labels:
+                        item.setCheckState(Qt.Unchecked)
                     # 如果启用了排除锁定，且该标签在锁定列表中，则跳过
-                    if exclude_locked and label_text in locked_labels:
+                    elif exclude_locked and label_text in locked_labels:
                         continue
-                    item.setCheckState(Qt.Unchecked)
+                    else:
+                        item.setCheckState(Qt.Unchecked)
             
             # 更新canvas中图形的可见性
             for shape in self.canvas.shapes:
@@ -6694,7 +6726,11 @@ class LabelingWidget(QtWidgets.QWidget):
         Shape.handle_detect_chaotic = self._config.get("handle_detect_chaotic", True)
         # 内十字显示设置
         Shape.crosshair_highlight = self._config.get("crosshair_highlight", True)
+        Shape.crosshair_highlight_horizontal = self._config.get("crosshair_highlight_horizontal", True)
+        Shape.crosshair_highlight_vertical = self._config.get("crosshair_highlight_vertical", True)
         Shape.crosshair_normal = self._config.get("crosshair_normal", False)
+        Shape.crosshair_normal_horizontal = self._config.get("crosshair_normal_horizontal", False)
+        Shape.crosshair_normal_vertical = self._config.get("crosshair_normal_vertical", False)
         # 高亮时直接使用独立边框颜色设置
         Shape.highlight_use_border_color = self._config.get("highlight_use_border_color", False)
         # 锁定标签的控制柄显示设置
@@ -9639,9 +9675,9 @@ class LabelingWidget(QtWidgets.QWidget):
                     item.setCheckState(Qt.Unchecked)
         self.btn_invert_selection.clicked.connect(invert_labels)
 
-        # 取消按钮
-        self.btn_deselect_all = QtWidgets.QPushButton(self.tr("取消"))
-        self.btn_deselect_all.setToolTip(self.tr("取消所有标签"))
+        # 隐藏按钮（原取消按钮）
+        self.btn_deselect_all = QtWidgets.QPushButton(self.tr("隐藏"))
+        self.btn_deselect_all.setToolTip(self.tr("隐藏所有标签"))
         def deselect_all_labels():
             # 取消标签列表的勾选
             for i in range(self.unique_label_list.count()):
