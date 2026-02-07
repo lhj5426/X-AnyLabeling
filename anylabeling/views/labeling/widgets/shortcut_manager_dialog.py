@@ -112,7 +112,7 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
                 ("deselect_all_shapes", self.tr("取消选择所有标注")),
                 ("invert_selection_shapes", self.tr("反选标注")),
                 ("select_all_labels", self.tr("选择所有标签")),
-                ("deselect_all_labels", self.tr("取消选择所有标签")),
+                ("deselect_all_labels", self.tr("隐藏所有标签")),
                 ("invert_selection_labels", self.tr("反选标签")),
             ],
             self.tr("显示控制"): [

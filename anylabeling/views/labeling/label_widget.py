@@ -10361,6 +10361,19 @@ class LabelingWidget(QtWidgets.QWidget):
         for shape in self.canvas.shapes:
             shape.is_session_unlocked = False
         
+        # 取消锁定标签的高亮
+        from ...config import get_config
+        current_config = get_config()
+        locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
+        locked_can_highlight = current_config.get("locked_can_highlight", False)
+        
+        # 如果没有勾选"锁定后仍可高亮"，则取消锁定标签的高亮
+        if not locked_can_highlight and locked_labels:
+            for item in self.label_list:
+                shape = item.shape()
+                if shape and shape.label in locked_labels:
+                    shape.selected = False
+        
         # 更新画布
         self.canvas.update()
         
