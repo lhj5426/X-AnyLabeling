@@ -1093,6 +1093,30 @@ class ThumbnailItem(QtWidgets.QWidget):
             menu.addSeparator()
             delete_action = menu.addAction("删除此图片")
         
+        # 添加工具栏功能选项
+        menu.addSeparator()
+        
+        # 布局设置
+        layout_settings_action = menu.addAction("布局设置")
+        
+        # 切换布局模式
+        if parent and hasattr(parent, 'grid_mode'):
+            if parent.grid_mode:
+                toggle_layout_action = menu.addAction("切换到瀑布流")
+            else:
+                toggle_layout_action = menu.addAction("切换到方格子")
+        else:
+            toggle_layout_action = None
+        
+        # 隐藏信息
+        if parent and hasattr(parent, 'show_hover_info'):
+            if parent.show_hover_info:
+                hide_info_action = menu.addAction("隐藏悬停信息")
+            else:
+                hide_info_action = menu.addAction("显示悬停信息")
+        else:
+            hide_info_action = None
+        
         # 添加显示/隐藏工具栏选项
         menu.addSeparator()
         if parent and hasattr(parent, 'toolbar'):
@@ -1112,6 +1136,21 @@ class ThumbnailItem(QtWidgets.QWidget):
             # 删除功能
             if parent and hasattr(parent, 'delete_multi_selected'):
                 parent.delete_multi_selected()
+        elif action == layout_settings_action:
+            # 打开布局设置
+            if parent and hasattr(parent, 'open_layout_settings'):
+                parent.open_layout_settings()
+        elif toggle_layout_action and action == toggle_layout_action:
+            # 切换布局模式
+            if parent and hasattr(parent, 'toggle_layout_mode'):
+                parent.toggle_layout_mode()
+        elif hide_info_action and action == hide_info_action:
+            # 切换隐藏信息
+            if parent and hasattr(parent, 'toggle_hover_info'):
+                parent.toggle_hover_info()
+                # 同步按钮状态
+                if hasattr(parent, 'hide_hover_info_btn'):
+                    parent.hide_hover_info_btn.setChecked(not parent.show_hover_info)
         elif toolbar_action and action == toolbar_action:
             # 切换工具栏显示
             if parent and hasattr(parent, 'toggle_toolbar'):
