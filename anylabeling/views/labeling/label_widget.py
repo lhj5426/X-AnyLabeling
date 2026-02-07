@@ -688,15 +688,15 @@ class LabelingWidget(QtWidgets.QWidget):
             locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
             locked_can_highlight = current_config.get("locked_can_highlight", False)
             
-            # Filter out shapes that are locked and have not been session-unlocked
-            # Unless locked_can_highlight is enabled
+            # 根据"锁定后仍可高亮"设置来决定是否过滤锁定的标签
             if locked_can_highlight:
-                # 锁定后仍可高亮：不过滤锁定的标签
+                # 勾选了"锁定后仍可高亮"：锁定的标签也可以参与高亮
                 unlocked_shapes = all_shapes
             else:
+                # 没勾选"锁定后仍可高亮"：过滤掉锁定且未会话解锁的标签
                 unlocked_shapes = [
                     s for s in all_shapes 
-                    if not (s.label in locked_labels and not s.is_session_unlocked)
+                    if not (s.label in locked_labels and not getattr(s, 'is_session_unlocked', False))
                 ]
 
             positive_labels_str = current_config.get("highlight_positive", "")
@@ -704,6 +704,12 @@ class LabelingWidget(QtWidgets.QWidget):
 
             negative_labels_str = current_config.get("highlight_negative", "")
             negative_labels = {label.strip() for label in negative_labels_str.split(',') if label.strip()}
+
+            # 如果没有勾选"锁定后仍可高亮"，先取消所有锁定标签的高亮状态
+            if not locked_can_highlight:
+                for shape in all_shapes:
+                    if shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False):
+                        shape.selected = False
 
             # Get mixed mode setting - always read fresh from config
             mixed_mode_enabled = current_config.get("highlight_mixed_mode", False)
@@ -6628,9 +6634,42 @@ class LabelingWidget(QtWidgets.QWidget):
     def apply_default_highlight_setting(self, is_enabled):
         """应用默认高亮设置，实时生效到所有标注"""
         if is_enabled:
-            # 勾选：常驻高亮，所有标注默认高亮
+            # 勾选：常驻高亮，根据规则应用高亮
+            from ...config import get_config
+            current_config = get_config()
+            
+            # 获取锁定标签配置
+            locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
+            locked_can_highlight = current_config.get("locked_can_highlight", False)
+            exclude_locked = current_config.get("default_highlight_exclude_locked", True)
+            
+            # 获取正向高亮配置
+            positive_labels_str = current_config.get("highlight_positive", "")
+            positive_labels = {label.strip() for label in positive_labels_str.split(',') if label.strip()}
+            
+            # 应用高亮规则
             for shape in self.canvas.shapes:
-                shape.selected = True
+                # 检查是否需要排除锁定的标签
+                if exclude_locked:
+                    is_locked = shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False)
+                    # 如果是锁定的标签且没有勾选"锁定后仍可高亮"，则不高亮
+                    if is_locked and not locked_can_highlight:
+                        shape.selected = False
+                    elif positive_labels:
+                        # 有正向高亮规则，按规则高亮
+                        shape.selected = shape.label in positive_labels
+                    else:
+                        # 没有规则，全部高亮
+                        shape.selected = True
+                else:
+                    # 不排除锁定标签
+                    if positive_labels:
+                        # 有正向高亮规则，按规则高亮
+                        shape.selected = shape.label in positive_labels
+                    else:
+                        # 没有规则，全部高亮
+                        shape.selected = True
+            
             self._highlight_on = True
             Shape.highlighting_enabled = True
             if hasattr(self, 'btn_highlight'):
@@ -9898,14 +9937,28 @@ class LabelingWidget(QtWidgets.QWidget):
             self.add_label(shape, update_last_label=update_last_label)
         self.label_list.clearSelection()
         self._no_selection_slot = False
+        
+        # 获取锁定标签配置
+        from ...config import get_config
+        current_config = get_config()
+        locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
+        locked_can_highlight = current_config.get("locked_can_highlight", False)
+        
         # 全局高亮同步
         if hasattr(self, "_highlight_on") and self._highlight_on:
             for shape in shapes:
-                shape.selected = True
-                shape.fill = True
+                # 检查是否是锁定的标签
+                is_locked = shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False)
+                # 如果是锁定的标签且没有勾选"锁定后仍可高亮"，则不高亮
+                if is_locked and not locked_can_highlight:
+                    shape.selected = False
+                else:
+                    shape.selected = True
+                    shape.fill = True
         elif hasattr(self, "_highlight_on") and not self._highlight_on:
             for shape in shapes:
                 shape.selected = False
+        
         # 将形状添加到画布
         self.canvas.load_shapes(shapes, replace=replace)
         self.canvas.update()
@@ -13219,6 +13272,12 @@ class LabelingWidget(QtWidgets.QWidget):
             from ...config import get_config
             current_config = get_config()
             
+            # 获取锁定标签配置
+            locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
+            locked_can_highlight = current_config.get("locked_can_highlight", False)
+            # 获取"排除锁定标签"配置（默认为True，即默认排除锁定标签）
+            exclude_locked = current_config.get("default_highlight_exclude_locked", True)
+            
             # Check if default highlight is enabled (常驻高亮)
             highlight_enabled_by_default = current_config.get("highlight_enabled_by_default", True)
             
@@ -13230,14 +13289,36 @@ class LabelingWidget(QtWidgets.QWidget):
                 if positive_labels:
                     # 有规则：按规则高亮
                     for shape in self.canvas.shapes:
-                        if shape.label in positive_labels:
-                            shape.selected = True
+                        # 检查是否需要排除锁定的标签
+                        if exclude_locked:
+                            is_locked = shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False)
+                            # 如果是锁定的标签且没有勾选"锁定后仍可高亮"，则不高亮
+                            if is_locked and not locked_can_highlight:
+                                shape.selected = False
+                            elif shape.label in positive_labels:
+                                shape.selected = True
+                            else:
+                                shape.selected = False
                         else:
-                            shape.selected = False
+                            # 不排除锁定标签，直接按规则高亮
+                            if shape.label in positive_labels:
+                                shape.selected = True
+                            else:
+                                shape.selected = False
                 else:
                     # 无规则：全部高亮
                     for shape in self.canvas.shapes:
-                        shape.selected = True
+                        # 检查是否需要排除锁定的标签
+                        if exclude_locked:
+                            is_locked = shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False)
+                            # 如果是锁定的标签且没有勾选"锁定后仍可高亮"，则不高亮
+                            if is_locked and not locked_can_highlight:
+                                shape.selected = False
+                            else:
+                                shape.selected = True
+                        else:
+                            # 不排除锁定标签，全部高亮
+                            shape.selected = True
                 
                 # Update global highlight state and canvas
                 is_any_shape_selected = any(s.selected for s in self.canvas.shapes)

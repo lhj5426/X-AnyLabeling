@@ -195,6 +195,8 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.default_highlight_group = QtWidgets.QGroupBox("高亮常驻设置")
         self.default_highlight_layout = QtWidgets.QVBoxLayout()
         self.default_highlight_checkbox = QtWidgets.QCheckBox("启用常驻高亮")
+        self.default_highlight_exclude_locked_checkbox = QtWidgets.QCheckBox("排除锁定的标签")
+        self.default_highlight_exclude_locked_checkbox.setToolTip("启用后，常驻高亮会自动排除被锁定的标签（除非勾选了'锁定后仍可高亮'）")
         self.highlight_use_border_color_checkbox = QtWidgets.QCheckBox("高亮时直接进入状态5")
         self.highlight_use_border_color_checkbox.setToolTip(
             "勾选后，高亮时直接进入状态5：\n"
@@ -203,6 +205,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             "（无需先点击矩形再移开鼠标）"
         )
         self.default_highlight_layout.addWidget(self.default_highlight_checkbox)
+        self.default_highlight_layout.addWidget(self.default_highlight_exclude_locked_checkbox)
         self.default_highlight_layout.addWidget(self.highlight_use_border_color_checkbox)
         self.default_highlight_group.setLayout(self.default_highlight_layout)
 
@@ -359,7 +362,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.negative_input.textChanged.connect(self._realtime_save_settings)
         self.lock_input.textChanged.connect(self._realtime_save_settings)
         self.lock_difficult_checkbox.stateChanged.connect(self._realtime_save_settings)
-        self.lock_highlight_checkbox.stateChanged.connect(self._realtime_save_settings)
+        self.lock_highlight_checkbox.stateChanged.connect(self._on_locked_can_highlight_changed)
         self.lock_show_info_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.lock_show_order_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.lock_show_point_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
@@ -370,6 +373,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
         self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
         self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
         self.default_highlight_checkbox.stateChanged.connect(self._on_default_highlight_changed)
+        self.default_highlight_exclude_locked_checkbox.stateChanged.connect(self._on_default_highlight_exclude_locked_changed)
         self.highlight_use_border_color_checkbox.stateChanged.connect(self._on_highlight_border_setting_changed)
         
         self.handle_highlight_point_checkbox.stateChanged.connect(self._on_handle_setting_changed)
@@ -425,7 +429,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.negative_input.textChanged.disconnect(self._realtime_save_settings)
             self.lock_input.textChanged.disconnect(self._realtime_save_settings)
             self.lock_difficult_checkbox.stateChanged.disconnect(self._realtime_save_settings)
-            self.lock_highlight_checkbox.stateChanged.disconnect(self._realtime_save_settings)
+            self.lock_highlight_checkbox.stateChanged.disconnect(self._on_locked_can_highlight_changed)
             self.lock_show_info_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.lock_show_order_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.lock_show_point_checkbox.stateChanged.disconnect(self._on_lock_handle_setting_changed)
@@ -435,6 +439,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.no_highlight_input.textChanged.disconnect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.disconnect(self._realtime_save_settings)
             self.default_highlight_checkbox.stateChanged.disconnect(self._on_default_highlight_changed)
+            self.default_highlight_exclude_locked_checkbox.stateChanged.disconnect(self._on_default_highlight_exclude_locked_changed)
             self.highlight_use_border_color_checkbox.stateChanged.disconnect(self._on_highlight_border_setting_changed)
             self.handle_highlight_point_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
             self.handle_highlight_square_checkbox.stateChanged.disconnect(self._on_handle_setting_changed)
@@ -484,6 +489,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.no_highlight_input.setText(self._config.get("no_highlight_labels", ""))
             self.mixed_mode_checkbox.setChecked(self._config.get("highlight_mixed_mode", False))
             self.default_highlight_checkbox.setChecked(self._config.get("highlight_enabled_by_default", True))
+            self.default_highlight_exclude_locked_checkbox.setChecked(self._config.get("default_highlight_exclude_locked", True))
             self.highlight_use_border_color_checkbox.setChecked(self._config.get("highlight_use_border_color", False))
             
             self.handle_highlight_point_checkbox.setChecked(self._config.get("handle_highlight_point", True))
@@ -557,7 +563,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.negative_input.textChanged.connect(self._realtime_save_settings)
             self.lock_input.textChanged.connect(self._realtime_save_settings)
             self.lock_difficult_checkbox.stateChanged.connect(self._realtime_save_settings)
-            self.lock_highlight_checkbox.stateChanged.connect(self._realtime_save_settings)
+            self.lock_highlight_checkbox.stateChanged.connect(self._on_locked_can_highlight_changed)
             self.lock_show_info_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.lock_show_order_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.lock_show_point_checkbox.stateChanged.connect(self._on_lock_handle_setting_changed)
@@ -568,6 +574,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self.no_highlight_input.textChanged.connect(self._realtime_save_settings)
             self.mixed_mode_checkbox.stateChanged.connect(self._realtime_save_settings)
             self.default_highlight_checkbox.stateChanged.connect(self._on_default_highlight_changed)
+            self.default_highlight_exclude_locked_checkbox.stateChanged.connect(self._on_default_highlight_exclude_locked_changed)
             self.highlight_use_border_color_checkbox.stateChanged.connect(self._on_highlight_border_setting_changed)
             self.handle_highlight_point_checkbox.stateChanged.connect(self._on_handle_setting_changed)
             self.handle_highlight_square_checkbox.stateChanged.connect(self._on_handle_setting_changed)
@@ -614,6 +621,7 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             self._config["pin_labels"] = self.pin_input.text()
             self._config["no_highlight_labels"] = self.no_highlight_input.text()
             self._config["highlight_mixed_mode"] = self.mixed_mode_checkbox.isChecked()
+            self._config["default_highlight_exclude_locked"] = self.default_highlight_exclude_locked_checkbox.isChecked()
             save_config(self._config)
             
             # 直接更新Shape类的锁定标签集合和困难标记锁定，确保实时生效
@@ -632,6 +640,97 @@ class HighlightSettingsDialog(QtWidgets.QDialog):
             save_config(self._config)
             if self.parent() and hasattr(self.parent(), 'apply_default_highlight_setting'):
                 self.parent().apply_default_highlight_setting(is_enabled)
+
+    def _on_default_highlight_exclude_locked_changed(self, state):
+        """当'排除锁定的标签'选项改变时，立即应用到当前画布"""
+        if self._config:
+            is_enabled = self.default_highlight_exclude_locked_checkbox.isChecked()
+            self._config["default_highlight_exclude_locked"] = is_enabled
+            save_config(self._config)
+            
+            # 立即应用到当前画布
+            if self.parent():
+                parent = self.parent()
+                if hasattr(parent, 'canvas') and hasattr(parent.canvas, 'shapes'):
+                    # 获取锁定标签配置
+                    locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
+                    locked_can_highlight = self._config.get("locked_can_highlight", False)
+                    
+                    # 获取正向高亮配置
+                    positive_labels_str = self._config.get("highlight_positive", "")
+                    positive_labels = {label.strip() for label in positive_labels_str.split(',') if label.strip()}
+                    
+                    if is_enabled:
+                        # 勾选"排除锁定的标签"：取消锁定标签的高亮
+                        if not locked_can_highlight:
+                            for shape in parent.canvas.shapes:
+                                is_locked = shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False)
+                                if is_locked:
+                                    shape.selected = False
+                    else:
+                        # 取消勾选"排除锁定的标签"：恢复锁定标签的高亮（如果它们在正向高亮列表里）
+                        for shape in parent.canvas.shapes:
+                            is_locked = shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False)
+                            if is_locked:
+                                # 如果有正向高亮规则，按规则高亮
+                                if positive_labels:
+                                    if shape.label in positive_labels:
+                                        shape.selected = True
+                                else:
+                                    # 没有规则，全部高亮
+                                    shape.selected = True
+                    
+                    # 更新画布
+                    parent.canvas.update()
+
+    def _on_locked_can_highlight_changed(self, state):
+        """当'锁定后仍可高亮'选项改变时，立即应用到当前画布"""
+        if self._config:
+            is_enabled = self.lock_highlight_checkbox.isChecked()
+            self._config["locked_can_highlight"] = is_enabled
+            save_config(self._config)
+            
+            # 更新Shape类的锁定标签集合
+            from ..shape import Shape
+            locked_labels_str = self._config.get("locked_labels", "")
+            Shape.locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
+            Shape.lock_difficult = self._config.get("lock_difficult", False)
+            
+            # 立即应用到当前画布
+            if self.parent():
+                parent = self.parent()
+                if hasattr(parent, 'canvas') and hasattr(parent.canvas, 'shapes'):
+                    # 获取锁定标签配置
+                    locked_labels = {label.strip() for label in self._config.get("locked_labels", "").split(',') if label.strip()}
+                    
+                    # 获取正向高亮配置
+                    positive_labels_str = self._config.get("highlight_positive", "")
+                    positive_labels = {label.strip() for label in positive_labels_str.split(',') if label.strip()}
+                    
+                    if is_enabled:
+                        # 勾选"锁定后仍可高亮"：恢复锁定标签的高亮（如果它们在正向高亮列表里）
+                        for shape in parent.canvas.shapes:
+                            is_locked = shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False)
+                            if is_locked:
+                                # 如果有正向高亮规则，按规则高亮
+                                if positive_labels:
+                                    if shape.label in positive_labels:
+                                        shape.selected = True
+                                else:
+                                    # 没有规则，全部高亮
+                                    shape.selected = True
+                    else:
+                        # 取消勾选"锁定后仍可高亮"：取消锁定标签的高亮
+                        for shape in parent.canvas.shapes:
+                            is_locked = shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False)
+                            if is_locked:
+                                shape.selected = False
+                    
+                    # 更新画布
+                    parent.canvas.update()
+            
+            if self.parent() and hasattr(self.parent(), 'apply_handle_display_settings'):
+                self.parent().apply_handle_display_settings()
 
     def _on_highlight_border_setting_changed(self, state):
         if self._config:
