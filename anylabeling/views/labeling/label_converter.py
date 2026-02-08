@@ -496,6 +496,7 @@ class LabelConverter:
                 "difficult": False,
                 "direction": self.calculate_rotation_theta(points),
                 "attributes": {},
+                "imported_from_yolo_obb": True,  # 标记为从YOLO OBB导入
             }
             self.custom_data["shapes"].append(shape)
         self.custom_data["imagePath"] = osp.basename(image_file)

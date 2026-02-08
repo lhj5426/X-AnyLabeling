@@ -848,6 +848,9 @@ class AlignmentDialog(QtWidgets.QDialog):
                 self.label_filter_input.setText(settings["label_filter"])
             if "angle_labels" in settings:
                 self.angle_label_input.setText(settings["angle_labels"])
+            # 加载伸缩对齐模式状态
+            if "stretch_align_mode" in settings:
+                self.stretch_align_checkbox.setChecked(settings["stretch_align_mode"])
             # 保存窗口位置，在showEvent中恢复
             if "window_x" in settings and "window_y" in settings:
                 self._saved_position = (settings["window_x"], settings["window_y"])
@@ -858,6 +861,7 @@ class AlignmentDialog(QtWidgets.QDialog):
         settings = {
             "label_filter": self.label_filter_input.text(),
             "angle_labels": self.angle_label_input.text(),
+            "stretch_align_mode": self.stretch_align_checkbox.isChecked(),
             "window_x": pos.x(),
             "window_y": pos.y(),
         }

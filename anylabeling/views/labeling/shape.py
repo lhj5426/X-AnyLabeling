@@ -1057,7 +1057,13 @@ class Shape:
                 # 普通 rectangle，点是顺时针排列
                 offset_direction = 1  # 向内
         else:  # rotation, rotation3
-            offset_direction = -1  # 向外
+            # 检查是否从YOLO OBB导入
+            if self.other_data.get("imported_from_yolo_obb", False):
+                # YOLO OBB导入的旋转矩形，点是逆时针排列，需要反转偏移方向
+                offset_direction = 1  # 向内（反转）
+            else:
+                # 手动创建的旋转矩形
+                offset_direction = -1  # 向外
         
         # 计算安全边界的4个角点
         offset_p0 = QtCore.QPointF(

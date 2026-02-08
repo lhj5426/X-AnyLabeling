@@ -31,12 +31,18 @@ def scan_all_images(folder_path, recursive=True):
                 if "_delete_" in root or "\\labels" in root or "/labels" in root:
                     continue
                 for file in files:
+                    # 排除 cover.* 文件（不管后缀是什么）
+                    if osp.splitext(file)[0].lower() == "cover":
+                        continue
                     if file.lower().endswith(tuple(extensions)):
                         relative_path = osp.normpath(osp.join(root, file))
                         relative_path = str(relative_path)
                         images.append(relative_path)
         else:
             for file in os.listdir(folder_path):
+                # 排除 cover.* 文件（不管后缀是什么）
+                if osp.splitext(file)[0].lower() == "cover":
+                    continue
                 if file.lower().endswith(tuple(extensions)):
                     file_path = osp.join(folder_path, file)
                     if osp.isfile(file_path):
