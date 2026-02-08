@@ -266,7 +266,7 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             )
             change_handle_color_action = menu.addAction(
                 utils.new_icon('color'),
-                self.tr(f"批量修改控制柄颜色 ({len(selected_labels)}个)")
+                self.tr(f"批量修改控制柄 ({len(selected_labels)}个)")
             )
             change_crosshair_action = menu.addAction(
                 utils.new_icon('color'),
@@ -301,7 +301,7 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             )
             change_handle_color_action = menu.addAction(
                 utils.new_icon('color'),
-                self.tr("修改控制柄颜色")
+                self.tr("修改控制柄")
             )
             change_crosshair_action = menu.addAction(
                 utils.new_icon('color'),

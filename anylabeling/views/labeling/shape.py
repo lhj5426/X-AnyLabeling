@@ -153,6 +153,8 @@ class Shape:
         # 标签独立控制柄颜色（None表示使用默认值）
         self._handle_vertex_color = None  # 选中时顶点填充色（点和块统一）
         self._handle_hvertex_color = None  # 拖拽时顶点填充色（点和块统一）
+        self._handle_point_size = None  # 控制点大小（None表示使用全局设置）
+        self._handle_square_size = None  # 控制块大小（None表示使用全局设置）
         
         # 标签独立内十字设置（None表示使用全局设置）
         self._crosshair_color_highlight = None  # 高亮时内十字颜色
@@ -755,7 +757,9 @@ class Shape:
 
     def draw_vertex(self, path, i, show_difficult=False):
         """Draw a vertex"""
-        d = self.point_size / self.scale
+        # 使用独立的点大小设置，如果没有设置则使用全局设置
+        point_size = self._handle_point_size if self._handle_point_size is not None else self.point_size
+        d = point_size / self.scale
         shape = self.point_type
         point = self.points[i]
         if i == self._highlight_index:
@@ -814,8 +818,9 @@ class Shape:
             point: QPointF position of the midpoint
             virtual_index: Virtual index (4-7) for highlighting
         """
-        # 使用 square_size 而不是 point_size 来控制矩形方块的大小
-        d = self.square_size / self.scale
+        # 使用独立的块大小设置，如果没有设置则使用全局设置
+        square_size = self._handle_square_size if self._handle_square_size is not None else self.square_size
+        d = square_size / self.scale
 
         # Check if this midpoint is highlighted
         if virtual_index == self._highlight_index:
@@ -949,7 +954,11 @@ class Shape:
         painter.setPen(old_pen)
 
     def draw_safety_border(self, painter):
-        """绘制安全边界 - 在矩形边框外侧绘制回字形边界（单一颜色）
+        """绘制安全边界
+        - rectangle: 在矩形边框内侧绘制（向内偏移）
+          * 普通 rectangle: 点顺时针排列
+          * rectangle3 创建的: 点逆时针排列（自动检测并处理）
+        - rotation/rotation3: 在矩形边框外侧绘制（向外偏移）
         
         Args:
             painter: QPainter对象
@@ -1016,7 +1025,7 @@ class Shape:
         pen.setStyle(QtCore.Qt.SolidLine)
         painter.setPen(pen)
         
-        # 计算矩形的4个角点（按顺时针顺序）
+        # 计算矩形的4个角点
         p0, p1, p2, p3 = self.points[0], self.points[1], self.points[2], self.points[3]
         
         # 计算每条边的向外法向量（单位向量）
@@ -1033,27 +1042,39 @@ class Shape:
             return QtCore.QPointF(nx, ny)
         
         # 计算4条边的向外法向量
-        normal_01 = get_outward_normal(p0, p1)  # 上边
-        normal_12 = get_outward_normal(p1, p2)  # 右边
-        normal_23 = get_outward_normal(p2, p3)  # 下边
-        normal_30 = get_outward_normal(p3, p0)  # 左边
+        normal_01 = get_outward_normal(p0, p1)
+        normal_12 = get_outward_normal(p1, p2)
+        normal_23 = get_outward_normal(p2, p3)
+        normal_30 = get_outward_normal(p3, p0)
         
-        # 计算安全边界的4个角点（向外偏移distance像素）
+        # 根据形状类型决定偏移方向
+        if self.shape_type == "rectangle":
+            # 检查是否由 rectangle3 模式创建
+            if self.other_data.get("created_by_rectangle3", False):
+                # rectangle3 创建的矩形，点是逆时针排列，需要反转偏移方向
+                offset_direction = -1  # 向内（反转）
+            else:
+                # 普通 rectangle，点是顺时针排列
+                offset_direction = 1  # 向内
+        else:  # rotation, rotation3
+            offset_direction = -1  # 向外
+        
+        # 计算安全边界的4个角点
         offset_p0 = QtCore.QPointF(
-            p0.x() + (normal_01.x() + normal_30.x()) * distance,
-            p0.y() + (normal_01.y() + normal_30.y()) * distance
+            p0.x() + offset_direction * (normal_01.x() + normal_30.x()) * distance,
+            p0.y() + offset_direction * (normal_01.y() + normal_30.y()) * distance
         )
         offset_p1 = QtCore.QPointF(
-            p1.x() + (normal_01.x() + normal_12.x()) * distance,
-            p1.y() + (normal_01.y() + normal_12.y()) * distance
+            p1.x() + offset_direction * (normal_01.x() + normal_12.x()) * distance,
+            p1.y() + offset_direction * (normal_01.y() + normal_12.y()) * distance
         )
         offset_p2 = QtCore.QPointF(
-            p2.x() + (normal_12.x() + normal_23.x()) * distance,
-            p2.y() + (normal_12.y() + normal_23.y()) * distance
+            p2.x() + offset_direction * (normal_12.x() + normal_23.x()) * distance,
+            p2.y() + offset_direction * (normal_12.y() + normal_23.y()) * distance
         )
         offset_p3 = QtCore.QPointF(
-            p3.x() + (normal_23.x() + normal_30.x()) * distance,
-            p3.y() + (normal_23.y() + normal_30.y()) * distance
+            p3.x() + offset_direction * (normal_23.x() + normal_30.x()) * distance,
+            p3.y() + offset_direction * (normal_23.y() + normal_30.y()) * distance
         )
         
         # 绘制垂直边界（左右两条）

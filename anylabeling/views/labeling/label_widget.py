@@ -1766,10 +1766,10 @@ class LabelingWidget(QtWidgets.QWidget):
         )
 
         rectangle3_width_tool = action(
-            self.tr("Rectangle3 宽度设置"),
+            self.tr("新标注模式设置"),
             self.open_rectangle3_width_dialog,
             icon="rectangle",
-            tip=self.tr("配置三次点击水平矩形的宽度"),
+            tip=self.tr("配置新标注模式的参数设置"),
         )
         horizontal_viewer_tool = action(
             self.tr("横向滚动看图"),
@@ -2823,6 +2823,8 @@ class LabelingWidget(QtWidgets.QWidget):
             ),
             # menu shown at right click
             menu=(
+                refresh_canvas,
+                None,
                 create_mode,
                 create_rectangle_mode,
                 create_rotation_mode,
@@ -2841,7 +2843,6 @@ class LabelingWidget(QtWidgets.QWidget):
                 undo_last_point,
                 remove_point,
                 None,
-                refresh_canvas,
                 horizontal_viewer_tool,
                 vertical_viewer_tool,
                 thumbnail_viewer_tool_with_target,
@@ -7602,8 +7603,13 @@ class LabelingWidget(QtWidgets.QWidget):
     def open_rectangle3_width_dialog(self):
         """Open the rectangle3 width settings dialog."""
         if self.rectangle3_width_dialog is None:
-            self.rectangle3_width_dialog = Rectangle3WidthDialog(parent=self, initial_width=self.canvas.rectangle3_width)
+            self.rectangle3_width_dialog = Rectangle3WidthDialog(
+                parent=self, 
+                initial_width=self.canvas.rectangle3_width,
+                initial_copy_line_length=self.canvas.rotation3_copy_line_length
+            )
             self.rectangle3_width_dialog.width_changed.connect(self.on_rectangle3_width_changed)
+            self.rectangle3_width_dialog.copy_line_length_changed.connect(self.on_rotation3_copy_line_length_changed)
             self.rectangle3_width_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
 
         if self.rectangle3_width_dialog.isVisible():
@@ -8001,6 +8007,12 @@ class LabelingWidget(QtWidgets.QWidget):
         """Slot for when the rectangle3 width changes."""
         self.canvas.set_rectangle3_width(width)
         self._config["rectangle3_width"] = width
+        save_config(self._config)
+
+    def on_rotation3_copy_line_length_changed(self, length):
+        """Slot for when the rotation3 copy line length changes."""
+        self.canvas.set_rotation3_copy_line_length(length)
+        self._config["rotation3_copy_line_length"] = length
         save_config(self._config)
 
     def on_split_requested(self, shape, cut_pos, cut_mode):
@@ -9817,6 +9829,8 @@ class LabelingWidget(QtWidgets.QWidget):
         # 更新独立控制柄颜色
         shape._handle_vertex_color = self._get_handle_vertex_color_by_label(shape.label)
         shape._handle_hvertex_color = self._get_handle_hvertex_color_by_label(shape.label)
+        shape._handle_point_size = self._get_handle_point_size_by_label(shape.label)
+        shape._handle_square_size = self._get_handle_square_size_by_label(shape.label)
         
         # 更新独立内十字设置
         shape._crosshair_color_highlight = self._get_crosshair_color_highlight_by_label(shape.label)
@@ -9882,6 +9896,24 @@ class LabelingWidget(QtWidgets.QWidget):
         ):
             rgb = self._config["label_handle_vertex_colors"][label]
             return QtGui.QColor(*rgb)
+        return None
+    
+    def _get_handle_point_size_by_label(self, label):
+        """获取标签的独立控制点大小，如果没有设置则返回None"""
+        if (
+            self._config.get("label_handle_point_sizes")
+            and label in self._config["label_handle_point_sizes"]
+        ):
+            return self._config["label_handle_point_sizes"][label]
+        return None
+    
+    def _get_handle_square_size_by_label(self, label):
+        """获取标签的独立控制块大小，如果没有设置则返回None"""
+        if (
+            self._config.get("label_handle_square_sizes")
+            and label in self._config["label_handle_square_sizes"]
+        ):
+            return self._config["label_handle_square_sizes"][label]
         return None
 
     def _get_handle_hvertex_color_by_label(self, label):
@@ -11214,7 +11246,7 @@ class LabelingWidget(QtWidgets.QWidget):
         """修改标签控制柄颜色的内部实现（支持实时预览）"""
         from PyQt5.QtWidgets import (
             QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-            QPushButton, QGroupBox
+            QPushButton, QGroupBox, QDoubleSpinBox, QFormLayout
         )
         from PyQt5.QtGui import QColor
         from views.labeling.shape import Shape
@@ -11229,6 +11261,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 original_settings[id(shape)] = {
                     'vertex_color': shape._handle_vertex_color,
                     'hvertex_color': shape._handle_hvertex_color,
+                    'point_size': shape._handle_point_size,
+                    'square_size': shape._handle_square_size,
                 }
 
         # 获取第一个标签的当前设置作为默认值
@@ -11243,6 +11277,10 @@ class LabelingWidget(QtWidgets.QWidget):
         hvertex_rgb = self._config.get("shape", {}).get("hvertex_fill_color", [255, 255, 255])
         default_vertex_color = QColor(*vertex_rgb[:3]) if vertex_rgb else QColor(0, 255, 0)
         default_hvertex_color = QColor(*hvertex_rgb[:3]) if hvertex_rgb else QColor(255, 255, 255)
+        
+        # 默认大小（从配置文件获取全局设置）
+        default_point_size = self._config.get("shape", {}).get("point_size", 4)
+        default_square_size = self._config.get("shape", {}).get("square_size", 4)
 
         if first_shape and first_shape._handle_vertex_color:
             current_vertex_color = first_shape._handle_vertex_color
@@ -11253,6 +11291,16 @@ class LabelingWidget(QtWidgets.QWidget):
             current_hvertex_color = first_shape._handle_hvertex_color
         else:
             current_hvertex_color = default_hvertex_color
+        
+        if first_shape and first_shape._handle_point_size is not None:
+            current_point_size = first_shape._handle_point_size
+        else:
+            current_point_size = default_point_size
+        
+        if first_shape and first_shape._handle_square_size is not None:
+            current_square_size = first_shape._handle_square_size
+        else:
+            current_square_size = default_square_size
 
         # 创建非模态对话框
         dialog = QDialog(self)
@@ -11260,9 +11308,9 @@ class LabelingWidget(QtWidgets.QWidget):
             Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowCloseButtonHint
         )
         if len(labels) == 1:
-            dialog.setWindowTitle(self.tr(f"控制柄颜色设置 - {labels[0]}"))
+            dialog.setWindowTitle(self.tr(f"控制柄设置 - {labels[0]}"))
         else:
-            dialog.setWindowTitle(self.tr(f"控制柄颜色设置 ({len(labels)}个标签)"))
+            dialog.setWindowTitle(self.tr(f"控制柄设置 ({len(labels)}个标签)"))
         dialog.setMinimumWidth(300)
 
         layout = QVBoxLayout(dialog)
@@ -11285,6 +11333,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 if shape.label in labels:
                     shape._handle_vertex_color = selected_vertex_color[0]
                     shape._handle_hvertex_color = selected_hvertex_color[0]
+                    shape._handle_point_size = selected_point_size[0]
+                    shape._handle_square_size = selected_square_size[0]
             self.canvas.update()
 
         def on_vertex_color_click():
@@ -11324,6 +11374,42 @@ class LabelingWidget(QtWidgets.QWidget):
         hvertex_layout.addWidget(hvertex_color_btn)
         hvertex_layout.addStretch()
         layout.addWidget(hvertex_group)
+        
+        # 控制柄大小设置组
+        size_group = QGroupBox(self.tr("控制柄大小"))
+        size_form = QFormLayout(size_group)
+        
+        # 点大小
+        point_size_spinbox = QDoubleSpinBox()
+        point_size_spinbox.setRange(1.0, 20.0)
+        point_size_spinbox.setSingleStep(0.5)
+        point_size_spinbox.setValue(current_point_size)
+        point_size_spinbox.setFixedWidth(55)  # 设置固定宽度为55像素
+        selected_point_size = [current_point_size]
+        
+        def on_point_size_changed(value):
+            selected_point_size[0] = value
+            update_preview()
+        
+        point_size_spinbox.valueChanged.connect(on_point_size_changed)
+        size_form.addRow(self.tr("点大小:"), point_size_spinbox)
+        
+        # 块大小
+        square_size_spinbox = QDoubleSpinBox()
+        square_size_spinbox.setRange(1.0, 20.0)
+        square_size_spinbox.setSingleStep(0.5)
+        square_size_spinbox.setValue(current_square_size)
+        square_size_spinbox.setFixedWidth(55)  # 设置固定宽度为55像素
+        selected_square_size = [current_square_size]
+        
+        def on_square_size_changed(value):
+            selected_square_size[0] = value
+            update_preview()
+        
+        square_size_spinbox.valueChanged.connect(on_square_size_changed)
+        size_form.addRow(self.tr("块大小:"), square_size_spinbox)
+        
+        layout.addWidget(size_group)
 
         # 按钮
         btn_layout = QHBoxLayout()
@@ -11339,15 +11425,21 @@ class LabelingWidget(QtWidgets.QWidget):
         accepted = [False]
 
         def on_reset():
-            """重置为默认颜色"""
+            """重置为默认颜色和大小"""
             selected_vertex_color[0] = None
             selected_hvertex_color[0] = None
+            selected_point_size[0] = None
+            selected_square_size[0] = None
             vertex_color_preview.setStyleSheet(f"background-color: {default_vertex_color.name()}; border: 1px solid black;")
             hvertex_color_preview.setStyleSheet(f"background-color: {default_hvertex_color.name()}; border: 1px solid black;")
+            point_size_spinbox.setValue(default_point_size)
+            square_size_spinbox.setValue(default_square_size)
             for shape in self.canvas.shapes:
                 if shape.label in labels:
                     shape._handle_vertex_color = None
                     shape._handle_hvertex_color = None
+                    shape._handle_point_size = None
+                    shape._handle_square_size = None
             self.canvas.update()
 
         def on_accept():
@@ -11355,12 +11447,18 @@ class LabelingWidget(QtWidgets.QWidget):
             accepted[0] = True
             new_vertex_color = selected_vertex_color[0]
             new_hvertex_color = selected_hvertex_color[0]
+            new_point_size = selected_point_size[0]
+            new_square_size = selected_square_size[0]
 
             # 更新配置
             if "label_handle_vertex_colors" not in self._config or self._config["label_handle_vertex_colors"] is None:
                 self._config["label_handle_vertex_colors"] = {}
             if "label_handle_hvertex_colors" not in self._config or self._config["label_handle_hvertex_colors"] is None:
                 self._config["label_handle_hvertex_colors"] = {}
+            if "label_handle_point_sizes" not in self._config or self._config["label_handle_point_sizes"] is None:
+                self._config["label_handle_point_sizes"] = {}
+            if "label_handle_square_sizes" not in self._config or self._config["label_handle_square_sizes"] is None:
+                self._config["label_handle_square_sizes"] = {}
 
             for label in labels:
                 if new_vertex_color:
@@ -11376,6 +11474,16 @@ class LabelingWidget(QtWidgets.QWidget):
                     )
                 elif label in self._config["label_handle_hvertex_colors"]:
                     del self._config["label_handle_hvertex_colors"][label]
+                
+                if new_point_size is not None:
+                    self._config["label_handle_point_sizes"][label] = new_point_size
+                elif label in self._config["label_handle_point_sizes"]:
+                    del self._config["label_handle_point_sizes"][label]
+                
+                if new_square_size is not None:
+                    self._config["label_handle_square_sizes"][label] = new_square_size
+                elif label in self._config["label_handle_square_sizes"]:
+                    del self._config["label_handle_square_sizes"][label]
 
             # 保存配置到文件
             from anylabeling.config import save_config
@@ -11395,6 +11503,8 @@ class LabelingWidget(QtWidgets.QWidget):
                     orig = original_settings[id(shape)]
                     shape._handle_vertex_color = orig['vertex_color']
                     shape._handle_hvertex_color = orig['hvertex_color']
+                    shape._handle_point_size = orig['point_size']
+                    shape._handle_square_size = orig['square_size']
             self.canvas.update()
 
         def on_finished(result):

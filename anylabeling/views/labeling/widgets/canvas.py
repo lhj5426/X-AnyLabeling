@@ -210,6 +210,7 @@ class Canvas(
 
 
         self.rectangle3_width = self._config.get("rectangle3_width", 200)
+        self.rotation3_copy_line_length = self._config.get("rotation3_copy_line_length", 500)
 
         super().__init__(*args, **kwargs)
         # Initialise local state.
@@ -895,6 +896,10 @@ class Canvas(
     def set_rectangle3_width(self, width):
         """Set the width for rectangle3 mode."""
         self.rectangle3_width = width
+
+    def set_rotation3_copy_line_length(self, length):
+        """Set the copy line length for rotation3 mode."""
+        self.rotation3_copy_line_length = length
 
     def _find_shapes_on_crosshair_line(self, pos):
         """Find all rectangle shapes that intersect with the crosshair line.
@@ -1752,6 +1757,8 @@ class Canvas(
                                 # Set corners in order
                                 self.current.points = [corner1, corner2, corner3, corner4]
                                 self.current.shape_type = "rectangle"
+                                # 标记这是由 rectangle3 模式创建的
+                                self.current.other_data["created_by_rectangle3"] = True
 
                                 self.current.close()
                                 self.finalise()
@@ -3846,7 +3853,7 @@ class Canvas(
                         perp_y = dx
 
                         # Reference line length (adjust as needed)
-                        ref_line_length = 500 / self.scale
+                        ref_line_length = self.rotation3_copy_line_length / self.scale
 
                         # Reference line at start point (green dot)
                         ref_start_begin = QtCore.QPointF(
