@@ -1684,6 +1684,9 @@ class Canvas(
                             # Set corners in order: p0 -> p1 -> p2 -> p3
                             self.current.points = [p0, p1, p2, p3]
                             self.current.shape_type = "rotation"
+                            
+                            # 标记为 rotation3 创建的
+                            self.current.other_data["created_by_rotation3"] = True
 
                             # Calculate rotation angle (direction from p0 to p1)
                             dx = p1.x() - p0.x()

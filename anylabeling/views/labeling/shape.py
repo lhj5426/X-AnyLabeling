@@ -1028,6 +1028,23 @@ class Shape:
         # 计算矩形的4个角点
         p0, p1, p2, p3 = self.points[0], self.points[1], self.points[2], self.points[3]
         
+        # 使用叉积判断点的顺序（顺时针还是逆时针）
+        # 计算向量 p0->p1 和 p1->p2 的叉积
+        v1_x = p1.x() - p0.x()
+        v1_y = p1.y() - p0.y()
+        v2_x = p2.x() - p1.x()
+        v2_y = p2.y() - p1.y()
+        cross_product = v1_x * v2_y - v1_y * v2_x
+        
+        # cross_product > 0: 顺时针（在屏幕坐标系中，Y轴向下）
+        # cross_product < 0: 逆时针
+        is_clockwise = cross_product > 0
+        
+        # 计算矩形的中心点
+        center_x = (p0.x() + p1.x() + p2.x() + p3.x()) / 4
+        center_y = (p0.y() + p1.y() + p2.y() + p3.y()) / 4
+        center = QtCore.QPointF(center_x, center_y)
+        
         # 计算每条边的向外法向量（单位向量）
         def get_outward_normal(p_start, p_end):
             """计算边的向外法向量"""
@@ -1047,23 +1064,45 @@ class Shape:
         normal_23 = get_outward_normal(p2, p3)
         normal_30 = get_outward_normal(p3, p0)
         
+        # 测试法向量方向：计算边的中点沿法向量偏移后是否离中心更远
+        # 使用边的中点而不是角点，避免角点处法向量叠加的影响
+        test_offset = 1.0
+        
+        # 测试第一条边（p0-p1）的中点
+        edge_midpoint = QtCore.QPointF((p0.x() + p1.x()) / 2, (p0.y() + p1.y()) / 2)
+        test_point = QtCore.QPointF(
+            edge_midpoint.x() + normal_01.x() * test_offset,
+            edge_midpoint.y() + normal_01.y() * test_offset
+        )
+        
+        # 计算边中点和测试点到中心的距离
+        dist_original = math.sqrt((edge_midpoint.x() - center.x())**2 + (edge_midpoint.y() - center.y())**2)
+        dist_test = math.sqrt((test_point.x() - center.x())**2 + (test_point.y() - center.y())**2)
+        
+        # 如果测试点离中心更远，说明法向量指向外侧
+        normal_points_outward = dist_test > dist_original
+        
         # 根据形状类型决定偏移方向
         if self.shape_type == "rectangle":
-            # 检查是否由 rectangle3 模式创建
-            if self.other_data.get("created_by_rectangle3", False):
-                # rectangle3 创建的矩形，点是逆时针排列，需要反转偏移方向
-                offset_direction = -1  # 向内（反转）
+            # rectangle 类型：安全边界在内侧
+            if normal_points_outward:
+                offset_direction = -1  # 法向量指向外侧，反转使其指向内侧
             else:
-                # 普通 rectangle，点是顺时针排列
-                offset_direction = 1  # 向内
+                offset_direction = 1   # 法向量指向内侧，直接使用
         else:  # rotation, rotation3
             # 检查是否从YOLO OBB导入
             if self.other_data.get("imported_from_yolo_obb", False):
-                # YOLO OBB导入的旋转矩形，点是逆时针排列，需要反转偏移方向
-                offset_direction = 1  # 向内（反转）
+                # YOLO OBB导入：安全边界在内侧
+                if normal_points_outward:
+                    offset_direction = -1
+                else:
+                    offset_direction = 1
             else:
-                # 手动创建的旋转矩形
-                offset_direction = -1  # 向外
+                # rotation/rotation3 创建：安全边界在内侧
+                if normal_points_outward:
+                    offset_direction = -1
+                else:
+                    offset_direction = 1
         
         # 计算安全边界的4个角点
         offset_p0 = QtCore.QPointF(
