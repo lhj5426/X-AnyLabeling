@@ -781,29 +781,30 @@ class AlignmentDialog(QtWidgets.QDialog):
 
     def update_label_list(self, labels, label_colors=None):
         """更新标签表格列表"""
-        # 保存当前选中的标签和它们的宽高设置
+        # 保存所有标签的选中状态和宽高设置（不管是否打勾都保存数值）
         checked_labels_data = {}
         for row in range(self.size_label_table.rowCount()):
             checkbox_container = self.size_label_table.cellWidget(row, 0)
-            if checkbox_container:
+            label_item = self.size_label_table.item(row, 1)
+            width_spin = self.size_label_table.cellWidget(row, 2)
+            height_spin = self.size_label_table.cellWidget(row, 3)
+            
+            if checkbox_container and label_item and width_spin and height_spin:
                 checkbox = checkbox_container.findChild(QtWidgets.QCheckBox)
-                if checkbox and checkbox.isChecked():
-                    label_item = self.size_label_table.item(row, 1)
-                    width_spin = self.size_label_table.cellWidget(row, 2)
-                    height_spin = self.size_label_table.cellWidget(row, 3)
-                    if label_item and width_spin and height_spin:
-                        label = label_item.text()
-                        checked_labels_data[label] = {
-                            'width': width_spin.value(),
-                            'height': height_spin.value()
-                        }
+                if checkbox:
+                    label = label_item.text()
+                    checked_labels_data[label] = {
+                        'checked': checkbox.isChecked(),  # 保存选中状态
+                        'width': width_spin.value(),      # 保存宽度（不管是否打勾）
+                        'height': height_spin.value()     # 保存高度（不管是否打勾）
+                    }
         
         self.size_label_table.setRowCount(len(labels))
         for row, label in enumerate(labels):
-            # 复选框
+            # 复选框 - 恢复选中状态
             checkbox = QtWidgets.QCheckBox()
             if label in checked_labels_data:
-                checkbox.setChecked(True)
+                checkbox.setChecked(checked_labels_data[label]['checked'])
             checkbox_container = QtWidgets.QWidget()
             checkbox_layout = QtWidgets.QHBoxLayout(checkbox_container)
             checkbox_layout.addWidget(checkbox)
@@ -820,24 +821,24 @@ class AlignmentDialog(QtWidgets.QDialog):
                 label_item.setBackground(color)
             self.size_label_table.setItem(row, 1, label_item)
             
-            # 宽度输入
+            # 宽度输入 - 恢复之前的数值（不管是否打勾）
             width_spin = QtWidgets.QSpinBox()
             width_spin.setRange(0, 9999)
             width_spin.setSpecialValueText(self.tr("不变"))
             if label in checked_labels_data:
                 width_spin.setValue(checked_labels_data[label]['width'])
             else:
-                width_spin.setValue(0)
+                width_spin.setValue(0)  # 新标签默认为0
             self.size_label_table.setCellWidget(row, 2, width_spin)
             
-            # 高度输入
+            # 高度输入 - 恢复之前的数值（不管是否打勾）
             height_spin = QtWidgets.QSpinBox()
             height_spin.setRange(0, 9999)
             height_spin.setSpecialValueText(self.tr("不变"))
             if label in checked_labels_data:
                 height_spin.setValue(checked_labels_data[label]['height'])
             else:
-                height_spin.setValue(0)
+                height_spin.setValue(0)  # 新标签默认为0
             self.size_label_table.setCellWidget(row, 3, height_spin)
 
     def _load_settings(self):
