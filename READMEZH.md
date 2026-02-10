@@ -720,6 +720,10 @@ https://github.com/user-attachments/assets/77dd3504-2080-452f-91c7-b486fb11c32c
 
 https://github.com/user-attachments/assets/4ee16cb9-250f-48e6-a94a-ce66f0a1dcdd
 
+150. 添加包围检测 
+
+https://github.com/user-attachments/assets/a83fa872-8a89-4bb4-89c5-f4a244eb735c
+
 
 
 
