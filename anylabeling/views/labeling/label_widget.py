@@ -93,6 +93,7 @@ from .widgets.rectangle_scale_dialog import RectangleScaleDialog
 from .widgets.horizontal_viewer_dialog import HorizontalViewerDialog
 from .widgets.vertical_viewer_dialog import VerticalViewerDialog
 from .widgets.thumbnail_viewer_dialog import MasonryThumbnailDialog
+from .widgets.containment_detection_dialog import ContainmentDetectionDialog
 from ..mainwindow_widgets.traffic_light_dialog import TrafficLightDialog
 from ...services import merger, tag_sorting
 
@@ -1883,6 +1884,14 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("将当前页面的标签同步到其他页面"),
         )
 
+        containment_detection_tool = action(
+            self.tr("包围检测"),
+            self.toggle_containment_detection_dialog,
+            shortcuts.get("containment_detection_tool"),
+            icon="edit",
+            tip=self.tr("检测标签包围关系，用于判断漫画气泡检测是否正确"),
+        )
+
         highlight_settings_tool = action(
             self.tr("高亮设置"),
             self.toggle_highlight_settings_dialog,
@@ -2686,6 +2695,7 @@ class LabelingWidget(QtWidgets.QWidget):
             digit_shortcut_manager=digit_shortcut_manager,
             label_toggle_shortcut_manager=label_toggle_shortcut_manager,
             label_sync_tool=label_sync_tool,
+            containment_detection_tool=containment_detection_tool,
             alignment_tool=alignment_tool,
             # 工具功能 actions
             overview=overview,
@@ -2949,6 +2959,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 rectangle_scale_tool,
                 page_text_tool,
                 label_sync_tool,
+                containment_detection_tool,
                 highlight_settings_tool,
                 toggle_ghost_paste,
                 None,
@@ -7172,6 +7183,35 @@ class LabelingWidget(QtWidgets.QWidget):
                 return
         self._toggle_dialog('label_sync_dialog', self.open_label_sync_dialog)
 
+    def toggle_containment_detection_dialog(self):
+        """切换包围检测窗口（支持最小化恢复）"""
+        dialog = getattr(self, 'containment_detection_dialog', None)
+        
+        if dialog is None:
+            # 窗口不存在，创建并显示
+            self.open_containment_detection_dialog()
+        elif dialog.isMinimized():
+            # 窗口最小化，恢复并激活
+            dialog.showNormal()
+            dialog.raise_()
+            dialog.activateWindow()
+        elif dialog.isVisible():
+            # 窗口可见，关闭
+            dialog.hide()
+        else:
+            # 窗口隐藏，显示并激活
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+
+    def open_containment_detection_dialog(self):
+        """打开包围检测对话框"""
+        if not hasattr(self, 'containment_detection_dialog') or self.containment_detection_dialog is None:
+            self.containment_detection_dialog = ContainmentDetectionDialog(self)
+        self.containment_detection_dialog.show()
+        self.containment_detection_dialog.raise_()
+        self.containment_detection_dialog.activateWindow()
+
     def open_label_sync_dialog(self):
         """打开标签同步对话框（非阻塞式）"""
         # 创建或复用对话框（非阻塞式）
@@ -8270,6 +8310,7 @@ class LabelingWidget(QtWidgets.QWidget):
             ("红绿灯窗口",): "traffic_light_tool",
             ("矩形缩放工具",): "rectangle_scale_tool",
             ("页文本工具",): "page_text_tool",
+            ("包围检测",): "containment_detection_tool",
             ("高亮设置",): "highlight_settings_tool",
             ("标签管理器",): "label_manager",
             ("标签切换快捷键管理器",): "label_toggle_shortcut_manager",
@@ -14548,6 +14589,11 @@ class LabelingWidget(QtWidgets.QWidget):
         # 无过滤
         if mode == 'none':
             return True
+        
+        # 自定义文件列表过滤
+        if mode == 'custom_files':
+            custom_files = filter_config.get('custom_files', [])
+            return filename in custom_files
         
         # 检查标注状态
         has_label = QtCore.QFile.exists(label_file) and LabelFile.is_label_file(label_file)

@@ -156,6 +156,7 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
                 ("rectangle_scale_tool", self.tr("矩形缩放工具")),
                 ("page_text_tool", self.tr("页文本工具")),
                 ("label_sync_tool", self.tr("标签同步工具")),
+                ("containment_detection_tool", self.tr("包围检测")),
                 ("highlight_settings_tool", self.tr("高亮设置")),
                 ("label_manager", self.tr("标签管理器")),
                 ("object_manager", self.tr("标签页管理器")),

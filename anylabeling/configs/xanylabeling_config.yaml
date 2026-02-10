@@ -240,6 +240,7 @@ shortcuts:
   rectangle_scale_tool: Alt+7
   page_text_tool: Alt+8
   label_sync_tool: null
+  containment_detection_tool: Ctrl+Alt+B
   highlight_settings_tool: Alt+9
   label_manager: Alt+0
   label_toggle_shortcut_manager: Ctrl+Alt+T
