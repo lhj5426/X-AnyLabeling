@@ -11144,7 +11144,7 @@ class LabelingWidget(QtWidgets.QWidget):
         width_selected_layout = QHBoxLayout(width_selected_group)
 
         width_selected_spin = QDoubleSpinBox()
-        width_selected_spin.setRange(1, 20.0)  # 点击后不允许0，避免隐形
+        width_selected_spin.setRange(0, 20.0)  # 允许设置为0，即不显示边框
         width_selected_spin.setSingleStep(1)
         width_selected_spin.setValue(current_width_selected)
         width_selected_spin.setSuffix(" px")
