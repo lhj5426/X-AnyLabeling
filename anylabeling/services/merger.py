@@ -326,7 +326,7 @@ def perform_merge(shapes, mode, config):
     shapes_to_keep = [s for s in shapes if s.get("shape_type") != output_shape_type]
 
     if not shapes_to_merge:
-        return shapes, 0  # 没有可合并的框，返回原始列表
+        return shapes, 0, []  # 没有可合并的框，返回原始列表
 
     # Use a Disjoint Set Union (DSU) data structure
     parent = list(range(len(shapes_to_merge)))
@@ -362,12 +362,24 @@ def perform_merge(shapes, mode, config):
     # Merge shapes in each group
     final_shapes = []
     total_merge_count = 0
+    merge_details = []  # 收集合并详情
+    
     for root_index in groups:
         indices = groups[root_index]
         if len(indices) == 1:
             final_shapes.append(shapes_to_merge[indices[0]])
         else:
             group_shapes = [shapes_to_merge[i] for i in indices]
+            
+            # 收集被合并的标签
+            merged_labels = [s.get('label', '未命名') for s in group_shapes]
+            label_counts = {}
+            for label in merged_labels:
+                label_counts[label] = label_counts.get(label, 0) + 1
+            
+            # 格式化标签信息
+            label_info = ", ".join([f"{label}×{count}" if count > 1 else label 
+                                   for label, count in label_counts.items()])
             
             # --- Start of new group merge logic ---
 
@@ -379,6 +391,9 @@ def perform_merge(shapes, mode, config):
                 for i in range(1, len(group_shapes)):
                     temp_label = merge_labels(temp_label, group_shapes[i].get('label', ''), config.get("LABEL_MERGE_STRATEGY", "FIRST"))
                 final_label = temp_label
+
+            # 记录合并详情
+            merge_details.append(f"    {label_info} → {final_label}")
 
             # Determine reading direction based on the final label
             per_label_directions = config.get("PER_LABEL_DIRECTIONS", {})
@@ -451,51 +466,64 @@ def perform_merge(shapes, mode, config):
     # 把不参与合并的框加回去
     final_shapes.extend(shapes_to_keep)
 
-    return final_shapes, total_merge_count
+    return final_shapes, total_merge_count, merge_details
 
 def process_file(file_path, config):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except Exception as e:
-        return False, f"读取文件失败: {e}"
+        return False, f"读取文件失败: {e}", "读取失败"
 
     if 'shapes' not in data or not data['shapes']:
-        return False, "文件中无标注框"
+        return False, "文件中无标注框", "页面上未检出标签"
 
     initial_shapes = copy.deepcopy(data['shapes'])
     initial_count = len(initial_shapes)
     
     mode = config.get("MERGE_MODE", "NONE")
     if mode == "NONE":
-        return False, "合并模式为NONE"
+        return False, "合并模式为NONE", "合并模式错误"
 
+    all_merge_details = []  # 收集所有合并详情
     total_merged = 0
+    
     if mode == "VERTICAL":
-        final_shapes, count = perform_merge(initial_shapes, "VERTICAL", config)
+        final_shapes, count, details = perform_merge(initial_shapes, "VERTICAL", config)
         total_merged += count
+        all_merge_details.extend(details)
     elif mode == "HORIZONTAL":
-        final_shapes, count = perform_merge(initial_shapes, "HORIZONTAL", config)
+        final_shapes, count, details = perform_merge(initial_shapes, "HORIZONTAL", config)
         total_merged += count
+        all_merge_details.extend(details)
     elif mode == "VERTICAL_THEN_HORIZONTAL":
-        temp, count1 = perform_merge(initial_shapes, "VERTICAL", config)
-        final_shapes, count2 = perform_merge(temp, "HORIZONTAL", config)
+        temp, count1, details1 = perform_merge(initial_shapes, "VERTICAL", config)
+        final_shapes, count2, details2 = perform_merge(temp, "HORIZONTAL", config)
         total_merged += (count1 + count2)
+        all_merge_details.extend(details1)
+        all_merge_details.extend(details2)
     elif mode == "HORIZONTAL_THEN_VERTICAL":
-        temp, count1 = perform_merge(initial_shapes, "HORIZONTAL", config)
-        final_shapes, count2 = perform_merge(temp, "VERTICAL", config)
+        temp, count1, details1 = perform_merge(initial_shapes, "HORIZONTAL", config)
+        final_shapes, count2, details2 = perform_merge(temp, "VERTICAL", config)
         total_merged += (count1 + count2)
+        all_merge_details.extend(details1)
+        all_merge_details.extend(details2)
     else:
         final_shapes = initial_shapes
 
     if total_merged == 0:
-        return False, "未发生任何合并"
+        return False, "未发生任何合并", "页面上未检出符合的标签"
 
     data['shapes'] = final_shapes
     try:
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        # 构建详细消息
         final_count = len(final_shapes)
-        return True, f"处理完成: 框数 {initial_count} -> {final_count} (减少了 {initial_count - final_count} 个)"
+        message_lines = [f"  {initial_count}个框 → {final_count}个框"]
+        message_lines.extend(all_merge_details)
+        
+        return True, "\n".join(message_lines), ""
     except Exception as e:
-        return False, f"写入文件失败: {e}"
+        return False, f"写入文件失败: {e}", "写入失败"

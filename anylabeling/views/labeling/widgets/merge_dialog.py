@@ -7,6 +7,7 @@ import yaml
 class MergeDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.parent_widget = parent
         self.setWindowTitle("区域合并工具设置")
         self.setMinimumWidth(650)  # 缩小宽度
         self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Minimum)
@@ -18,6 +19,9 @@ class MergeDialog(QtWidgets.QDialog):
             QtCore.Qt.WindowMaximizeButtonHint |
             QtCore.Qt.WindowCloseButtonHint
         )
+        
+        # 运行期间临时保存的窗口位置（不写入配置文件）
+        self.saved_geometry = None
 
         self.layout = QtWidgets.QVBoxLayout(self)
         self.layout.setSpacing(6)
@@ -161,8 +165,33 @@ class MergeDialog(QtWidgets.QDialog):
         """)
         self.deselect_all_button.clicked.connect(self.deselect_all_groups)
         
+        self.invert_selection_button = QtWidgets.QPushButton("反选")
+        self.invert_selection_button.setEnabled(False)
+        self.invert_selection_button.setFixedWidth(60)
+        self.invert_selection_button.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                border: none;
+                border-radius: 3px;
+                padding: 4px 8px;
+                font-size: 9pt;
+            }
+            QPushButton:hover {
+                background-color: #229954;
+            }
+            QPushButton:pressed {
+                background-color: #1e8449;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        self.invert_selection_button.clicked.connect(self.invert_selection_groups)
+        
         specific_groups_row_layout.addWidget(self.select_all_button)
         specific_groups_row_layout.addWidget(self.deselect_all_button)
+        specific_groups_row_layout.addWidget(self.invert_selection_button)
         specific_groups_row_layout.addStretch()
         
         # 使用原版的文本框，但改成带复选框的行编辑器
@@ -248,6 +277,7 @@ class MergeDialog(QtWidgets.QDialog):
         self.use_specific_groups.toggled.connect(self.add_group_button.setEnabled)
         self.use_specific_groups.toggled.connect(self.select_all_button.setEnabled)
         self.use_specific_groups.toggled.connect(self.deselect_all_button.setEnabled)
+        self.use_specific_groups.toggled.connect(self.invert_selection_button.setEnabled)
         self.use_specific_groups.toggled.connect(lambda checked: self.require_same_label.setDisabled(checked))
 
         label_layout.addRow(specific_groups_row_layout)
@@ -320,7 +350,22 @@ class MergeDialog(QtWidgets.QDialog):
         result_type_layout.addWidget(self.radio_output_rotation)
         
         right_column.addWidget(result_type_group)
-        right_column.addStretch()  # 右侧栏底部留白
+        
+        # --- 日志显示区域 ---
+        log_group = QtWidgets.QGroupBox("日志")
+        log_layout = QtWidgets.QVBoxLayout(log_group)
+        log_layout.setSpacing(4)
+        log_layout.setContentsMargins(8, 6, 8, 6)
+        
+        self.log_text = QtWidgets.QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMinimumHeight(320)
+        self.log_text.setPlaceholderText("执行日志将显示在这里...")
+        log_layout.addWidget(self.log_text)
+        
+        right_column.addWidget(log_group)
+        # 移除右侧栏底部留白，让日志窗口自然扩展
+        # right_column.addStretch()  # 右侧栏底部留白
         
         # 组合左右两栏
         main_content_layout.addLayout(left_column, 3)  # 左侧占3份
@@ -328,13 +373,49 @@ class MergeDialog(QtWidgets.QDialog):
         
         self.layout.addLayout(main_content_layout)
 
+        # --- 范围选择 ---
+        range_group = QtWidgets.QGroupBox("范围选择")
+        range_layout = QtWidgets.QHBoxLayout(range_group)
+        
+        self.range_from = QtWidgets.QSpinBox()
+        self.range_from.setMinimum(1)
+        self.range_from.setValue(1)
+        self.range_from.setPrefix("从: ")
+        
+        self.range_to = QtWidgets.QSpinBox()
+        self.range_to.setMinimum(1)
+        self.range_to.setValue(1)
+        self.range_to.setPrefix("到: ")
+        
+        range_layout.addWidget(self.range_from)
+        range_layout.addWidget(self.range_to)
+        range_layout.addStretch()
+        
+        self.layout.addWidget(range_group)
+        
+        # 连接翻页信号
+        if hasattr(self.parent_widget, 'file_list_widget'):
+            self.parent_widget.file_list_widget.currentRowChanged.connect(self.on_page_changed)
+        
+        # 初始化范围（不设置当前页，等showEvent时再设置）
+        if hasattr(self.parent_widget, 'image_list') and self.parent_widget.image_list:
+            total = len(self.parent_widget.image_list)
+            self.range_from.setMaximum(total)
+            self.range_to.setMaximum(total)
+            self.range_to.setValue(total)
+        else:
+            self.range_from.setMaximum(1)
+            self.range_to.setMaximum(1)
+
         # --- Buttons --- 按钮放在底部横跨整个宽度
         button_layout = QtWidgets.QHBoxLayout()
         self.run_current_button = QtWidgets.QPushButton("对当前文件运行")
         self.run_all_button = QtWidgets.QPushButton("对所有文件运行")
+        self.run_range_button = QtWidgets.QPushButton("对范围文件运行")
         self.cancel_button = QtWidgets.QPushButton("关闭")
         
         button_layout.addWidget(self.run_current_button)
+        button_layout.addWidget(self.run_range_button)
         button_layout.addWidget(self.run_all_button)
         button_layout.addWidget(self.cancel_button)
         button_layout.addStretch()
@@ -343,6 +424,7 @@ class MergeDialog(QtWidgets.QDialog):
         
         # 🎯 运行按钮点击时也保存设置
         self.run_current_button.clicked.connect(self.save_settings_to_config)
+        self.run_range_button.clicked.connect(self.save_settings_to_config)
         self.run_all_button.clicked.connect(self.save_settings_to_config)
         
         self.layout.addLayout(button_layout)
@@ -424,6 +506,11 @@ class MergeDialog(QtWidgets.QDialog):
         """全不选所有组"""
         for checkbox, line_edit, _ in self.group_rows:
             checkbox.setChecked(False)
+    
+    def invert_selection_groups(self):
+        """反选所有组"""
+        for checkbox, line_edit, _ in self.group_rows:
+            checkbox.setChecked(not checkbox.isChecked())
     
     def remove_group_row(self, row_widget):
         """删除组行"""
@@ -621,10 +708,13 @@ class MergeDialog(QtWidgets.QDialog):
             self.radio_output_rotation.setChecked(True)
 
     def showEvent(self, event):
-        """窗口显示时不再重新加载配置，避免覆盖用户修改"""
+        """窗口显示时恢复上次位置并更新范围（仅运行期间有效）"""
         super().showEvent(event)
-        # 注意：不再在这里加载配置，因为对话框是单例模式
-        # 配置只在构造函数中加载一次
+        # 如果有保存的位置，恢复它
+        if self.saved_geometry is not None:
+            self.restoreGeometry(self.saved_geometry)
+        # 更新范围限制和当前页
+        self.update_range_limits()
 
     def _on_close(self):
         """关闭按钮点击时保存配置并关闭"""
@@ -632,6 +722,60 @@ class MergeDialog(QtWidgets.QDialog):
         self.hide()
 
     def closeEvent(self, event):
-        """窗口关闭时保存配置"""
+        """窗口关闭时保存配置并断开信号"""
         self.save_settings_to_config()
+        self.save_window_position()
+        # 断开翻页信号
+        if hasattr(self.parent_widget, 'file_list_widget'):
+            try:
+                self.parent_widget.file_list_widget.currentRowChanged.disconnect(self.on_page_changed)
+            except:
+                pass
         super().closeEvent(event)
+    
+    def hideEvent(self, event):
+        """窗口隐藏时保存位置（仅运行期间有效）"""
+        self.save_window_position()
+        super().hideEvent(event)
+    
+    def save_window_position(self):
+        """保存窗口位置到内存（不写入配置文件）"""
+        self.saved_geometry = self.saveGeometry()
+    
+    def update_range_limits(self):
+        """更新范围限制"""
+        if hasattr(self.parent_widget, 'image_list') and self.parent_widget.image_list:
+            total = len(self.parent_widget.image_list)
+            self.range_from.setMaximum(total)
+            self.range_to.setMaximum(total)
+            self.range_to.setValue(total)
+            
+            # 设置"从"为当前页（优先使用file_list_widget的currentRow）
+            current_page = 1
+            if hasattr(self.parent_widget, 'file_list_widget'):
+                current_row = self.parent_widget.file_list_widget.currentRow()
+                if current_row >= 0:
+                    current_page = current_row + 1
+            elif hasattr(self.parent_widget, 'cur_img_idx'):
+                current_page = self.parent_widget.cur_img_idx + 1
+            
+            self.range_from.setValue(current_page)
+        else:
+            self.range_from.setMaximum(1)
+            self.range_to.setMaximum(1)
+    
+    def on_page_changed(self, current_row):
+        """翻页时更新范围的"从"值"""
+        if current_row >= 0:
+            current_page = current_row + 1
+            self.range_from.setValue(current_page)
+    
+    def log(self, message):
+        """添加日志消息"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.append(f"[{timestamp}] {message}")
+    
+    def clear_log(self):
+        """清空日志"""
+        self.log_text.clear()

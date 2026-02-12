@@ -103,15 +103,18 @@ LABEL_OPACITY = 128
 class MergeThread(QtCore.QThread):
     progress = QtCore.pyqtSignal(int, str)
     finished = QtCore.pyqtSignal(str)
+    log_message = QtCore.pyqtSignal(str)  # 新增：用于发送详细日志
 
-    def __init__(self, files, config, parent=None):
+    def __init__(self, files, config, start_page=1, parent=None):
         super().__init__(parent)
         self.files = files
         self.config = config
+        self.start_page = start_page  # 起始页码
 
     def run(self):
         success_count = 0
         fail_count = 0
+        self.failed_pages = []  # 记录失败的页码及原因（作为实例变量）
         total_files = len(self.files)
         
         for i, file_path in enumerate(self.files):
@@ -120,20 +123,30 @@ class MergeThread(QtCore.QThread):
             
             label_file = os.path.splitext(file_path)[0] + ".json"
             
-            self.progress.emit(i, f"正在处理: {os.path.basename(label_file)}")
+            # 获取页码（文件名）
+            page_name = os.path.basename(file_path)
+            # 计算实际页码（起始页码 + 偏移量）
+            page_number = self.start_page + i
             
-            success, message = merger.process_file(label_file, self.config)
+            self.progress.emit(i, f"正在处理: {page_name}")
+            self.log_message.emit(f"处理页面: {page_name}")
+            
+            success, message, fail_reason = merger.process_file(label_file, self.config)
             if success:
                 success_count += 1
+                # 如果有合并信息，发送详细日志
+                if message and message != "处理成功":
+                    self.log_message.emit(message)
             else:
                 fail_count += 1
+                self.failed_pages.append((page_number, fail_reason))
         
         if self.isInterruptionRequested():
             final_message = "操作被用户取消。"
         else:
-            final_message = f"处理完成！\n成功修改 {success_count} 个文件。"
+            final_message = f"处理完成！成功修改 {success_count} 个文件。"
             if fail_count > 0:
-                final_message += f"\n{fail_count} 个文件处理失败或无需处理。"
+                final_message += f"{fail_count} 个文件处理失败或无需处理。"
         
         self.finished.emit(final_message)
 
@@ -11422,7 +11435,7 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # 点大小
         point_size_spinbox = QDoubleSpinBox()
-        point_size_spinbox.setRange(1.0, 20.0)
+        point_size_spinbox.setRange(0.0, 20.0)
         point_size_spinbox.setSingleStep(0.5)
         point_size_spinbox.setValue(current_point_size)
         point_size_spinbox.setFixedWidth(55)  # 设置固定宽度为55像素
@@ -11437,7 +11450,7 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # 块大小
         square_size_spinbox = QDoubleSpinBox()
-        square_size_spinbox.setRange(1.0, 20.0)
+        square_size_spinbox.setRange(0.0, 20.0)
         square_size_spinbox.setSingleStep(0.5)
         square_size_spinbox.setValue(current_square_size)
         square_size_spinbox.setFixedWidth(55)  # 设置固定宽度为55像素
@@ -15656,6 +15669,14 @@ class LabelingWidget(QtWidgets.QWidget):
             self.merge_tool_dialog.run_current_button.clicked.connect(
                 lambda: self.run_merge_task(self.merge_tool_dialog.get_config(), on_current_file=True)
             )
+            self.merge_tool_dialog.run_range_button.clicked.connect(
+                lambda: self.run_merge_task(
+                    self.merge_tool_dialog.get_config(), 
+                    on_current_file=False,
+                    from_page=self.merge_tool_dialog.range_from.value(),
+                    to_page=self.merge_tool_dialog.range_to.value()
+                )
+            )
             self.merge_tool_dialog.run_all_button.clicked.connect(
                 lambda: self.run_merge_task(self.merge_tool_dialog.get_config(), on_current_file=False)
             )
@@ -15664,21 +15685,48 @@ class LabelingWidget(QtWidgets.QWidget):
         self.merge_tool_dialog.raise_()
         self.merge_tool_dialog.activateWindow()
 
-    def run_merge_task(self, config, on_current_file=False):
+    def run_merge_task(self, config, on_current_file=False, from_page=None, to_page=None):
+        # 清空日志
+        if hasattr(self, 'merge_tool_dialog') and self.merge_tool_dialog:
+            self.merge_tool_dialog.clear_log()
+            self.merge_tool_dialog.log("开始执行合并任务...")
+        
+        start_page = 1  # 默认起始页码
+        
         if on_current_file:
             if not self.filename:
                 self.error_message("无当前文件", "没有打开任何文件。")
                 return
             files_to_process = [self.filename]
+            # 获取当前文件的页码
+            if self.filename in self.image_list:
+                start_page = self.image_list.index(self.filename) + 1
         else:
-            files_to_process = self.image_list
+            # 如果指定了范围，只处理范围内的文件
+            if from_page is not None and to_page is not None:
+                if from_page < 1 or to_page > len(self.image_list) or from_page > to_page:
+                    self.error_message("范围错误", f"页码范围应在 1-{len(self.image_list)} 之间")
+                    return
+                files_to_process = self.image_list[from_page-1:to_page]
+                start_page = from_page  # 范围的起始页码
+                if hasattr(self, 'merge_tool_dialog') and self.merge_tool_dialog:
+                    self.merge_tool_dialog.log(f"处理范围: 第 {from_page}-{to_page} 页，共 {len(files_to_process)} 个文件")
+            else:
+                files_to_process = self.image_list
+                start_page = 1  # 全部文件从第1页开始
+                if hasattr(self, 'merge_tool_dialog') and self.merge_tool_dialog:
+                    self.merge_tool_dialog.log(f"处理所有文件，共 {len(files_to_process)} 个")
 
         if not files_to_process:
             self.error_message("无文件", "没有文件可供处理。")
             return
 
-        self.merge_thread = MergeThread(files_to_process, config)
+        self.merge_thread = MergeThread(files_to_process, config, start_page)
         self.merge_thread.finished.connect(self.on_merge_finished)
+        
+        # 连接日志信号
+        if hasattr(self, 'merge_tool_dialog') and self.merge_tool_dialog:
+            self.merge_thread.log_message.connect(self.merge_tool_dialog.log)
 
         if len(files_to_process) > 1:
             self.merge_progress_dialog = QtWidgets.QProgressDialog(
@@ -15694,6 +15742,17 @@ class LabelingWidget(QtWidgets.QWidget):
         self.merge_thread.start()
 
     def on_merge_finished(self, message):
+        if hasattr(self, 'merge_tool_dialog') and self.merge_tool_dialog:
+            self.merge_tool_dialog.log("合并任务完成")
+            self.merge_tool_dialog.log(message)
+            
+            # 在最后显示失败页面列表（不带时间戳，带序号）
+            if hasattr(self.merge_thread, 'failed_pages') and self.merge_thread.failed_pages:
+                # 直接添加到文本框，不通过log方法（避免时间戳）
+                self.merge_tool_dialog.log_text.append("未处理的页数如下:")
+                for idx, (page_num, reason) in enumerate(self.merge_thread.failed_pages, 1):
+                    self.merge_tool_dialog.log_text.append(f"{idx:02d}.第{page_num}页 原因: {reason}")
+        
         self.load_file(self.filename)
         if self.merge_thread.files and len(self.merge_thread.files) > 1:
             popup = Popup(
