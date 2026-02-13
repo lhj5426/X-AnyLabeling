@@ -18,6 +18,12 @@ from .label_converter import LabelConverter
 
 PIL.Image.MAX_IMAGE_PIXELS = None
 
+# Register JXL plugin if available (just import it, it auto-registers)
+try:
+    import pillow_jxl
+except ImportError:
+    pass  # JXL plugin not installed
+
 
 class LabelFileError(Exception):
     pass

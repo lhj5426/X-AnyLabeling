@@ -13,6 +13,12 @@ from PyQt5 import QtGui
 
 from ...labeling.logger import logger
 
+# Register JXL plugin if available (just import it, it auto-registers)
+try:
+    import pillow_jxl
+except ImportError:
+    pass  # JXL plugin not installed
+
 
 def img_data_to_pil(img_data):
     f = io.BytesIO()

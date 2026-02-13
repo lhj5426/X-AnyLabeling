@@ -5,6 +5,12 @@ import json
 from ..label_file import LabelFile
 from ..shape import Shape
 
+# Register JXL plugin if available (just import it, it auto-registers)
+try:
+    import pillow_jxl
+except ImportError:
+    pass  # JXL plugin not installed
+
 # Fixed base width for the scene in vertical mode.
 SCENE_BASE_WIDTH = 1000
 

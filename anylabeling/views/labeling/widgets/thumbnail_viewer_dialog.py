@@ -6,6 +6,12 @@ import os
 import json
 import time
 
+# Register JXL plugin if available (just import it, it auto-registers)
+try:
+    import pillow_jxl
+except ImportError:
+    pass  # JXL plugin not installed
+
 # ========== 自定义鼠标指针设置（可修改） ==========
 SELECT_CURSOR_PATH = r"D:\Ddown\鼠标指针\Janguru Cursors X2\NO.cur"
 DELETE_CURSOR_PATH = r"J:\文件夹存放\鼠标指针文件\222222\DroidCursorScheme\Droid.HelpSelect.cur"
@@ -2231,7 +2237,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.count_label.setText(f"总数: {len(self.image_list)} | 加载: {self.loaded_count}")
         
         # 第一批加载完成后，显示内容区域
-        if not self._initial_load_complete and self.loaded_count >= self.load_batch_size:
+        # 修复：当图片总数小于批次大小时，也要显示
+        if not self._initial_load_complete and (self.loaded_count >= self.load_batch_size or self.loaded_count >= len(items)):
             self._initial_load_complete = True
             # 延迟显示，确保图片已经渲染
             QtCore.QTimer.singleShot(100, self.masonry_widget.show)

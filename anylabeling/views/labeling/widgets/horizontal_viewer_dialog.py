@@ -4,6 +4,12 @@ import os
 from ..label_file import LabelFile
 from ..shape import Shape
 
+# Register JXL plugin if available (just import it, it auto-registers)
+try:
+    import pillow_jxl
+except ImportError:
+    pass  # JXL plugin not installed
+
 # Fixed base height for the scene. 
 SCENE_BASE_HEIGHT = 1000
 

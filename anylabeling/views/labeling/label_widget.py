@@ -13394,7 +13394,7 @@ class LabelingWidget(QtWidgets.QWidget):
         image = QtGui.QImage.fromData(self.image_data)
 
         if image.isNull():
-            # Fallback for AVIF/HEIC using Pillow
+            # Fallback for AVIF/HEIC/JXL using Pillow
             try:
                 img_pil = utils.img_data_to_pil(self.image_data)
                 image = utils.pil_to_qimage(img_pil)
@@ -13406,11 +13406,13 @@ class LabelingWidget(QtWidgets.QWidget):
                 f"*.{fmt.data().decode()}"
                 for fmt in QtGui.QImageReader.supportedImageFormats()
             ]
-            # Explicitly add avif/heic to suggests if not present
+            # Explicitly add avif/heic/jxl to suggests if not present
             if "*.avif" not in formats:
                 formats.append("*.avif")
             if "*.heic" not in formats:
                 formats.append("*.heic")
+            if "*.jxl" not in formats:
+                formats.append("*.jxl")
             self.error_message(
                 self.tr("Error opening file"),
                 self.tr(
@@ -13820,6 +13822,14 @@ class LabelingWidget(QtWidgets.QWidget):
             f".{fmt.data().decode().lower()}"
             for fmt in QtGui.QImageReader.supportedImageFormats()
         ]
+        # Explicitly add avif, heic and jxl support
+        if ".avif" not in extensions:
+            extensions.append(".avif")
+        if ".heic" not in extensions:
+            extensions.append(".heic")
+        if ".jxl" not in extensions:
+            extensions.append(".jxl")
+        
         video_extensions = ('.asf', '.avi', '.m4v', '.mkv', '.mov', '.mp4', '.mpeg', '.mpg', '.ts', '.wmv')
         if event.mimeData().hasUrls():
             items = [i.toLocalFile() for i in event.mimeData().urls()]
@@ -13859,6 +13869,14 @@ class LabelingWidget(QtWidgets.QWidget):
             f".{fmt.data().decode().lower()}"
             for fmt in QtGui.QImageReader.supportedImageFormats()
         ]
+        # Explicitly add avif, heic and jxl support
+        if ".avif" not in extensions:
+            extensions.append(".avif")
+        if ".heic" not in extensions:
+            extensions.append(".heic")
+        if ".jxl" not in extensions:
+            extensions.append(".jxl")
+        
         image_files = [i for i in items if i.lower().endswith(tuple(extensions))]
         if image_files:
             # 取第一个图片文件，打开其所在文件夹
