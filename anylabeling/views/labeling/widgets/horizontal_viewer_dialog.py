@@ -279,11 +279,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.view_scale = 1.0
         self.fit_height_mode = True
         self.thread_pool = QtCore.QThreadPool()
-        self.thread_pool.setMaxThreadCount(4)
-        self.is_fullscreen = False  # 全屏状态标记
-        
-        # 启用拖放功能
-        self.setAcceptDrops(True) 
+        self.thread_pool.setMaxThreadCount(4) 
         
         # UI Setup
         layout = QtWidgets.QVBoxLayout(self)
@@ -308,16 +304,10 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             QtWidgets.QGraphicsView.DontAdjustForAntialiasing | 
             QtWidgets.QGraphicsView.DontSavePainterState
         )
-        try:
-            self.view.setViewport(QtWidgets.QOpenGLWidget())
-        except:
-            pass
+
             
         self.view.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.view.setFocusPolicy(QtCore.Qt.StrongFocus)
-        
-        # 禁用view的拖放，让dialog处理
-        self.view.setAcceptDrops(False)
         
         self.view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self.show_context_menu)
@@ -388,6 +378,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.populated = False
         self.closing = False
         self._need_initial_center = False  # 标记是否需要初始居中
+        self.is_fullscreen = False  # 全屏状态标记
         
         self.scroll_timer = QtCore.QTimer()
         self.scroll_timer.setSingleShot(True)
@@ -406,6 +397,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         
         self.fit_width_mode = False
         self.fit_height_mode = True
+        self.reverse_mode = False  # 反向滚动模式开关
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -429,11 +421,17 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         # 处理键盘事件 - A/D 翻页
         if obj == self.view and event.type() == QtCore.QEvent.KeyPress:
             if event.key() == QtCore.Qt.Key_D:
-                self.go_to_next_image()
+                if self.reverse_mode:
+                    self.go_to_prev_image()
+                else:
+                    self.go_to_next_image()
                 event.accept()
                 return True
             elif event.key() == QtCore.Qt.Key_A:
-                self.go_to_prev_image()
+                if self.reverse_mode:
+                    self.go_to_next_image()
+                else:
+                    self.go_to_prev_image()
                 event.accept()
                 return True
         
@@ -514,22 +512,13 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             item = HorizontalThumbnailItem(path, SCENE_BASE_HEIGHT, labeling_widget=self.labeling_widget)
             item.show_annotations = self.show_annotations
             item.fill_annotations = self.fill_annotations
-            item.setPos(x_offset, 0)
+            # 位置将在 relayout_items 中统一设置
             self.scene.addItem(item)
             self.items_map[path] = item
             self.items_list.append(item)
             
-            x_offset += item.get_width() + spacing
-            
-        # 添加额外空间，确保最后一张图片可以居中显示
-        # 额外空间 = 视口宽度的一半（这样最后一张图片的中心可以对齐到视口中心）
-        viewport_width = self.view.viewport().width()
-        if viewport_width > 0:
-            right_extra_space = viewport_width / (2 * self.view_scale) if self.view_scale > 0 else viewport_width / 2
-        else:
-            right_extra_space = 500  # 默认值
-        
-        self.scene.setSceneRect(0, 0, x_offset + right_extra_space, SCENE_BASE_HEIGHT)
+        # 统一布局
+        self.relayout_items()
         
         # 标记需要初始居中
         self._need_initial_center = True
@@ -664,6 +653,12 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         menu.addSeparator()
         refresh_action = menu.addAction("刷新")
         refresh_action.triggered.connect(self.reload_scene)
+
+        menu.addSeparator()
+        reverse_action = menu.addAction("反向滚动")
+        reverse_action.setCheckable(True)
+        reverse_action.setChecked(self.reverse_mode)
+        reverse_action.triggered.connect(self.toggle_reverse_mode)
         
         menu.addSeparator()
         open_vert_action = menu.addAction("用垂直滚动看图打开")
@@ -675,7 +670,9 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             action = menu.addAction("切换到此图片")
             action.triggered.connect(lambda: self.switch_to_image(item.path))
             
-        menu.exec_(self.view.mapToGlobal(pos))
+        # 修复全屏模式下右键菜单失效的问题
+        # 使用QCursor.pos()获取全局鼠标位置，而不是依赖坐标映射
+        menu.exec_(QtGui.QCursor.pos())
 
     def toggle_sync_scroll(self):
         self.sync_scroll_enabled = not self.sync_scroll_enabled
@@ -691,6 +688,11 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         for item in self.items_list:
             item.fill_annotations = self.fill_annotations
             item.update()
+
+    def toggle_reverse_mode(self):
+        self.reverse_mode = not self.reverse_mode
+        self.relayout_items()
+        self._center_on_current()
 
     def update_image_list(self, new_image_list, current_filename=None):
         """更新图片列表（当主界面打开新文件夹时调用）"""
@@ -1078,11 +1080,14 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         x_offset = left_extra_space  # 从左侧额外空间开始
         spacing = 0
         
-        for item in self.items_list:
+        # 如果是反向模式，反转遍历顺序
+        items_iter = reversed(self.items_list) if self.reverse_mode else self.items_list
+        
+        for item in items_iter:
             item.setPos(x_offset, 0)
             x_offset += item.boundingRect().width() + spacing
             
-        # 添加额外空间，确保最后一张图片可以居中显示
+        # 添加右侧额外空间，确保最后一张（或反向模式下的第一张）图片可以居中显示
         viewport_width = self.view.viewport().width()
         if viewport_width > 0:
             right_extra_space = viewport_width / (2 * self.view_scale) if self.view_scale > 0 else viewport_width / 2
@@ -1167,102 +1172,45 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
     def keyPressEvent(self, event):
         """处理键盘事件，支持 A/D 翻页和 F11 全屏"""
         if event.key() == QtCore.Qt.Key_D:
-            self.go_to_next_image()
+            if self.reverse_mode:
+                self.go_to_prev_image()
+            else:
+                self.go_to_next_image()
             event.accept()
         elif event.key() == QtCore.Qt.Key_A:
-            self.go_to_prev_image()
+            if self.reverse_mode:
+                self.go_to_next_image()
+            else:
+                self.go_to_prev_image()
             event.accept()
         elif event.key() == QtCore.Qt.Key_F11:
             self.toggle_fullscreen()
             event.accept()
         else:
             super().keyPressEvent(event)
-    
+
     def toggle_fullscreen(self):
-        """切换全屏模式"""
+        """切换真全屏模式（隐藏所有滚动条）"""
         if self.is_fullscreen:
+            # 退出全屏：恢复正常状态
             self.showNormal()
             self.is_fullscreen = False
+            # 恢复滚动条
+            self.view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
+            self.view.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+            # 恢复缩略图列表滚动条
+            if self.thumbnails_visible:
+                self.thumbnail_list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
         else:
+            # 进入全屏：隐藏所有滚动条
             self.showFullScreen()
             self.is_fullscreen = True
-    
-    def dragEnterEvent(self, event):
-        """拖拽进入事件"""
-        if event.mimeData().hasUrls():
-            items = [i.toLocalFile() for i in event.mimeData().urls()]
-            # 获取支持的图片格式
-            extensions = [
-                f".{fmt.data().decode().lower()}"
-                for fmt in QtGui.QImageReader.supportedImageFormats()
-            ]
-            # 接受文件夹或图片文件的拖放
-            if any(os.path.isdir(i) or i.lower().endswith(tuple(extensions)) for i in items):
-                event.accept()
-            else:
-                event.ignore()
-        else:
-            event.ignore()
-    
-    def dropEvent(self, event):
-        """拖放事件"""
-        if not self.labeling_widget:
-            event.ignore()
-            return
-        
-        items = [i.toLocalFile() for i in event.mimeData().urls()]
-        
-        # 检查是否有文件夹被拖放
-        folders = [i for i in items if os.path.isdir(i)]
-        if folders:
-            # 如果拖放了文件夹，通知主窗口打开第一个文件夹
-            folder_path = folders[0]
-            # 获取主窗口的递归加载设置
-            recursive = False
-            if hasattr(self.labeling_widget, '_config'):
-                recursive = self.labeling_widget._config.get("load_subfolders", False)
-            
-            # 调用主窗口的import_image_folder方法
-            if hasattr(self.labeling_widget, 'import_image_folder'):
-                self.labeling_widget.import_image_folder(folder_path, recursive=recursive)
-                event.accept()
-            else:
-                event.ignore()
-            return
-        
-        # 检查是否有图片文件被拖放
-        extensions = [
-            f".{fmt.data().decode().lower()}"
-            for fmt in QtGui.QImageReader.supportedImageFormats()
-        ]
-        image_files = [i for i in items if i.lower().endswith(tuple(extensions))]
-        if image_files:
-            # 取第一个图片文件，打开其所在文件夹
-            first_image = image_files[0]
-            folder_path = os.path.dirname(first_image)
-            # 获取主窗口的递归加载设置
-            recursive = False
-            if hasattr(self.labeling_widget, '_config'):
-                recursive = self.labeling_widget._config.get("load_subfolders", False)
-            
-            # 调用主窗口的import_image_folder方法
-            if hasattr(self.labeling_widget, 'import_image_folder'):
-                self.labeling_widget.import_image_folder(folder_path, recursive=recursive)
-                # 加载完文件夹后，定位到拖放的图片
-                # 使用延迟调用，确保文件夹加载完成
-                QtCore.QTimer.singleShot(100, lambda: self._load_dropped_image(first_image))
-                event.accept()
-            else:
-                event.ignore()
-        else:
-            event.ignore()
-    
-    def _load_dropped_image(self, image_path):
-        """加载拖放的图片（延迟调用）"""
-        if self.labeling_widget and hasattr(self.labeling_widget, 'load_file'):
-            # 检查图片是否在文件列表中
-            if hasattr(self.labeling_widget, 'fn_to_index') and image_path in self.labeling_widget.fn_to_index:
-                self.labeling_widget.load_file(image_path)
+            # 隐藏主视图滚动条
+            self.view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            self.view.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            # 隐藏缩略图列表滚动条
+            if self.thumbnails_visible:
+                self.thumbnail_list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
     def closeEvent(self, event):
         self.closing = True

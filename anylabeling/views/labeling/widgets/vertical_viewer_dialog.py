@@ -965,8 +965,10 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             menu.addSeparator()
             action = menu.addAction("切换到此图片")
             action.triggered.connect(lambda: self.switch_to_image(item.path))
-            
-        menu.exec_(self.view.mapToGlobal(pos))
+        
+        # 修复全屏模式下右键菜单失效的问题
+        # 使用QCursor.pos()获取全局鼠标位置，而不是依赖坐标映射
+        menu.exec_(QtGui.QCursor.pos())
 
     def update_image_list(self, new_image_list, current_filename=None):
         """更新图片列表（当主界面打开新文件夹时调用）"""
@@ -1212,13 +1214,27 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             super().keyPressEvent(event)
     
     def toggle_fullscreen(self):
-        """切换全屏模式"""
+        """切换真全屏模式（隐藏所有滚动条）"""
         if self.is_fullscreen:
+            # 退出全屏：恢复正常状态
             self.showNormal()
             self.is_fullscreen = False
+            # 恢复滚动条
+            self.view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            self.view.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
+            # 恢复缩略图列表滚动条
+            if self.thumbnails_visible:
+                self.thumbnail_list.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         else:
+            # 进入全屏：隐藏所有滚动条
             self.showFullScreen()
             self.is_fullscreen = True
+            # 隐藏主视图滚动条
+            self.view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            self.view.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            # 隐藏缩略图列表滚动条
+            if self.thumbnails_visible:
+                self.thumbnail_list.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
     
     def dragEnterEvent(self, event):
         """拖拽进入事件"""

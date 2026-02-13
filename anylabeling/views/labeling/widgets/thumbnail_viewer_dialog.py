@@ -3500,10 +3500,13 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             self.toolbar.show()
     
     def toggle_fullscreen(self):
-        """切换全屏模式"""
+        """切换真全屏模式（隐藏所有滚动条）"""
         if self.isFullScreen():
             # 退出全屏
             self.showNormal()
+            # 恢复滚动条
+            self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+            self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             # 恢复最大化状态（如果之前是最大化的）
             if hasattr(self, '_was_maximized') and self._was_maximized:
                 self.showMaximized()
@@ -3511,6 +3514,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             # 进入全屏前记录是否是最大化状态
             self._was_maximized = self.isMaximized()
             self.showFullScreen()
+            # 隐藏滚动条
+            self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     
     def update_title_with_position(self):
         """更新窗口标题，显示当前完全可见的最后一张图片序号"""
