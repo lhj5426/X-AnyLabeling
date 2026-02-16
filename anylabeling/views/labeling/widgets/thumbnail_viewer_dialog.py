@@ -1807,6 +1807,13 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.toolbar = self.create_toolbar()  # 保存工具栏引用
         main_layout.addWidget(self.toolbar)
         
+        # 应用保存的工具栏显示状态
+        if hasattr(self, '_toolbar_visible'):
+            if self._toolbar_visible:
+                self.toolbar.show()
+            else:
+                self.toolbar.hide()
+        
         self.scroll_area = QtWidgets.QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -3238,6 +3245,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 self.horizontal_mode = settings.get("horizontal_mode", self.horizontal_mode)
                 self.grid_mode = settings.get("grid_mode", self.grid_mode)
                 self.show_hover_info = settings.get("show_hover_info", self.show_hover_info)
+                # 保存工具栏显示状态（稍后应用）
+                self._toolbar_visible = settings.get("toolbar_visible", True)
     
     def _build_cursor(self, path: str, fallback_shape: Qt.CursorShape, hotspot=None) -> QtGui.QCursor:
         """从文件构建自定义光标（失败则回退到系统光标）"""
@@ -3284,7 +3293,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 "row_height": self.row_height,
                 "horizontal_mode": self.horizontal_mode,
                 "grid_mode": self.grid_mode,
-                "show_hover_info": self.show_hover_info
+                "show_hover_info": self.show_hover_info,
+                "toolbar_visible": self.toolbar.isVisible()  # 保存工具栏显示状态
             }
             self.labeling_widget._config["masonry_settings"] = settings
             try:
@@ -3505,25 +3515,36 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             self.toolbar.hide()
         else:
             self.toolbar.show()
+        # 切换后立即保存状态
+        self.save_masonry_settings()
     
     def toggle_fullscreen(self):
-        """切换真全屏模式（隐藏所有滚动条）"""
+        """切换真全屏模式（隐藏所有滚动条和工具栏）"""
         if self.isFullScreen():
             # 退出全屏
             self.showNormal()
             # 恢复滚动条
             self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
             self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            # 恢复工具栏状态（恢复到全屏前的状态）
+            if hasattr(self, '_toolbar_was_visible'):
+                if self._toolbar_was_visible:
+                    self.toolbar.show()
+                else:
+                    self.toolbar.hide()
             # 恢复最大化状态（如果之前是最大化的）
             if hasattr(self, '_was_maximized') and self._was_maximized:
                 self.showMaximized()
         else:
             # 进入全屏前记录是否是最大化状态
             self._was_maximized = self.isMaximized()
+            # 记录工具栏当前状态
+            self._toolbar_was_visible = self.toolbar.isVisible()
             self.showFullScreen()
-            # 隐藏滚动条
+            # 隐藏滚动条和工具栏
             self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.toolbar.hide()
     
     def update_title_with_position(self):
         """更新窗口标题，显示当前完全可见的最后一张图片序号"""
