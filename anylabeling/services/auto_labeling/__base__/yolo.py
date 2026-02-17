@@ -418,13 +418,15 @@ class YOLO(Model):
                     upsample=True,
                 )  # HWC
             elif self.task == "obb":
-                pred[:, :4] = scale_boxes(
-                    self.input_shape, pred[:, :4], img_shape, xywh=True
-                )
+                if pred.size > 0 and pred.ndim == 2:
+                    pred[:, :4] = scale_boxes(
+                        self.input_shape, pred[:, :4], img_shape, xywh=True
+                    )
             else:
-                pred[:, :4] = scale_boxes(
-                    self.input_shape, pred[:, :4], img_shape
-                )
+                if pred.size > 0 and pred.ndim == 2:
+                    pred[:, :4] = scale_boxes(
+                        self.input_shape, pred[:, :4], img_shape
+                    )
 
         if self.task == "obb":
             pred = np.concatenate(
@@ -446,9 +448,15 @@ class YOLO(Model):
                 self.input_shape, pred_kpts, self.image_shape
             )
         else:
-            bbox = pred[:, :4]
-            conf = pred[:, 4:5]
-            clas = pred[:, 5:6]
+            # Check if pred is empty or 1D before indexing
+            if pred.size == 0 or pred.ndim == 1:
+                bbox = np.array([])
+                conf = np.array([])
+                clas = np.array([])
+            else:
+                bbox = pred[:, :4]
+                conf = pred[:, 4:5]
+                clas = pred[:, 5:6]
         return (bbox, clas, conf, masks, keypoints)
 
     def predict_shapes(self, image, image_path=None):
