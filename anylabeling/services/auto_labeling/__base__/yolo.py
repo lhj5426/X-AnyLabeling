@@ -394,28 +394,56 @@ class YOLO(Model):
                         
                         if len(x) > 0:
                             # Apply NMS manually
-                            # x format: [x1, y1, x2, y2, conf, cls, ...]
-                            boxes = x[:, :4]
-                            scores = x[:, 4]
-                            classes = x[:, 5].astype(int)
-                            
-                            # Apply NMS per class or class-agnostic
-                            keep_indices = []
-                            if self.agnostic:
-                                # Class-agnostic NMS: treat all boxes the same
-                                keep = self._nms(boxes, scores, self.iou_thres)
-                                keep_indices = keep
+                            if self.task == "obb":
+                                # OBB task: x format is [x, y, w, h, conf, cls, angle]
+                                # Need to use rotated NMS
+                                from ..utils import numpy_nms_rotated
+                                
+                                # For OBB, the format should be [x, y, w, h, conf, cls, angle]
+                                boxes_for_nms = x[:, [0, 1, 2, 3, 6]]  # [x, y, w, h, angle]
+                                scores = x[:, 4]
+                                classes = x[:, 5].astype(int)
+                                
+                                # Apply rotated NMS per class or class-agnostic
+                                keep_indices = []
+                                if self.agnostic:
+                                    # Class-agnostic NMS
+                                    keep = numpy_nms_rotated(boxes_for_nms, scores, self.iou_thres)
+                                    keep_indices = keep
+                                else:
+                                    # Per-class NMS
+                                    unique_classes = np.unique(classes)
+                                    for cls in unique_classes:
+                                        cls_mask = classes == cls
+                                        cls_boxes = boxes_for_nms[cls_mask]
+                                        cls_scores = scores[cls_mask]
+                                        cls_indices = np.where(cls_mask)[0]
+                                        
+                                        keep = numpy_nms_rotated(cls_boxes, cls_scores, self.iou_thres)
+                                        keep_indices.extend(cls_indices[keep])
                             else:
-                                # Per-class NMS: apply NMS separately for each class
-                                unique_classes = np.unique(classes)
-                                for cls in unique_classes:
-                                    cls_mask = classes == cls
-                                    cls_boxes = boxes[cls_mask]
-                                    cls_scores = scores[cls_mask]
-                                    cls_indices = np.where(cls_mask)[0]
-                                    
-                                    keep = self._nms(cls_boxes, cls_scores, self.iou_thres)
-                                    keep_indices.extend(cls_indices[keep])
+                                # Regular detection: x format is [x1, y1, x2, y2, conf, cls, ...]
+                                boxes = x[:, :4]
+                                scores = x[:, 4]
+                                classes = x[:, 5].astype(int)
+                                
+                                # Apply NMS per class or class-agnostic
+                                keep_indices = []
+                                if self.agnostic:
+                                    # Class-agnostic NMS: treat all boxes the same
+                                    keep = self._nms(boxes, scores, self.iou_thres)
+                                    keep_indices = keep
+                                else:
+                                    # Per-class NMS: apply NMS separately for each class
+                                    unique_classes = np.unique(classes)
+                                    for cls in unique_classes:
+                                        cls_mask = classes == cls
+                                        cls_boxes = boxes[cls_mask]
+                                        cls_scores = scores[cls_mask]
+                                        cls_indices = np.where(cls_mask)[0]
+                                        
+                                        keep = self._nms(cls_boxes, cls_scores, self.iou_thres)
+                                        keep_indices.extend(cls_indices[keep])
                             
                             # Keep only the selected boxes
                             if len(keep_indices) > 0:
