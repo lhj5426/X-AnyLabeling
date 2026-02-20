@@ -25,6 +25,7 @@ from ..utils import (
     xywhr2xyxyxyxy,
     non_max_suppression_v5,
     non_max_suppression_v8,
+    non_max_suppression_end2end,
     calculate_rotation_theta,
 )
 
@@ -165,6 +166,7 @@ class YOLO(Model):
             "yolov8_seg_track",
             "yolo11_seg",
             "yolo11_seg_track",
+            "yolo26_seg",
         ]:
             self.task = "seg"
         elif self.model_type in [
@@ -172,6 +174,7 @@ class YOLO(Model):
             "yolov8_obb_track",
             "yolo11_obb",
             "yolo11_obb_track",
+            "yolo26_obb",
         ]:
             self.task = "obb"
         elif self.model_type in [
@@ -180,6 +183,7 @@ class YOLO(Model):
             "yolov8_pose_track",
             "yolo11_pose",
             "yolo11_pose_track",
+            "yolo26_pose",
         ]:
             self.task = "pose"
             self.keypoint_name = {}
@@ -334,68 +338,94 @@ class YOLO(Model):
                 multi_label=False,
                 nc=self.nc,
             )
-        elif self.model_type in ["yolov10", "doclayout_yolo", "yolo26"]:
-            # YOLO26 and YOLOv10 support both end2end (no NMS) and traditional NMS modes
-            # Model output format is always the same: (1, 300, 6) = [x1,y1,x2,y2,conf,cls]
+        elif self.model_type in ["yolov10", "doclayout_yolo"]:
+            p = self.postprocess_v10(
+                preds[0][0],
+                conf_thres=self.conf_thres,
+                classes=self.filter_classes,
+            )
+        elif self.model_type in [
+            "yolo26",
+            "yolo26_obb",
+            "yolo26_seg",
+            "yolo26_pose",
+        ]:
+            # YOLO26 series support both end2end (no NMS) and traditional NMS modes
+            # Model output format is always the same: (1, 300, 6+) = [x1,y1,x2,y2,conf,cls,...]
             # Coordinates are in input image space (e.g., 640x640)
             
             if self.end2end:
                 # End-to-end mode: no NMS needed, model already did it
-                if len(preds) > 0 and len(preds[0]) > 0:
-                    p = self.postprocess_v10(
-                        preds[0][0],
-                        conf_thres=self.conf_thres,
-                        classes=self.filter_classes,
-                    )
-                else:
-                    logger.warning("Unexpected prediction format in end2end mode")
-                    p = [np.array([])]
+                # Determine nm for seg task, nkpt/ndim for pose task
+                nm = 0
+                nkpt = 0
+                ndim = 3
+                if self.task == "seg":
+                    proto = preds[1][0] if len(preds[1].shape) == 4 else preds[1]
+                    nm = proto.shape[0]
+                    self.mask_height, self.mask_width = proto.shape[1:]
+                elif self.task == "pose":
+                    nkpt = self.kpt_shape[0]
+                    ndim = self.kpt_shape[1]
+                
+                p = non_max_suppression_end2end(
+                    preds[0],
+                    task=self.task,
+                    conf_thres=self.conf_thres,
+                    classes=self.filter_classes,
+                    max_det=self.max_det,
+                    nm=nm,
+                    nkpt=nkpt,
+                    ndim=ndim,
+                )
             else:
                 # Traditional NMS mode: apply NMS manually
-                # First, filter by confidence and classes (same as postprocess_v10)
                 if len(preds) > 0 and len(preds[0]) > 0:
-                    prediction = preds[0][0]  # shape: (300, 6)
+                    prediction = preds[0][0]  # shape: (300, 6+)
                     
                     # Filter by confidence threshold
                     x = prediction[prediction[:, 4] >= self.conf_thres]
-                    x[:, -1] = x[:, -1].astype(int)
-                    
-                    # Filter by classes if specified
-                    if self.filter_classes is not None:
-                        x = x[np.isin(x[:, -1], self.filter_classes)]
-                    
                     if len(x) > 0:
-                        # Apply NMS manually
-                        # x format: [x1, y1, x2, y2, conf, cls]
-                        boxes = x[:, :4]
-                        scores = x[:, 4]
-                        classes = x[:, 5].astype(int)
+                        x[:, 5] = x[:, 5].astype(int)
                         
-                        # Apply NMS per class or class-agnostic
-                        keep_indices = []
-                        if self.agnostic:
-                            # Class-agnostic NMS: treat all boxes the same
-                            keep = self._nms(boxes, scores, self.iou_thres)
-                            keep_indices = keep
-                        else:
-                            # Per-class NMS: apply NMS separately for each class
-                            unique_classes = np.unique(classes)
-                            for cls in unique_classes:
-                                cls_mask = classes == cls
-                                cls_boxes = boxes[cls_mask]
-                                cls_scores = scores[cls_mask]
-                                cls_indices = np.where(cls_mask)[0]
-                                
-                                keep = self._nms(cls_boxes, cls_scores, self.iou_thres)
-                                keep_indices.extend(cls_indices[keep])
+                        # Filter by classes if specified
+                        if self.filter_classes is not None:
+                            x = x[np.isin(x[:, 5], self.filter_classes)]
                         
-                        # Keep only the selected boxes
-                        if len(keep_indices) > 0:
-                            x = x[keep_indices]
-                        else:
-                            x = np.array([])
-                    
-                    p = [x] if len(x) > 0 else [np.array([])]
+                        if len(x) > 0:
+                            # Apply NMS manually
+                            # x format: [x1, y1, x2, y2, conf, cls, ...]
+                            boxes = x[:, :4]
+                            scores = x[:, 4]
+                            classes = x[:, 5].astype(int)
+                            
+                            # Apply NMS per class or class-agnostic
+                            keep_indices = []
+                            if self.agnostic:
+                                # Class-agnostic NMS: treat all boxes the same
+                                keep = self._nms(boxes, scores, self.iou_thres)
+                                keep_indices = keep
+                            else:
+                                # Per-class NMS: apply NMS separately for each class
+                                unique_classes = np.unique(classes)
+                                for cls in unique_classes:
+                                    cls_mask = classes == cls
+                                    cls_boxes = boxes[cls_mask]
+                                    cls_scores = scores[cls_mask]
+                                    cls_indices = np.where(cls_mask)[0]
+                                    
+                                    keep = self._nms(cls_boxes, cls_scores, self.iou_thres)
+                                    keep_indices.extend(cls_indices[keep])
+                            
+                            # Keep only the selected boxes
+                            if len(keep_indices) > 0:
+                                x = x[keep_indices]
+                            else:
+                                x = np.array([])
+                        
+                        p = [x] if len(x) > 0 else [np.array([])]
+                    else:
+                        p = [np.array([])]
                 else:
                     logger.warning("Unexpected prediction format in traditional NMS mode")
                     p = [np.array([])]
@@ -403,7 +433,13 @@ class YOLO(Model):
             return self.postprocess_rtdetr(preds)
         masks, keypoints = None, None
         img_shape = (self.img_height, self.img_width)
-        if self.task == "seg":
+        is_end2end = self.model_type in [
+            "yolo26",
+            "yolo26_obb",
+            "yolo26_seg",
+            "yolo26_pose",
+        ]
+        if self.task == "seg" and not is_end2end:
             proto = preds[1][-1] if len(preds[1]) == 3 else preds[1]
             self.mask_height, self.mask_width = proto.shape[2:]
         for i, pred in enumerate(p):

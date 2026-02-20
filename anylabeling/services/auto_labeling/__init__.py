@@ -72,6 +72,9 @@ _CUSTOM_MODELS = [
     "dfine",
     "yolo12",
     "yolo26",
+    "yolo26_seg",
+    "yolo26_obb",
+    "yolo26_pose",
     "u_rtdetr",
     "yoloe",
 ]
@@ -172,6 +175,9 @@ _AUTO_LABELING_CONF_MODELS = [
     "dfine",
     "yolo12",
     "yolo26",
+    "yolo26_seg",
+    "yolo26_obb",
+    "yolo26_pose",
     "u_rtdetr",
     "yoloe",
 ]
@@ -209,6 +215,9 @@ _AUTO_LABELING_IOU_MODELS = [
     "yolo11_pose_track",
     "yolox",
     "yolo12",
+    "yolo26_seg",
+    "yolo26_obb",
+    "yolo26_pose",
     "yoloe",
 ]
 
@@ -255,6 +264,9 @@ _AUTO_LABELING_PRESERVE_EXISTING_ANNOTATIONS_STATE_MODELS = [
     "dfine",
     "yolo12",
     "yolo26",
+    "yolo26_seg",
+    "yolo26_obb",
+    "yolo26_pose",
     "u_rtdetr",
     "yoloe",
     "segment_anything_2_video",
