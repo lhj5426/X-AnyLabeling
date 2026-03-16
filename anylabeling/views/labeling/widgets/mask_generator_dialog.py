@@ -60,9 +60,17 @@ class MaskGeneratorWorker(QtCore.QThread):
                 pil_img = Image.open(self.image_path)
                 # 转换为numpy数组
                 img = np.array(pil_img)
-                # PIL是RGB，OpenCV是BGR，需要转换
-                if len(img.shape) == 3 and img.shape[2] == 3:
-                    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                # 确保图像为3通道BGR格式，以适配CTD模型
+                if len(img.shape) == 2:
+                    # 灰度图转BGR
+                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                elif len(img.shape) == 3:
+                    if img.shape[2] == 4:
+                        # RGBA转BGR
+                        img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+                    elif img.shape[2] == 3:
+                        # RGB (PIL默认) 转BGR
+                        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
                 if img is None or img.size == 0:
                     self.error.emit(f"无法读取图片: {self.image_path}")
@@ -84,46 +92,51 @@ class MaskGeneratorWorker(QtCore.QThread):
             extend_left = self.params.get('extend_left', 0)
             extend_right = self.params.get('extend_right', 0)
 
-            # 处理每个YOLO标签框
-            self.progress.emit(f"[CTD] 开始处理 {len(self.yolo_labels)} 个标签框...")
+            # 1. 全图文字检测 - 获取高质量文字掩膜（提供完整上下文）
+            self.progress.emit("[CTD] 正在进行全图文字检测...")
+            mask_full, mask_refined_full, _ = model(img, refine_mode=0, keep_undetected_mask=False)
 
-            for idx, label_data in enumerate(self.yolo_labels):
-                # YOLO格式: class x_center y_center width height (归一化坐标)
-                x_center, y_center, width, height = label_data[1:]
+            if mask_refined_full is None or mask_refined_full.size == 0:
+                self.progress.emit("[CTD] ⚠️ 未检测到文字区域")
+                mask = np.zeros((img_h, img_w), dtype=np.uint8)
+            else:
+                # 确保掩膜大小对齐
+                if mask_refined_full.shape[:2] != (img_h, img_w):
+                    mask_refined_full = cv2.resize(mask_refined_full, (img_w, img_h))
 
-                # 转换为像素坐标
-                x_center_px = int(x_center * img_w)
-                y_center_px = int(y_center * img_h)
-                width_px = int(width * img_w)
-                height_px = int(height * img_h)
+                # 2. 针对每个标注框进行局部优化和轮廓提取
+                self.progress.emit(f"[CTD] 正在处理 {len(self.yolo_labels)} 个标注区域的掩膜连通性...")
+                final_contours = []
+                
+                # 准备形态学内核，用于粘合离散的字符笔画
+                kernel_close = np.ones((5, 5), np.uint8)
+                
+                for idx, label_data in enumerate(self.yolo_labels):
+                    x_center, y_center, width, height = label_data[1:]
+                    x1 = int((x_center - width / 2) * img_w)
+                    y1 = int((y_center - height / 2) * img_h)
+                    x2 = int((x_center + width / 2) * img_w)
+                    y2 = int((y_center + height / 2) * img_h)
+                    
+                    x1, y1 = max(0, x1), max(0, y1)
+                    x2, y2 = min(img_w, x2), min(img_h, y2)
+                    
+                    if x2 <= x1 or y2 <= y1:
+                        continue
 
-                # 计算矩形框（不应用参数，让CTD检测原始区域）
-                x1 = x_center_px - width_px // 2
-                y1 = y_center_px - height_px // 2
-                x2 = x_center_px + width_px // 2
-                y2 = y_center_px + height_px // 2
+                    # 提取该区域的掩膜
+                    region_mask = mask_refined_full[y1:y2, x1:x2].copy()
+                    
+                    # 应用闭运算：粘合字符笔画，减少碎片多边形
+                    region_mask = cv2.morphologyEx(region_mask, cv2.MORPH_CLOSE, kernel_close)
+                    
+                    # 应用参数：缩放/延伸（在这里应用以确保局部精度）
+                    if size_scale != 1.0 or any([extend_top, extend_bottom, extend_left, extend_right]):
+                        # 转换为大掩膜或在局部处理（为了简单，后续在全局统一后处理，此处仅提取初始轮廓）
+                        pass
 
-                # 边界检查
-                x1 = max(0, x1)
-                y1 = max(0, y1)
-                x2 = min(img_w, x2)
-                y2 = min(img_h, y2)
-
-                self.progress.emit(f"[CTD] 处理区域 {idx+1}/{len(self.yolo_labels)}: [{x1},{y1},{x2},{y2}]")
-
-                # 裁剪区域
-                crop = img[y1:y2, x1:x2]
-                if crop.size == 0:
-                    self.progress.emit(f"[CTD] 区域 {idx+1} 为空，跳过")
-                    continue
-
-                # 使用CTD检测文字区域
-                self.progress.emit(f"[CTD] 调用CTD模型检测区域 {idx+1}...")
-                mask_crop, mask_refined_crop, blk_list = model(crop, refine_mode=0, keep_undetected_mask=False)
-
-                # 将检测到的掩膜合并到全图掩膜中
-                if mask_refined_crop is not None and mask_refined_crop.size > 0:
-                    mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], mask_refined_crop)
+                    # 将处理后的掩膜贴回主掩膜（用于PNG导出）
+                    mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], region_mask)
 
             # 对掩膜进行后处理：应用膨胀操作来扩展掩膜区域
             # 1. 根据size_scale计算膨胀量（使用独立工具的算法）
@@ -208,36 +221,37 @@ class MaskGeneratorWorker(QtCore.QThread):
             else:
                 self.progress.emit(f"[生成] 跳过PNG保存，仅提取轮廓数据...")
 
-            # 提取轮廓（用于多边形显示）
-            self.progress.emit(f"[CTD] 提取多边形轮廓...")
+            # 5. 提取轮廓（用于多边形显示）
+            self.progress.emit(f"[CTD] 正在从合并掩膜中提取最终多边形...")
             contours = []
+            
+            # 最终全局掩膜后处理：使用闭运算粘合碎片
             mask_binary = (mask > 127).astype(np.uint8)
-
-            # 膨胀掩膜以确保完全覆盖文字（可选）
-            dilate_kernel_size = self.params.get('dilate_kernel_size', 3)  # 默认3x3
+            kernel_glue = np.ones((5, 5), np.uint8)
+            mask_glued = cv2.morphologyEx(mask_binary, cv2.MORPH_CLOSE, kernel_glue)
+            
+            # 额外的膨胀（根据用户参数）
+            dilate_kernel_size = self.params.get('dilate_kernel_size', 3)
             if dilate_kernel_size > 0:
-                kernel = np.ones((dilate_kernel_size, dilate_kernel_size), np.uint8)
-                mask_binary = cv2.dilate(mask_binary, kernel, iterations=1)
-                self.progress.emit(f"[CTD] 应用 {dilate_kernel_size}x{dilate_kernel_size} 膨胀核")
+                kernel_dilate = np.ones((dilate_kernel_size, dilate_kernel_size), np.uint8)
+                mask_glued = cv2.dilate(mask_glued, kernel_dilate, iterations=1)
 
-            # 统计掩膜覆盖率
-            mask_pixels = np.sum(mask_binary > 0)
-            total_pixels = mask_binary.size
-            coverage = (mask_pixels / total_pixels) * 100
-            self.progress.emit(f"[CTD] 掩膜覆盖率: {coverage:.2f}% ({mask_pixels}/{total_pixels} 像素)")
+            contour_list, _ = cv2.findContours(mask_glued, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            contour_list, _ = cv2.findContours(mask_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-            self.progress.emit(f"[CTD] 找到 {len(contour_list)} 个轮廓")
+            self.progress.emit(f"[CTD] 找到 {len(contour_list)} 个聚合文字块轮廓")
 
             for idx, cnt in enumerate(contour_list):
-                # 使用更小的epsilon值以保留更多细节（0.01 → 0.002）
-                epsilon = 0.002 * cv2.arcLength(cnt, True)
+                # 过滤太小的噪点
+                if cv2.contourArea(cnt) < 15:
+                    continue
+                    
+                # 拟合平滑多边形
+                epsilon = 0.005 * cv2.arcLength(cnt, True)
                 approx = cv2.approxPolyDP(cnt, epsilon, True)
-                points = [[int(point[0][0]), int(point[0][1])] for point in approx]
+                
+                points = [[float(point[0][0]), float(point[0][1])] for point in approx]
                 if len(points) >= 3:
                     contours.append(points)
-                    self.progress.emit(f"[CTD] 轮廓 {idx+1}: {len(points)} 个顶点")
 
             self.progress.emit(f"[CTD] 提取了 {len(contours)} 个有效多边形轮廓")
             self.progress.emit(f"[CTD] ✅ 掩膜生成完成！")
@@ -921,8 +935,14 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                     import numpy as np
                     import cv2
                     img = np.array(pil_img)
-                    if len(img.shape) == 3 and img.shape[2] == 3:
-                        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    # 确保图像为3通道BGR格式
+                    if len(img.shape) == 2:
+                        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+                    elif len(img.shape) == 3:
+                        if img.shape[2] == 4:
+                            img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+                        elif img.shape[2] == 3:
+                            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
                     # 创建掩膜画布
                     if is_imagetrans:
@@ -1333,42 +1353,41 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                 self.append_log(f"[错误] 无法读取图片: {str(e)}")
                 self.status_label.setText(self.tr("❌ 读取图片失败"))
                 return
-
-            # 将rotation和rectangle类型的标注转换为YOLO格式（归一化坐标）
+            # 将标注转换为YOLO格式（归一化坐标）
             yolo_labels = []
             skipped_count = 0
             for shape in shapes:
-                shape_type = shape.get('shape_type')
                 shape_label = shape.get('label', '')
+                
+                # 全部形状都尝试提取框，提高兼容性
                 points = shape.get('points', [])
+                if not points:
+                    continue
 
                 # 检查是否需要排除此标签
                 if exclude_labels and shape_label in exclude_labels:
                     skipped_count += 1
                     continue
 
-                # 支持rotation（旋转框）和rectangle（水平框）
-                if (shape_type in ['rotation', 'rectangle']) and len(points) == 4:
-                    # 计算外接矩形的中心点和宽高
-                    xs = [p[0] for p in points]
-                    ys = [p[1] for p in points]
+                # 计算外接矩形
+                xs = [p[0] for p in points]
+                ys = [p[1] for p in points]
+                x_min, x_max = min(xs), max(xs)
+                y_min, y_max = min(ys), max(ys)
 
-                    x_min, x_max = min(xs), max(xs)
-                    y_min, y_max = min(ys), max(ys)
+                x_center = (x_min + x_max) / 2
+                y_center = (y_min + y_max) / 2
+                width = x_max - x_min
+                height = y_max - y_min
 
-                    x_center = (x_min + x_max) / 2
-                    y_center = (y_min + y_max) / 2
-                    width = x_max - x_min
-                    height = y_max - y_min
+                # 归一化
+                x_center_norm = x_center / img_w
+                y_center_norm = y_center / img_h
+                width_norm = width / img_w
+                height_norm = height / img_h
 
-                    # 归一化
-                    x_center_norm = x_center / img_w
-                    y_center_norm = y_center / img_h
-                    width_norm = width / img_w
-                    height_norm = height / img_h
-
-                    # YOLO格式: [class, x_center, y_center, width, height]
-                    yolo_labels.append([0, x_center_norm, y_center_norm, width_norm, height_norm])
+                # YOLO格式: [class, x_center, y_center, width, height]
+                yolo_labels.append([0, x_center_norm, y_center_norm, width_norm, height_norm])
 
             if skipped_count > 0:
                 self.append_log(f"[过滤] 已跳过 {skipped_count} 个排除标签的标注")
@@ -1599,7 +1618,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                         skip_count += 1
                         continue
 
-                    # 提取rotation和rectangle类型的标注
+                    # 全部形状都尝试提取框
                     boxes = []
                     skipped_count = 0
                     for shape in shapes:
@@ -1609,11 +1628,10 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                         if exclude_labels and shape_label in exclude_labels:
                             skipped_count += 1
                             continue
-
-                        if shape.get('shape_type') in ['rotation', 'rectangle']:
-                            points = shape.get('points', [])
-                            if len(points) >= 2:
-                                boxes.append(points)
+                        
+                        points = shape.get('points', [])
+                        if len(points) >= 2:
+                            boxes.append(points)
 
                     if skipped_count > 0:
                         self.append_log(f"  [过滤] 已跳过 {skipped_count} 个排除标签的标注")
@@ -2106,8 +2124,14 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
 
             pil_img = Image.open(worker.image_path)
             img = np.array(pil_img)
-            if len(img.shape) == 3 and img.shape[2] == 3:
-                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            # 确保图像为3通道BGR格式
+            if len(img.shape) == 2:
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+            elif len(img.shape) == 3:
+                if img.shape[2] == 4:
+                    img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+                elif img.shape[2] == 3:
+                    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
             img_h, img_w = img.shape[:2]
 
@@ -2118,97 +2142,107 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             import torch
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-            # 处理每个标注框
-            all_contours = []
+            # 1. 全图检测获取最准确掩膜
+            mask_full, mask_refined_full, _ = model(img, refine_mode=0, keep_undetected_mask=False)
 
-            for label in worker.yolo_labels:
-                cls, x_center, y_center, w, h = label
+            if mask_refined_full is None or mask_refined_full.size == 0:
+                mask = np.zeros((img_h, img_w), dtype=np.uint8)
+            else:
+                if mask_refined_full.shape[:2] != (img_h, img_w):
+                    mask_refined_full = cv2.resize(mask_refined_full, (img_w, img_h))
 
-                x1 = int((x_center - w / 2) * img_w)
-                y1 = int((y_center - h / 2) * img_h)
-                x2 = int((x_center + w / 2) * img_w)
-                y2 = int((y_center + h / 2) * img_h)
-
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(img_w, x2), min(img_h, y2)
-
-                box_w = x2 - x1
-                box_h = y2 - y1
-
-                if box_w <= 0 or box_h <= 0:
-                    continue
-
-                # 裁剪区域（不应用参数）
-                crop = img[y1:y2, x1:x2]
-
-                if crop.size == 0:
-                    continue
-
-                # CTD检测 - 正确的调用方式
-                mask_crop, mask_refined_crop, blk_list = model(crop, refine_mode=0, keep_undetected_mask=False)
-
-                if mask_refined_crop is None or mask_refined_crop.size == 0:
-                    continue
-
-                # 调整掩膜大小
-                mask_resized = cv2.resize(mask_refined_crop, (box_w, box_h))
-                _, binary_mask = cv2.threshold(mask_resized, 127, 255, cv2.THRESH_BINARY)
-
-                # 应用参数（整体大小 + 方向延伸）
-                size_scale = worker.params.get('size_scale', 1.0)
-                extend_top = worker.params.get('extend_top', 0)
-                extend_bottom = worker.params.get('extend_bottom', 0)
-                extend_left = worker.params.get('extend_left', 0)
-                extend_right = worker.params.get('extend_right', 0)
-
-                # 整体大小膨胀/腐蚀
-                if size_scale != 1.0:
-                    if size_scale > 1.0:
-                        kernel_size = int((size_scale - 1.0) * 10) + 1
-                        kernel = (kernel_size, kernel_size)
-                        binary_mask = cv2.dilate(binary_mask, np.ones(kernel, np.uint8), iterations=1)
-                    else:
-                        kernel_size = int((1.0 - size_scale) * 10) + 1
-                        kernel = (kernel_size, kernel_size)
-                        binary_mask = cv2.erode(binary_mask, np.ones(kernel, np.uint8), iterations=1)
-
-                # 方向延伸（像素移位方法）
-                result_mask = binary_mask.copy()
-                for i in range(1, int(extend_top) + 1):
-                    shifted = np.zeros_like(binary_mask)
-                    shifted[:-i, :] = binary_mask[i:, :]
-                    result_mask = np.maximum(result_mask, shifted)
-                for i in range(1, int(extend_bottom) + 1):
-                    shifted = np.zeros_like(binary_mask)
-                    shifted[i:, :] = binary_mask[:-i, :]
-                    result_mask = np.maximum(result_mask, shifted)
-                for i in range(1, int(extend_left) + 1):
-                    shifted = np.zeros_like(binary_mask)
-                    shifted[:, :-i] = binary_mask[:, i:]
-                    result_mask = np.maximum(result_mask, shifted)
-                for i in range(1, int(extend_right) + 1):
-                    shifted = np.zeros_like(binary_mask)
-                    shifted[:, i:] = binary_mask[:, :-i]
-                    result_mask = np.maximum(result_mask, shifted)
-
-                # 提取轮廓
-                contours_raw, _ = cv2.findContours(result_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-                for cnt in contours_raw:
-                    epsilon = 0.002 * cv2.arcLength(cnt, True)
-                    approx = cv2.approxPolyDP(cnt, epsilon, True)
-
-                    if len(approx) < 3:
+                # 2. 局部聚合逻辑：在每个标注框内合并碎片
+                mask = np.zeros((img_h, img_w), dtype=np.uint8)
+                kernel_close = np.ones((5, 5), np.uint8)
+                
+                for label in worker.yolo_labels:
+                    cls, x_center, y_center, w, h = label
+                    x1 = int((x_center - w / 2) * img_w)
+                    y1 = int((y_center - h / 2) * img_h)
+                    x2 = int((x_center + w / 2) * img_w)
+                    y2 = int((y_center + h / 2) * img_h)
+                    
+                    x1, y1 = max(0, x1), max(0, y1)
+                    x2, y2 = min(img_w, x2), min(img_h, y2)
+                    
+                    if x2 <= x1 or y2 <= y1:
                         continue
 
-                    # 转换坐标到原图
-                    polygon = []
-                    for pt in approx:
-                        x = int(pt[0][0]) + x1
-                        y = int(pt[0][1]) + y1
-                        polygon.append([x, y])
+                    region_m = mask_refined_full[y1:y2, x1:x2].copy()
+                    # 闭运算连接字符
+                    region_m = cv2.morphologyEx(region_m, cv2.MORPH_CLOSE, kernel_close)
+                    mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], region_m)
 
-                    all_contours.append(polygon)
+            # 获取延伸/大小参数
+            size_scale = worker.params.get('size_scale', 1.0)
+            extend_top = int(worker.params.get('extend_top', 0))
+            extend_bottom = int(worker.params.get('extend_bottom', 0))
+            extend_left = int(worker.params.get('extend_left', 0))
+            extend_right = int(worker.params.get('extend_right', 0))
+
+            # 3. 后处理：大小调整
+            if size_scale != 1.0:
+                if size_scale > 1.0:
+                    kernel_size = int((size_scale - 1.0) * 10) + 1
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+                    mask = cv2.dilate(mask, kernel, iterations=1)
+                else:
+                    kernel_size = int((1.0 - size_scale) * 10) + 1
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+                    mask = cv2.erode(mask, kernel, iterations=1)
+
+            # 4. 后处理：方向延伸
+            if extend_top > 0 or extend_bottom > 0 or extend_left > 0 or extend_right > 0:
+                result_mask = mask.copy()
+                if extend_top > 0:
+                    for i in range(1, int(extend_top) + 1):
+                        shifted = np.zeros_like(mask)
+                        shifted[:-i, :] = mask[i:, :]
+                        result_mask = np.maximum(result_mask, shifted)
+                if extend_bottom > 0:
+                    for i in range(1, int(extend_bottom) + 1):
+                        shifted = np.zeros_like(mask)
+                        shifted[i:, :] = mask[:-i, :]
+                        result_mask = np.maximum(result_mask, shifted)
+                if extend_left > 0:
+                    for i in range(1, int(extend_left) + 1):
+                        shifted = np.zeros_like(mask)
+                        shifted[:, :-i] = mask[:, i:]
+                        result_mask = np.maximum(result_mask, shifted)
+                if extend_right > 0:
+                    for i in range(1, int(extend_right) + 1):
+                        shifted = np.zeros_like(mask)
+                        shifted[:, i:] = mask[:, :-i]
+                        result_mask = np.maximum(result_mask, shifted)
+                mask = result_mask
+
+            # 5. 提取所有轮廓
+            all_contours = []
+            _, binary_mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+            
+            # 使用界面参数中的膨胀设置
+            dilate_kernel_size = worker.params.get('dilate_kernel_size', 3)
+            if dilate_kernel_size > 0:
+                kernel = np.ones((dilate_kernel_size, dilate_kernel_size), np.uint8)
+                binary_mask = cv2.dilate(binary_mask, kernel, iterations=1)
+
+            contours_raw, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            for cnt in contours_raw:
+                epsilon = 0.005 * cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, epsilon, True)
+
+                if len(approx) < 3:
+                    continue
+
+                # 转换坐标到原图（当前mask已经是全图比例，直接提取即可）
+                polygon = []
+                for pt in approx:
+                    x = float(pt[0][0])
+                    y = float(pt[0][1])
+                    polygon.append([x, y])
+
+                all_contours.append(polygon)
 
             return {
                 "success": True,
@@ -2239,8 +2273,14 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             # 读取图片（使用PIL支持中文路径）
             pil_img = Image.open(worker.image_path)
             img = np.array(pil_img)
-            if len(img.shape) == 3 and img.shape[2] == 3:
-                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            # 确保图像为3通道BGR格式
+            if len(img.shape) == 2:
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+            elif len(img.shape) == 3:
+                if img.shape[2] == 4:
+                    img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+                elif img.shape[2] == 3:
+                    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
             img_h, img_w = img.shape[:2]
 

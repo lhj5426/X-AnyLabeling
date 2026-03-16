@@ -51,6 +51,12 @@ def generate_mask_from_yolo(image_path, yolo_labels, model_path, output_path, pa
         if img is None:
             return {"success": False, "error": f"无法读取图片: {image_path}"}
 
+        # 确保图像为3通道BGR格式
+        if len(img.shape) == 2:
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif len(img.shape) == 3 and img.shape[2] == 4:
+            img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+
         img_h, img_w = img.shape[:2]
         print(f"[CTD] 图片尺寸: {img_w}x{img_h}", flush=True)
 
@@ -68,47 +74,40 @@ def generate_mask_from_yolo(image_path, yolo_labels, model_path, output_path, pa
         mask_regions = []
         print(f"[CTD] 开始处理 {len(yolo_labels)} 个标签框...", flush=True)
 
-        for idx, label_data in enumerate(yolo_labels):
-            # YOLO格式: class x_center y_center width height (归一化坐标)
-            x_center, y_center, width, height = label_data[1:]
+        # 1. 全图文字检测 - 获取高质量文字掩膜
+        print("[CTD] 正在进行全图文字检测（提供完整上下文）...", flush=True)
+        # 使用传入的检测尺寸或默认
+        detect_size = params.get('detect_size', 1024)
+        mask_full, mask_refined_full, blk_list = model(img, refine_mode=0, keep_undetected_mask=False)
 
-            # 转换为像素坐标
-            x_center_px = int(x_center * img_w)
-            y_center_px = int(y_center * img_h)
-            width_px = int(width * img_w)
-            height_px = int(height * img_h)
+        if mask_refined_full is None or mask_refined_full.size == 0:
+            print("[CTD] ⚠️ 全图未检测到文字区域", flush=True)
+            mask = np.zeros((img_h, img_w), dtype=np.uint8)
+        else:
+            print(f"[CTD] 检测完成，找到 {len(blk_list) if blk_list is not None else 0} 个文字块", flush=True)
+            
+            # 确保掩膜大小与原图匹配
+            if mask_refined_full.shape[:2] != (img_h, img_w):
+                mask_refined_full = cv2.resize(mask_refined_full, (img_w, img_h))
 
-            # 计算矩形框（不应用参数，让CTD检测原始区域）
-            x1 = x_center_px - width_px // 2
-            y1 = y_center_px - height_px // 2
-            x2 = x_center_px + width_px // 2
-            y2 = y_center_px + height_px // 2
+            # 2. 创建YOLO框过滤掩膜
+            print(f"[CTD] 正在应用 {len(yolo_labels)} 个标注框过滤...", flush=True)
+            box_filter = np.zeros((img_h, img_w), dtype=np.uint8)
+            for label_data in yolo_labels:
+                x_center, y_center, width, height = label_data[1:]
+                x1 = int((x_center - width / 2) * img_w)
+                y1 = int((y_center - height / 2) * img_h)
+                x2 = int((x_center + width / 2) * img_w)
+                y2 = int((y_center + height / 2) * img_h)
+                
+                # 限制范围
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(img_w, x2), min(img_h, y2)
+                
+                cv2.rectangle(box_filter, (x1, y1), (x2, y2), 255, -1)
 
-            # 边界检查
-            x1 = max(0, x1)
-            y1 = max(0, y1)
-            x2 = min(img_w, x2)
-            y2 = min(img_h, y2)
-
-            print(f"[CTD] 处理区域 {idx+1}/{len(yolo_labels)}: [{x1},{y1},{x2},{y2}]", flush=True)
-
-            # 裁剪区域
-            crop = img[y1:y2, x1:x2]
-            if crop.size == 0:
-                print(f"[CTD] 区域 {idx+1} 为空，跳过", flush=True)
-                continue
-
-            # 使用CTD检测文字区域 - 正确的调用方式
-            print(f"[CTD] 调用CTD模型检测区域 {idx+1}...", flush=True)
-            mask_crop, mask_refined_crop, blk_list = model(crop, refine_mode=0, keep_undetected_mask=False)
-
-            print(f"[CTD] 区域 {idx+1} 检测完成，检测到 {len(blk_list) if blk_list is not None else 0} 个文字块", flush=True)
-
-            # 将检测到的掩膜合并到全图掩膜中
-            # mask_refined_crop已经是掩膜了，不需要再处理blk_list
-            if mask_refined_crop is not None and mask_refined_crop.size > 0:
-                # 将crop区域的掩膜复制到全图掩膜的对应位置
-                mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], mask_refined_crop)
+            # 3. 过滤全图掩膜
+            mask = cv2.bitwise_and(mask_refined_full, box_filter)
 
         # 对掩膜进行后处理：应用膨胀操作来扩展掩膜区域
         # 1. 根据size_scale计算膨胀量（使用独立工具的算法）
@@ -202,15 +201,12 @@ def generate_mask_from_yolo(image_path, yolo_labels, model_path, output_path, pa
         print(f"[CTD] 找到 {len(contour_list)} 个轮廓", flush=True)
 
         for cnt in contour_list:
-            # 简化轮廓
-            epsilon = 0.01 * cv2.arcLength(cnt, True)
+            # 使用更平滑的epsilon值（0.005）并保留浮点精度
+            epsilon = 0.005 * cv2.arcLength(cnt, True)
             approx = cv2.approxPolyDP(cnt, epsilon, True)
 
-            # 转换为点列表
-            points = []
-            for point in approx:
-                x, y = point[0]
-                points.append([int(x), int(y)])
+            # 转换为点列表，使用float点
+            points = [[float(point[0][0]), float(point[0][1])] for point in approx]
 
             if len(points) >= 3:  # 至少3个点才能构成多边形
                 contours.append(points)
