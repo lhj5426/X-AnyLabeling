@@ -2395,21 +2395,6 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("导入 ImageTrans ipt 项目文件"),
         )
 
-        upload_manga_translator_folder_annotation = action(
-            self.tr("导入 Manga Translator 文件夹"),
-            lambda: utils.upload_manga_translator_folder_annotation(self),
-            None,
-            icon="format_coco",
-            tip=self.tr("批量导入 manga-translator-ui JSON 标注文件夹"),
-        )
-
-        export_manga_translator_folder_annotation = action(
-            self.tr("导出 Manga Translator 文件夹"),
-            lambda: utils.export_manga_translator_folder_annotation(self),
-            None,
-            icon="format_coco",
-            tip=self.tr("批量导出为 manga-translator-ui JSON 格式"),
-        )
 
         upload_labelplus_annotation = action(
             self.tr("导入 LabelPlus 格式"),
@@ -2757,9 +2742,7 @@ class LabelingWidget(QtWidgets.QWidget):
             upload_vlm_r1_ovd_annotation=upload_vlm_r1_ovd_annotation,
             upload_ballontranslator_annotation=upload_ballontranslator_annotation,
             upload_imagetrans_annotation=upload_imagetrans_annotation,
-            upload_manga_translator_folder_annotation=upload_manga_translator_folder_annotation,
             upload_labelplus_annotation=upload_labelplus_annotation,
-            export_manga_translator_folder_annotation=export_manga_translator_folder_annotation,
             export_yolo_hbb_annotation=export_yolo_hbb_annotation,
             export_yolo_obb_annotation=export_yolo_obb_annotation,
             export_yolo_seg_annotation=export_yolo_seg_annotation,
@@ -3042,7 +3025,6 @@ class LabelingWidget(QtWidgets.QWidget):
                 None,
                 upload_ballontranslator_annotation,
                 upload_imagetrans_annotation,
-                upload_manga_translator_folder_annotation,
                 upload_labelplus_annotation,
             ),
         )
@@ -3076,7 +3058,6 @@ class LabelingWidget(QtWidgets.QWidget):
                 export_ballontranslator_annotation,
                 export_imagetrans_annotation,
                 export_labelplus_annotation,
-                export_manga_translator_folder_annotation,
                 None,
                 export_description_txt,
             ),
