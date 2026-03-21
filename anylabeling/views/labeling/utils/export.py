@@ -36,6 +36,7 @@ class ExportThread(QThread):
         save_path,
         mode,
         prefix=None,
+        excluded_labels=None,
     ):
         super().__init__()
         self.converter = converter
@@ -44,6 +45,7 @@ class ExportThread(QThread):
         self.save_path = save_path
         self.mode = mode
         self.prefix = prefix
+        self.excluded_labels = excluded_labels
 
     def run(self):
         try:
@@ -74,6 +76,7 @@ class ExportThread(QThread):
                     self.label_dir_path,
                     self.save_path,
                     self.mode,
+                    excluded_labels=self.excluded_labels,
                 )
             self.finished.emit(True, "")
         except Exception as e:
@@ -302,13 +305,16 @@ class LabelFilterDialog(QDialog):
         self.mode_group = QtWidgets.QButtonGroup(self)
         self.include_radio = QtWidgets.QRadioButton("包含模式（导出包含以下标签的图片）")
         self.exclude_radio = QtWidgets.QRadioButton("排除模式（不导出包含以下标签的图片）")
+        self.exclude_labels_only_radio = QtWidgets.QRadioButton("只排除标签（导出图片但不导出特定标签）")
         self.include_radio.setChecked(True)
 
         self.mode_group.addButton(self.include_radio)
         self.mode_group.addButton(self.exclude_radio)
+        self.mode_group.addButton(self.exclude_labels_only_radio)
 
         layout.addWidget(self.include_radio)
         layout.addWidget(self.exclude_radio)
+        layout.addWidget(self.exclude_labels_only_radio)
 
         # 匹配条件选择（仅在包含模式下可用）
         self.match_layout = QHBoxLayout()
@@ -368,6 +374,7 @@ class LabelFilterDialog(QDialog):
         is_enabled = self.enable_filter_checkbox.isChecked()
         self.include_radio.setEnabled(is_enabled)
         self.exclude_radio.setEnabled(is_enabled)
+        self.exclude_labels_only_radio.setEnabled(is_enabled)
         self.list_widget.setEnabled(is_enabled)
         self._update_match_condition_state()
 
@@ -391,9 +398,15 @@ class LabelFilterDialog(QDialog):
             if item.checkState() == Qt.Checked:
                 selected_labels.append(item.text())
 
+        mode = 'include'
+        if self.exclude_radio.isChecked():
+            mode = 'exclude'
+        elif self.exclude_labels_only_radio.isChecked():
+            mode = 'exclude_labels'
+
         return {
             'enabled': self.enable_filter_checkbox.isChecked(),
-            'mode': 'include' if self.include_radio.isChecked() else 'exclude',
+            'mode': mode,
             'match_condition': 'any' if self.match_any_radio.isChecked() else 'all',
             'labels': selected_labels
         }
@@ -635,15 +648,16 @@ def export_yolo_annotation(self, mode):
 
     # Filter by labels if advanced filter is enabled
     if filter_config['enabled']:
-        image_list = _filter_images_by_labels(image_list, label_dir_path, filter_config, self)
-        if not image_list:
-            popup = Popup(
-                self.tr("没有图片符合筛选条件！"),
-                self,
-                icon=new_icon_path("warning", "svg"),
-            )
-            popup.show_popup(self, position="center")
-            return
+        if filter_config['mode'] != 'exclude_labels':
+            image_list = _filter_images_by_labels(image_list, label_dir_path, filter_config, self)
+            if not image_list:
+                popup = Popup(
+                    self.tr("没有图片符合筛选条件！"),
+                    self,
+                    icon=new_icon_path("warning", "svg"),
+                )
+                popup.show_popup(self, position="center")
+                return
 
     progress_dialog = QProgressDialog(
         self.tr("Exporting..."), self.tr("Cancel"), 0, len(image_list), self
@@ -679,8 +693,9 @@ def export_yolo_annotation(self, mode):
             
             dst_file = osp.join(save_path, dst_file_name)
 
+            excluded_labels = filter_config['labels'] if filter_config['enabled'] and filter_config['mode'] == 'exclude_labels' else None
             is_empty_file = converter.custom_to_yolo(
-                src_file, dst_file, mode, skip_empty_files
+                src_file, dst_file, mode, skip_empty_files, excluded_labels=excluded_labels
             )
 
             if save_images and not (skip_empty_files and is_empty_file):
@@ -889,15 +904,16 @@ def export_voc_annotation(self, mode):
 
     # Filter by labels if advanced filter is enabled
     if filter_config['enabled']:
-        image_list = _filter_images_by_labels(image_list, label_dir_path, filter_config, self)
-        if not image_list:
-            popup = Popup(
-                self.tr("没有图片符合筛选条件！"),
-                self,
-                icon=new_icon_path("warning", "svg"),
-            )
-            popup.show_popup(self, position="center")
-            return
+        if filter_config['mode'] != 'exclude_labels':
+            image_list = _filter_images_by_labels(image_list, label_dir_path, filter_config, self)
+            if not image_list:
+                popup = Popup(
+                    self.tr("没有图片符合筛选条件！"),
+                    self,
+                    icon=new_icon_path("warning", "svg"),
+                )
+                popup.show_popup(self, position="center")
+                return
 
     progress_dialog = QProgressDialog(
         self.tr("Exporting..."), self.tr("Cancel"), 0, len(image_list), self
@@ -929,8 +945,9 @@ def export_voc_annotation(self, mode):
             
             dst_file = osp.join(save_path, dst_file_name)
 
+            excluded_labels = filter_config['labels'] if filter_config['enabled'] and filter_config['mode'] == 'exclude_labels' else None
             is_empty_file = converter.custom_to_voc(
-                image_file, src_file, dst_file, mode, skip_empty_files
+                image_file, src_file, dst_file, mode, skip_empty_files, excluded_labels=excluded_labels
             )
 
             if save_images and not (skip_empty_files and is_empty_file):

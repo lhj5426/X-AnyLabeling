@@ -1573,8 +1573,10 @@ class LabelConverter:
 
     # Export functions
     def custom_to_yolo(  # noqa: C901
-        self, input_file, output_file, mode, skip_empty_files=False
+        self, input_file, output_file, mode, skip_empty_files=False, excluded_labels=None
     ):
+        if excluded_labels is None:
+            excluded_labels = []
         is_empty_file = True
         if osp.exists(input_file):
             with open(input_file, "r", encoding="utf-8") as f:
@@ -1591,6 +1593,8 @@ class LabelConverter:
             pose_data = {}
         with open(output_file, "w", encoding="utf-8") as f:
             for shape in data["shapes"]:
+                if shape.get("label") in excluded_labels:
+                    continue
                 shape_type = shape["shape_type"]
                 if mode == "hbb" and shape_type == "rectangle":
                     label = shape["label"]
@@ -1758,8 +1762,10 @@ class LabelConverter:
         return is_empty_file
 
     def custom_to_voc(
-        self, image_file, input_file, output_dir, mode, skip_empty_files=False
+        self, image_file, input_file, output_dir, mode, skip_empty_files=False, excluded_labels=None
     ):
+        if excluded_labels is None:
+            excluded_labels = []
         is_emtpy_file = True
         image = cv2.imread(image_file)
         image_height, image_width, image_depth = image.shape
@@ -1787,6 +1793,8 @@ class LabelConverter:
         )
         for shape in shapes:
             label = shape["label"]
+            if label in excluded_labels:
+                continue
             points = self.clamp_points(
                 shape["points"], image_width, image_height
             )
@@ -1840,7 +1848,9 @@ class LabelConverter:
 
         return is_emtpy_file
 
-    def custom_to_coco(self, image_list, input_path, output_path, mode):
+    def custom_to_coco(self, image_list, input_path, output_path, mode, excluded_labels=None):
+        if excluded_labels is None:
+            excluded_labels = []
         coco_data = self.get_coco_data(mode)
 
         if mode == "rectangle":
@@ -1906,6 +1916,8 @@ class LabelConverter:
             )
             for shape in data["shapes"]:
                 label = shape["label"]
+                if label in excluded_labels:
+                    continue
                 points = self.clamp_points(
                     shape["points"], image_width, image_height
                 )
