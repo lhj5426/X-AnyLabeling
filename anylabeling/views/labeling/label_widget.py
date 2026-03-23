@@ -2557,6 +2557,13 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="format_coco",
             tip=self.tr("导出 LabelPlus 格式（使用矩形右上角或点位置）"),
         )
+        export_mtu_json_annotation = action(
+            self.tr("导出 MTU JSON"),
+            lambda: utils.export_mtu_json_annotation(self),
+            None,
+            icon="format_coco",
+            tip=self.tr("导出 MTU JSON（manga_translator_work/json）"),
+        )
         export_description_txt = action(
             self.tr("导出文本到TXT"),
             lambda: utils.export_description_txt(self),
@@ -2763,6 +2770,7 @@ class LabelingWidget(QtWidgets.QWidget):
             export_ballontranslator_annotation=export_ballontranslator_annotation,
             export_imagetrans_annotation=export_imagetrans_annotation,
             export_labelplus_annotation=export_labelplus_annotation,
+            export_mtu_json_annotation=export_mtu_json_annotation,
             export_description_txt=export_description_txt,
             zoom=zoom,
             zoom_in=zoom_in,
@@ -3058,6 +3066,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 export_ballontranslator_annotation,
                 export_imagetrans_annotation,
                 export_labelplus_annotation,
+                export_mtu_json_annotation,
                 None,
                 export_description_txt,
             ),

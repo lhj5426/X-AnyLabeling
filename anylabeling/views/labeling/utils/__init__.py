@@ -17,6 +17,7 @@ from .export import (
     export_rotated_json_annotation,
     export_imagetrans_annotation,
     export_labelplus_annotation,
+    export_mtu_json_annotation,
     export_description_txt,
 )
 from .general import (

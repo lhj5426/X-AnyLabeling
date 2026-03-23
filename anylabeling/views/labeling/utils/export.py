@@ -4,8 +4,9 @@ import os.path as osp
 import pathlib
 import shutil
 import time
+import math
 
-from PyQt5 import QtWidgets
+from PyQt5 import QtWidgets, QtGui
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QHBoxLayout,
@@ -149,6 +150,253 @@ class ExportBallonTranslatorThread(QThread):
                 self.save_path,
                 self.excluded_labels,
             )
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
+
+class ExportMTUJsonThread(QThread):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(
+        self,
+        image_list,
+        save_root_path,
+        excluded_labels=None,
+        output_dir=None,
+        last_open_dir=None,
+    ):
+        super().__init__()
+        self.image_list = image_list or []
+        self.save_root_path = save_root_path
+        self.excluded_labels = set(str(x) for x in (excluded_labels or []))
+        self.output_dir = output_dir
+        self.last_open_dir = last_open_dir
+        self.stats = {
+            "total_images": 0,
+            "generated_json": 0,
+            "failed": 0,
+            "filtered_textlines": 0,
+            "total_textlines": 0,
+            "error_samples": [],
+        }
+        self.output_json_dir = osp.join(
+            self.save_root_path, "manga_translator_work", "json"
+        )
+
+    def _resolve_label_path(self, image_path: str) -> str:
+        image_name = osp.basename(image_path)
+        label_file_name = osp.splitext(image_name)[0] + ".json"
+        image_dir = osp.dirname(image_path)
+
+        if self.output_dir:
+            if self.last_open_dir:
+                try:
+                    rel_path = osp.relpath(image_dir, self.last_open_dir)
+                    candidate = osp.join(
+                        self.output_dir, rel_path, label_file_name
+                    )
+                    if osp.exists(candidate):
+                        return candidate
+                except Exception:
+                    pass
+            candidate = osp.join(self.output_dir, label_file_name)
+            if osp.exists(candidate):
+                return candidate
+
+        return osp.join(image_dir, label_file_name)
+
+    @staticmethod
+    def _extract_xy(point):
+        if isinstance(point, (list, tuple)) and len(point) >= 2:
+            return float(point[0]), float(point[1])
+        if isinstance(point, dict):
+            if "x" in point and "y" in point:
+                return float(point["x"]), float(point["y"])
+            if 0 in point and 1 in point:
+                return float(point[0]), float(point[1])
+        return None
+
+    @classmethod
+    def _shape_to_textline(cls, shape: dict) -> dict:
+        points = shape.get("points", []) or []
+        pts = []
+        for p in points:
+            xy = cls._extract_xy(p)
+            if xy is None:
+                continue
+            pts.append([float(xy[0]), float(xy[1])])
+
+        # XA rectangle may be saved as two diagonal points in some datasets.
+        shape_type = str(shape.get("shape_type", "") or "").lower()
+        if shape_type == "rectangle" and len(pts) == 2:
+            x1, y1 = pts[0]
+            x2, y2 = pts[1]
+            xmin, xmax = sorted([x1, x2])
+            ymin, ymax = sorted([y1, y2])
+            pts = [
+                [xmin, ymin],
+                [xmax, ymin],
+                [xmax, ymax],
+                [xmin, ymax],
+            ]
+
+        # Keep MTU textline polygon stable as 4-point box when possible.
+        if len(pts) > 4:
+            pts = pts[:4]
+        label = str(shape.get("label", "") or "")
+        text = str(shape.get("description", "") or "")
+        xa_direction = shape.get("direction", None)
+        try:
+            xa_direction = (
+                float(xa_direction) if xa_direction is not None else None
+            )
+        except Exception:
+            xa_direction = None
+        return {
+            "pts": pts,
+            "text": text,
+            "prob": 1.0,
+            "fg_colors": [0, 0, 0],
+            "bg_colors": [255, 255, 255],
+            "direction": "v",
+            "assigned_direction": None,
+            "is_yolo_box": False,
+            "imported_yolo_box": False,
+            "det_label": None,
+            "yolo_label": None,
+            "_xa_label": label,
+            "_xa_direction": xa_direction,
+        }
+
+    @staticmethod
+    def _textline_to_region(textline: dict) -> dict:
+        pts = textline.get("pts", []) or []
+        if pts:
+            cx = sum(p[0] for p in pts) / len(pts)
+            cy = sum(p[1] for p in pts) / len(pts)
+        else:
+            cx = cy = 0.0
+        angle = 0.0
+        if len(pts) >= 2:
+            # Use the longest edge and convert to MTU-like vertical slant angle.
+            best_dx, best_dy, best_len = 0.0, 0.0, -1.0
+            for i in range(len(pts)):
+                x1, y1 = pts[i]
+                x2, y2 = pts[(i + 1) % len(pts)]
+                dx = float(x2) - float(x1)
+                dy = float(y2) - float(y1)
+                l2 = dx * dx + dy * dy
+                if l2 > best_len:
+                    best_len = l2
+                    best_dx, best_dy = dx, dy
+            edge_angle = float(math.degrees(math.atan2(best_dy, best_dx)))
+            angle = edge_angle + 90.0
+            while angle > 180.0:
+                angle -= 360.0
+            while angle <= -180.0:
+                angle += 360.0
+            while angle > 90.0:
+                angle -= 180.0
+            while angle <= -90.0:
+                angle += 180.0
+        single_text = str(textline.get("text", "") or "")
+        return {
+            "lines": [pts],
+            "center": [float(cx), float(cy)],
+            "texts": [single_text],
+            "text": single_text,
+            "translation": "",
+            "font_size": 20,
+            "angle": angle,
+            "fg_colors": textline.get("fg_colors", [0, 0, 0]),
+            "bg_colors": textline.get("bg_colors", [255, 255, 255]),
+            "direction": "v",
+            "alignment": "center",
+            "target_lang": "",
+            "source_lang": "",
+            "prob": float(textline.get("prob", 1.0) or 1.0),
+            "line_spacing": 1.0,
+            "letter_spacing": 1.0,
+            "stroke_width": 0.07,
+            "font_path": "",
+            "white_frame_rect_local": [0.0, 0.0, 0.0, 0.0],
+            "has_custom_white_frame": False,
+        }
+
+    def run(self):
+        try:
+            os.makedirs(self.output_json_dir, exist_ok=True)
+            self.stats["total_images"] = len(self.image_list)
+
+            for image_path in self.image_list:
+                try:
+                    label_path = self._resolve_label_path(image_path)
+                    w = 0
+                    h = 0
+                    if osp.exists(label_path):
+                        with open(label_path, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        shapes = data.get("shapes", []) or []
+                        w = int(data.get("imageWidth") or 0)
+                        h = int(data.get("imageHeight") or 0)
+                    else:
+                        data = {}
+                        shapes = []
+
+                    # Fallback: read dimensions from image only when JSON has no size.
+                    if w <= 0 or h <= 0:
+                        image = QtGui.QImage(image_path)
+                        if not image.isNull():
+                            w = int(image.width())
+                            h = int(image.height())
+
+                    textlines_data = []
+                    for shape in shapes:
+                        try:
+                            label = str(shape.get("label", "") or "")
+                            if (
+                                self.excluded_labels
+                                and label in self.excluded_labels
+                            ):
+                                self.stats["filtered_textlines"] += 1
+                                continue
+                            tl = self._shape_to_textline(shape)
+                            if tl["pts"]:
+                                textlines_data.append(tl)
+                        except Exception:
+                            # Skip malformed shapes but keep exporting this image.
+                            continue
+
+                    self.stats["total_textlines"] += len(shapes)
+                    regions_data = [
+                        self._textline_to_region(tl) for tl in textlines_data
+                    ]
+
+                    payload = {
+                        os.path.abspath(image_path): {
+                            "regions": regions_data,
+                            "textlines": textlines_data,
+                            "original_width": w,
+                            "original_height": h,
+                            "skip_font_scaling": False,
+                        }
+                    }
+
+                    out_json = osp.join(
+                        self.output_json_dir,
+                        f"{osp.splitext(osp.basename(image_path))[0]}_translations.json",
+                    )
+                    with open(out_json, "w", encoding="utf-8") as f:
+                        json.dump(payload, f, ensure_ascii=False, indent=4)
+                    self.stats["generated_json"] += 1
+                except Exception as e:
+                    self.stats["failed"] += 1
+                    if len(self.stats["error_samples"]) < 5:
+                        self.stats["error_samples"].append(
+                            f"{osp.basename(image_path)}: {e}"
+                        )
+
             self.finished.emit(True, "")
         except Exception as e:
             self.finished.emit(False, str(e))
@@ -2294,6 +2542,134 @@ def export_imagetrans_annotation(self):
     progress_dialog.show()
     self.export_thread.start()
 
+    progress_dialog.canceled.connect(self.export_thread.terminate)
+
+
+def export_mtu_json_annotation(self):
+    if not _check_filename_exist(self):
+        return
+
+    unique_labels = []
+    seen = set()
+    if hasattr(self, "unique_label_list"):
+        for i in range(self.unique_label_list.count()):
+            item = self.unique_label_list.item(i)
+            label_text = item.data(Qt.UserRole)
+            if not label_text:
+                label_text = item.text()
+            if label_text and label_text not in seen:
+                seen.add(label_text)
+                unique_labels.append(label_text)
+
+    excluded_labels = []
+    if unique_labels:
+        exclusion_dialog = LabelExclusionDialog(unique_labels, self)
+        if exclusion_dialog.exec_() == QtWidgets.QDialog.Accepted:
+            excluded_labels = exclusion_dialog.get_excluded_labels()
+        else:
+            return
+
+    save_path = QtWidgets.QFileDialog.getExistingDirectory(
+        self,
+        self.tr("选择 MTU JSON 导出目录"),
+        osp.dirname(self.filename),
+    )
+    if not save_path:
+        return
+
+    target_json_dir = osp.join(save_path, "manga_translator_work", "json")
+    if osp.exists(target_json_dir) and os.listdir(target_json_dir):
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setIcon(QtWidgets.QMessageBox.Warning)
+        msg_box.setWindowTitle(self.tr("已存在MTUJSON目录"))
+        msg_box.setText(self.tr("是否覆盖"))
+        msg_box.setInformativeText(
+            self.tr(
+                "是 - 覆盖\n"
+                "否 - 清空并导入\n"
+                "取消 - 停止导入"
+            )
+        )
+        msg_box.addButton(self.tr("是"), QtWidgets.QMessageBox.YesRole)
+        no_button = msg_box.addButton(
+            self.tr("否"), QtWidgets.QMessageBox.NoRole
+        )
+        cancel_button = msg_box.addButton(
+            self.tr("取消"), QtWidgets.QMessageBox.RejectRole
+        )
+        msg_box.setStyleSheet(get_msg_box_style())
+        msg_box.exec_()
+
+        clicked_button = msg_box.clickedButton()
+        if clicked_button == no_button:
+            shutil.rmtree(target_json_dir)
+            os.makedirs(target_json_dir, exist_ok=True)
+        elif clicked_button == cancel_button:
+            return
+    else:
+        os.makedirs(target_json_dir, exist_ok=True)
+
+    image_list = self.image_list if self.image_list else [self.filename]
+
+    progress_dialog = QProgressDialog(
+        self.tr("正在导出 MTU JSON..."), self.tr("取消"), 0, 0, self
+    )
+    progress_dialog.setWindowModality(Qt.WindowModal)
+    progress_dialog.setWindowTitle(self.tr("导出进度"))
+    progress_dialog.setMinimumWidth(500)
+    progress_dialog.setMinimumHeight(150)
+    progress_dialog.setRange(0, 0)
+    progress_dialog.setStyleSheet(
+        get_progress_dialog_style(color="#1d1d1f", height=20)
+    )
+
+    self.export_thread = ExportMTUJsonThread(
+        image_list=image_list,
+        save_root_path=save_path,
+        excluded_labels=excluded_labels,
+        output_dir=self.output_dir,
+        last_open_dir=getattr(self, "last_open_dir", None),
+    )
+
+    def on_export_finished(success, error_msg):
+        progress_dialog.close()
+        if success:
+            stats = getattr(self.export_thread, "stats", {})
+            out_dir = getattr(self.export_thread, "output_json_dir", save_path)
+            template = (
+                "MTU JSON 导出完成。\n"
+                "输出目录：\n%s\n\n"
+                "总图片: %d  生成JSON: %d  失败: %d  过滤标签框: %d"
+            )
+            message_text = template % (
+                out_dir,
+                int(stats.get("total_images", 0)),
+                int(stats.get("generated_json", 0)),
+                int(stats.get("failed", 0)),
+                int(stats.get("filtered_textlines", 0)),
+            )
+            error_samples = stats.get("error_samples", []) or []
+            if error_samples:
+                message_text += "\n\n失败示例：\n- " + "\n- ".join(error_samples)
+            popup = Popup(
+                message_text,
+                self,
+                icon=new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self, popup_height=120, position="center")
+        else:
+            message = f"Error occurred while exporting MTU JSON: {str(error_msg)}"
+            logger.error(message)
+            popup = Popup(
+                message,
+                self,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self, position="center")
+
+    self.export_thread.finished.connect(on_export_finished)
+    progress_dialog.show()
+    self.export_thread.start()
     progress_dialog.canceled.connect(self.export_thread.terminate)
 
 
