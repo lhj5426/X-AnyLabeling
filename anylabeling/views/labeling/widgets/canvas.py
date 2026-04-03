@@ -2,6 +2,7 @@
 
 import math
 from copy import deepcopy
+from pathlib import Path
 from typing import List, Optional, Union, Any
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import Qt, QTimer
@@ -31,6 +32,14 @@ CUSTOM_CURSOR_RECTANGLE_PATH = r"J:\文件夹存放\鼠标指针文件\1111\Goog
 CUSTOM_CURSOR_ROTATION_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Hand.cur"
 CUSTOM_CURSOR_ROTATION3_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\2345Cross.cur"
 CUSTOM_CURSOR_RECTANGLE3_PATH = r"J:\文件夹存放\鼠标指针文件\1111\GoogleDot-Blue-Windows\Unavailiable.cur"
+
+RESOURCE_IMAGE_DIR = Path(__file__).resolve().parents[3] / "resources" / "images"
+CUSTOM_CURSOR_GRAB_PATH = RESOURCE_IMAGE_DIR / "Arrow.cur"
+CUSTOM_CURSOR_MOVE_PATH = RESOURCE_IMAGE_DIR / "Link.cur"
+CUSTOM_CURSOR_RECTANGLE_PATH = RESOURCE_IMAGE_DIR / "32precision.cur"
+CUSTOM_CURSOR_ROTATION_PATH = RESOURCE_IMAGE_DIR / "Hand.cur"
+CUSTOM_CURSOR_ROTATION3_PATH = RESOURCE_IMAGE_DIR / "2345Cross.cur"
+CUSTOM_CURSOR_RECTANGLE3_PATH = RESOURCE_IMAGE_DIR / "Unavailiable.cur"
 
 AUTO_DECODE_DELAY_MS = 100
 MAX_AUTO_DECODE_MARKS = 42
@@ -6708,6 +6717,26 @@ class Canvas(
         """初始化自定义鼠标指针"""
         global CURSOR_GRAB, CURSOR_MOVE, CURSOR_RECTANGLE, CURSOR_ROTATION, CURSOR_ROTATION3, CURSOR_RECTANGLE3
 
+        CURSOR_GRAB = self._load_custom_cursor(
+            CUSTOM_CURSOR_GRAB_PATH, QtCore.Qt.OpenHandCursor
+        )
+        CURSOR_MOVE = self._load_custom_cursor(
+            CUSTOM_CURSOR_MOVE_PATH, QtCore.Qt.ClosedHandCursor
+        )
+        CURSOR_RECTANGLE = self._load_custom_cursor(
+            CUSTOM_CURSOR_RECTANGLE_PATH, QtCore.Qt.CrossCursor
+        )
+        CURSOR_ROTATION = self._load_custom_cursor(
+            CUSTOM_CURSOR_ROTATION_PATH, QtCore.Qt.CrossCursor
+        )
+        CURSOR_ROTATION3 = self._load_custom_cursor(
+            CUSTOM_CURSOR_ROTATION3_PATH, QtCore.Qt.CrossCursor
+        )
+        CURSOR_RECTANGLE3 = self._load_custom_cursor(
+            CUSTOM_CURSOR_RECTANGLE3_PATH, QtCore.Qt.CrossCursor
+        )
+        return
+
         try:
             # 创建自定义接触矩形指针
             CURSOR_GRAB = QtGui.QCursor(QtGui.QPixmap(CUSTOM_CURSOR_GRAB_PATH))
@@ -6749,6 +6778,22 @@ class Canvas(
         except Exception:
             # 如果自定义指针文件不存在，回退到十字指针
             CURSOR_RECTANGLE3 = QtCore.Qt.CrossCursor
+
+    def _load_custom_cursor(self, cursor_path, fallback_cursor):
+        """Load a custom cursor safely and fall back without Qt warnings."""
+        cursor_path = Path(cursor_path)
+        if not cursor_path.is_file():
+            return fallback_cursor
+
+        try:
+            pixmap = QtGui.QPixmap(str(cursor_path))
+            if pixmap.isNull():
+                pixmap = QtGui.QPixmap()
+                if not pixmap.loadFromData(cursor_path.read_bytes()) or pixmap.isNull():
+                    return fallback_cursor
+            return QtGui.QCursor(pixmap)
+        except Exception:
+            return fallback_cursor
 
     def get_shape_edges(self, shape):
         """
