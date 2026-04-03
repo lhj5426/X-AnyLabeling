@@ -5,6 +5,7 @@ from PyQt5.QtCore import Qt
 import os
 import json
 import time
+from pathlib import Path
 
 # Register JXL plugin if available (just import it, it auto-registers)
 try:
@@ -13,8 +14,24 @@ except ImportError:
     pass  # JXL plugin not installed
 
 # ========== 自定义鼠标指针设置（可修改） ==========
-SELECT_CURSOR_PATH = r"D:\Ddown\鼠标指针\Janguru Cursors X2\NO.cur"
-DELETE_CURSOR_PATH = r"J:\文件夹存放\鼠标指针文件\222222\DroidCursorScheme\Droid.HelpSelect.cur"
+# 自定义鼠标指针路径 False True 
+# True 使用硬盘文件夹路径
+# False 使用软件内部文件夹路径
+USE_EXTERNAL_CURSOR_PATHS = False
+
+EXTERNAL_CURSOR_SELECT_PATH = Path(r"D:\Ddown\鼠标指针\Janguru Cursors X2\NO.cur")
+EXTERNAL_CURSOR_DELETE_PATH = Path(r"J:\文件夹存放\鼠标指针文件\222222\DroidCursorScheme\Droid.HelpSelect.cur")
+
+RESOURCE_IMAGE_DIR = Path(__file__).resolve().parents[3] / "resources" / "images"
+BUNDLED_CURSOR_SELECT_PATH = RESOURCE_IMAGE_DIR / "NO.cur"
+BUNDLED_CURSOR_DELETE_PATH = RESOURCE_IMAGE_DIR / "Droid.HelpSelect.cur"
+
+if USE_EXTERNAL_CURSOR_PATHS:
+    SELECT_CURSOR_PATH = str(EXTERNAL_CURSOR_SELECT_PATH)
+    DELETE_CURSOR_PATH = str(EXTERNAL_CURSOR_DELETE_PATH)
+else:
+    SELECT_CURSOR_PATH = str(BUNDLED_CURSOR_SELECT_PATH)
+    DELETE_CURSOR_PATH = str(BUNDLED_CURSOR_DELETE_PATH)
 
 SELECT_CURSOR_HOTSPOT = None
 DELETE_CURSOR_HOTSPOT = None
