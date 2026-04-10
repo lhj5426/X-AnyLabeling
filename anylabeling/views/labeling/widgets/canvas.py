@@ -129,6 +129,8 @@ class Canvas(
     hide_shapes_requested = QtCore.pyqtSignal(list)  # Request to hide shapes (Shift+RightButton path selection)
     delete_shapes_requested = QtCore.pyqtSignal(list)  # Request to delete shapes (Alt+RightButton path selection)
     mouse_pos_changed = QtCore.pyqtSignal(object)  # 鼠标位置变化信号（图像坐标），用于导航器显示
+    animation_toggle_requested = QtCore.pyqtSignal()
+    animation_seek_requested = QtCore.pyqtSignal(float)
 
     CREATE, EDIT = 0, 1
 
@@ -371,6 +373,11 @@ class Canvas(
         self.offsets = QtCore.QPointF(), QtCore.QPointF()
         self.scale = 1.0
         self.pixmap = QtGui.QPixmap()
+        self.animation_only_mode = False
+        self.animation_progress_visible = False
+        self.animation_progress_ratio = 0.0
+        self.animation_progress_frames = (0, 0)
+        self.animation_progress_dragging = False
         self.visible = {}
         self._hide_backround = False
         self.hide_backround = False
@@ -1042,6 +1049,11 @@ class Canvas(
             pos = self.transform_pos(ev.localPos())
         except AttributeError:
             return
+        if self.animation_only_mode and self.animation_progress_dragging:
+            ratio = self._animation_progress_ratio_at(pos)
+            if ratio is not None:
+                self.animation_seek_requested.emit(ratio)
+            return
 
         # 发射鼠标位置信号（用于导航器显示）
         self.mouse_pos_changed.emit(pos)
@@ -1537,6 +1549,20 @@ class Canvas(
             return
         pos = self.transform_pos(ev.localPos())
 
+        if (
+            self.animation_only_mode
+            and ev.button() == QtCore.Qt.LeftButton
+            and ev.modifiers() == QtCore.Qt.NoModifier
+        ):
+            ratio = self._animation_progress_ratio_at(pos)
+            if ratio is not None:
+                self.animation_progress_dragging = True
+                self.animation_seek_requested.emit(ratio)
+                return
+            if not self.out_off_pixmap(pos):
+                self.animation_toggle_requested.emit()
+                return
+
         # Record the pan baseline on left-button press only when not clicking a shape (to avoid jumps)
         if ev.button() == QtCore.Qt.LeftButton:
             self.prev_pan_point = ev.localPos()
@@ -1883,6 +1909,14 @@ class Canvas(
     def mouseReleaseEvent(self, ev):
         """Mouse release event"""
         if self.is_loading:
+            return
+
+        if (
+            self.animation_only_mode
+            and ev.button() == QtCore.Qt.LeftButton
+            and self.animation_progress_dragging
+        ):
+            self.animation_progress_dragging = False
             return
 
         # Handle Alt+drag selection box completion
@@ -3367,6 +3401,16 @@ class Canvas(
 
         p = self._painter
         p.begin(self)
+        if self.animation_only_mode and not self.is_loading:
+            p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+            p.scale(self.scale, self.scale)
+            p.translate(self.offset_to_center())
+            p.drawPixmap(0, 0, self.pixmap)
+            if self.animation_progress_visible:
+                self.draw_animation_progress(p)
+            p.end()
+            return
+
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
         p.setRenderHint(QtGui.QPainter.HighQualityAntialiasing)
@@ -4704,6 +4748,9 @@ class Canvas(
         # Draw paste preview (粘贴预览)
         if self.paste_preview_mode:
             self.draw_paste_preview(p)
+
+        if self.animation_progress_visible:
+            self.draw_animation_progress(p)
 
         # Draw magnifier (放大镜)
         # 检查自动探测模式
@@ -6652,9 +6699,77 @@ class Canvas(
         """Clear shapes and pixmap"""
         self.restore_cursor()
         self.pixmap = None
+        self.animation_only_mode = False
+        self.animation_progress_visible = False
+        self.animation_progress_ratio = 0.0
+        self.animation_progress_frames = (0, 0)
+        self.animation_progress_dragging = False
         self.shapes_backups = []
         self.is_move_editing = False
         self.update()
+
+    def set_animation_only_mode(self, enabled):
+        """Enable simple click-to-toggle mode for animated image viewing."""
+        self.animation_only_mode = enabled
+
+    def set_animation_progress(self, current_frame, total_frames, visible=True):
+        """Update the in-image animation progress bar state."""
+        self.animation_progress_visible = visible and total_frames > 1
+        self.animation_progress_frames = (current_frame, total_frames)
+        if total_frames > 1:
+            self.animation_progress_ratio = max(
+                0.0,
+                min(1.0, current_frame / max(1, total_frames - 1)),
+            )
+        else:
+            self.animation_progress_ratio = 0.0
+        self.update()
+
+    def _animation_progress_rect(self):
+        if (
+            not self.animation_progress_visible
+            or self.pixmap is None
+            or self.pixmap.isNull()
+        ):
+            return None
+
+        scale = max(self.scale, 0.01)
+        margin = 0.0
+        height = max(1.0, 2.0 / scale)
+        width = max(20.0, self.pixmap.width() - 2 * margin)
+        y = self.pixmap.height() - height
+        return QtCore.QRectF(margin, y, width, height)
+
+    def _animation_progress_ratio_at(self, pos):
+        rect = self._animation_progress_rect()
+        if rect is None:
+            return None
+        hit_rect = rect.adjusted(0, -6.0 / max(self.scale, 0.01), 0, 6.0 / max(self.scale, 0.01))
+        if not hit_rect.contains(pos):
+            return None
+        return max(0.0, min(1.0, (pos.x() - rect.left()) / rect.width()))
+
+    def draw_animation_progress(self, p):
+        rect = self._animation_progress_rect()
+        if rect is None:
+            return
+
+        p.save()
+        p.setPen(Qt.NoPen)
+        p.setBrush(QtGui.QColor(20, 22, 26, 235))
+        p.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+
+        progress_width = rect.width() * self.animation_progress_ratio
+        if progress_width > 0:
+            progress_rect = QtCore.QRectF(
+                rect.left(),
+                rect.top(),
+                progress_width,
+                rect.height(),
+            )
+            p.setBrush(QtGui.QColor(0, 190, 255, 240))
+            p.drawRoundedRect(progress_rect, rect.height() / 2, rect.height() / 2)
+        p.restore()
 
     def set_cross_line(self, show, width, color, opacity, style="dash"):
         """Set cross line options"""

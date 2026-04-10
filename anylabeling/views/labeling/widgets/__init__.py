@@ -1,6 +1,7 @@
 ﻿# flake8: noqa
 
 from .about_dialog import AboutDialog
+from .animated_webp_view import AnimatedWebPView
 from .auto_labeling import AutoLabelingWidget
 from .brightness_contrast_dialog import BrightnessContrastDialog
 from .canvas import Canvas
@@ -50,6 +51,7 @@ from .label_sync_dialog import LabelSyncDialog
 
 __all__ = [
     "AboutDialog",
+    "AnimatedWebPView",
     "AutoLabelingWidget",
     "BrightnessContrastDialog",
     "Canvas",

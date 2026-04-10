@@ -7,6 +7,16 @@ import json
 import time
 from pathlib import Path
 
+from anylabeling.config import save_config
+
+from .animated_webp_support import (
+    AnimatedWebPPlayer,
+    draw_progress_bar,
+    get_animated_webp_info,
+    progress_ratio_from_frame,
+    progress_ratio_from_point,
+)
+
 # Register JXL plugin if available (just import it, it auto-registers)
 try:
     import pillow_jxl
@@ -375,6 +385,13 @@ class ThumbnailItem(QtWidgets.QWidget):
         self.index = index  # 图片序号（从1开始）
         self.show_index = True  # 是否显示序号
         self.keep_aspect = False  # 方格子模式：保持比例居中显示
+        animated_info = get_animated_webp_info(image_path)
+        self.is_animated_webp = animated_info.get("is_animated", False)
+        self.animated_frame_count = animated_info.get("frame_count", 1)
+        self.animated_current_frame = 0
+        self.animated_progress_ratio = 0.0
+        self.animated_player = None
+        self._animated_dragging_progress = False
         
         # 删合模式状态
         self.merge_mode = False  # 是否处于删合模式
@@ -509,6 +526,31 @@ class ThumbnailItem(QtWidgets.QWidget):
             return f"{self.file_size / 1024:.1f} KB"
         else:
             return f"{self.file_size / (1024 * 1024):.1f} MB"
+
+    def _animated_display_rect(self):
+        rect = QtCore.QRectF(0, 0, self.width(), self.height())
+        if (
+            rect.isNull()
+            or self.pixmap is None
+            or self.pixmap.isNull()
+            or not self.keep_aspect
+        ):
+            return rect
+
+        scaled_size = self.pixmap.size()
+        scaled_size.scale(
+            QtCore.QSize(int(rect.width()), int(rect.height())),
+            Qt.KeepAspectRatio,
+        )
+        if scaled_size.width() <= 0 or scaled_size.height() <= 0:
+            return rect
+
+        return QtCore.QRectF(
+            (rect.width() - scaled_size.width()) / 2.0,
+            (rect.height() - scaled_size.height()) / 2.0,
+            float(scaled_size.width()),
+            float(scaled_size.height()),
+        )
     
     def set_pixmap(self, pixmap, orig_w, orig_h, load_width):
         """设置已加载的pixmap"""
@@ -531,7 +573,75 @@ class ThumbnailItem(QtWidgets.QWidget):
                 self.actual_width = self.thumbnail_width
         
         self.setFixedSize(self.actual_width, self.actual_height)
+        if self.animated_player is not None:
+            self.animated_player.set_target_size(
+                QtCore.QSize(self.actual_width, self.actual_height)
+            )
         self.update()
+
+    def _ensure_animated_player(self):
+        if not self.is_animated_webp or self.animated_frame_count <= 1:
+            return False
+        if self.animated_player is None:
+            self.animated_player = AnimatedWebPPlayer(self)
+            self.animated_player.frame_changed.connect(
+                self._on_animated_frame_changed
+            )
+            if not self.animated_player.load(
+                self.image_path,
+                QtCore.QSize(self.actual_width, self.actual_height),
+            ):
+                self.animated_player.deleteLater()
+                self.animated_player = None
+                self.is_animated_webp = False
+                self.animated_frame_count = 1
+                return False
+        else:
+            self.animated_player.set_target_size(
+                QtCore.QSize(self.actual_width, self.actual_height)
+            )
+        return True
+
+    def _on_animated_frame_changed(self, pixmap, frame_index, total_frames):
+        self.pixmap = pixmap
+        self.animated_current_frame = frame_index
+        self.animated_frame_count = total_frames
+        self.animated_progress_ratio = progress_ratio_from_frame(
+            frame_index, total_frames
+        )
+        self.update()
+
+    def _animated_loop_enabled(self):
+        parent = self.parent()
+        while parent and not isinstance(parent, MasonryThumbnailDialog):
+            parent = parent.parent()
+        if parent and hasattr(parent, "_animated_webp_loop_enabled"):
+            return parent._animated_webp_loop_enabled()
+        return True
+
+    def toggle_animated_playback(self):
+        if not self._ensure_animated_player():
+            return
+        self.animated_player.configure(
+            loop_enabled=self._animated_loop_enabled(),
+            end_action_enabled=False,
+        )
+        self.animated_player.toggle()
+
+    def seek_animated_ratio(self, ratio):
+        if not self._ensure_animated_player():
+            return
+        self.animated_player.configure(
+            loop_enabled=self._animated_loop_enabled(),
+            end_action_enabled=False,
+        )
+        self.animated_player.seek_ratio(ratio)
+
+    def dispose(self):
+        if self.animated_player is not None:
+            self.animated_player.clear()
+            self.animated_player.deleteLater()
+            self.animated_player = None
     
     def needs_reload(self, new_size):
         """检查是否需要重新加载更高分辨率"""
@@ -603,6 +713,7 @@ class ThumbnailItem(QtWidgets.QWidget):
         painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
         
         rect = QtCore.QRectF(0, 0, self.width(), self.height())
+        image_rect = rect
         path = QtGui.QPainterPath()
         path.addRoundedRect(rect, self.border_radius, self.border_radius)
         
@@ -618,11 +729,18 @@ class ThumbnailItem(QtWidgets.QWidget):
                 # 居中绘制
                 x = (self.width() - scaled.width()) // 2
                 y = (self.height() - scaled.height()) // 2
+                image_rect = QtCore.QRectF(
+                    float(x),
+                    float(y),
+                    float(scaled.width()),
+                    float(scaled.height()),
+                )
                 painter.drawPixmap(x, y, scaled)
             else:
                 # 瀑布流模式：填满整个区域
                 scaled = self.pixmap.scaled(self.width(), self.height(), 
                                             Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                image_rect = rect
                 painter.drawPixmap(0, 0, scaled)
             
             painter.setClipping(False)
@@ -664,6 +782,24 @@ class ThumbnailItem(QtWidgets.QWidget):
                 icon_x = int(label_x + label_width + 4)  # 序号标签右边留4像素间距
                 icon_y = int(label_y)
                 self.status_icon.setGeometry(icon_x, icon_y, 25, 25)
+                if self.is_animated_webp and self.animated_frame_count > 1:
+                    badge_font = QtGui.QFont(font)
+                    badge_font.setPointSize(8)
+                    badge_font.setBold(True)
+                    painter.setFont(badge_font)
+                    badge_fm = QtGui.QFontMetrics(badge_font)
+                    badge_rect = QtCore.QRectF(
+                        label_rect.right() + 4,
+                        label_y + 1,
+                        badge_fm.horizontalAdvance("A") + 8,
+                        badge_fm.height() + 4,
+                    )
+                    painter.setPen(Qt.NoPen)
+                    painter.setBrush(QtGui.QColor(0, 190, 255, 220))
+                    painter.drawRoundedRect(badge_rect, 4, 4)
+                    painter.setPen(QtGui.QColor(255, 255, 255))
+                    painter.drawText(badge_rect, Qt.AlignCenter, "A")
+                    painter.setFont(font)
             
             # 绘制边框
             if self.merge_mode and (self.is_merge_target or self.is_marked_delete or self.is_selected):
@@ -684,7 +820,9 @@ class ThumbnailItem(QtWidgets.QWidget):
                 painter.setBrush(Qt.NoBrush)
                 offset = border_w / 2
                 painter.drawRoundedRect(rect.adjusted(offset, offset, -offset, -offset), self.border_radius, self.border_radius)
-            elif self.is_clicked:
+            elif self.is_clicked and not (
+                self.is_animated_webp and self.animated_frame_count > 1
+            ):
                 # 单击状态：彩虹色边框(红→橙→黄→绿→青→蓝→紫→白→黑)
                 border_w = 4
                 
@@ -799,8 +937,14 @@ class ThumbnailItem(QtWidgets.QWidget):
                         # 获取标签颜色
                         if self.label_color_getter:
                             rgb = self.label_color_getter(label)
-                            if rgb:
-                                painter.setPen(QtGui.QColor(rgb[0], rgb[1], rgb[2]))
+                            if rgb is not None and len(rgb) >= 3:
+                                painter.setPen(
+                                    QtGui.QColor(
+                                        int(rgb[0]),
+                                        int(rgb[1]),
+                                        int(rgb[2]),
+                                    )
+                                )
                             else:
                                 painter.setPen(QtGui.QColor(180, 180, 180))
                         else:
@@ -824,6 +968,16 @@ class ThumbnailItem(QtWidgets.QWidget):
                             display_label = label if len(label) <= left_max_chars else label[:left_max_chars - 2] + ".."
                             painter.drawText(margin, y_offset + line_height * current_line, f"{display_label}: {count}")
                             current_line += 1
+            if self.is_animated_webp and self.animated_frame_count > 1:
+                painter.save()
+                painter.setClipPath(path)
+                draw_progress_bar(
+                    painter,
+                    image_rect,
+                    self.animated_progress_ratio,
+                    visible=True,
+                )
+                painter.restore()
         else:
             painter.setClipPath(path)
             painter.fillRect(rect, QtGui.QColor(50, 50, 50))
@@ -889,6 +1043,31 @@ class ThumbnailItem(QtWidgets.QWidget):
             shift_pressed = (modifiers & Qt.ShiftModifier) == Qt.ShiftModifier
             
             if event.button() == Qt.LeftButton:
+                ratio = progress_ratio_from_point(
+                    self._animated_display_rect(),
+                    QtCore.QPointF(event.pos()),
+                    hit_height=60.0,
+                )
+                if self.is_animated_webp and ratio is not None:
+                    self._animated_dragging_progress = True
+                    self.seek_animated_ratio(ratio)
+                    event.accept()
+                    return
+                if (
+                    self.is_animated_webp
+                    and not shift_pressed
+                    and not ctrl_pressed
+                    and self._animated_display_rect().contains(
+                        QtCore.QPointF(event.pos())
+                    )
+                ):
+                    if self.is_clicked:
+                        self.is_clicked = False
+                        self.stop_rainbow_animation()
+                        self.update()
+                    self.toggle_animated_playback()
+                    event.accept()
+                    return
                 if shift_pressed:
                     # Shift+左键：范围选择（普通模式）
                     parent = self.parent()
@@ -953,6 +1132,29 @@ class ThumbnailItem(QtWidgets.QWidget):
                 # 右键：让事件传播到父控件，显示工具栏切换菜单
                 event.ignore()
     
+    def mouseMoveEvent(self, event):
+        if self._animated_dragging_progress and self.is_animated_webp:
+            ratio = progress_ratio_from_point(
+                self._animated_display_rect(),
+                QtCore.QPointF(event.pos()),
+                hit_height=60.0,
+            )
+            if ratio is not None:
+                self.seek_animated_ratio(ratio)
+                event.accept()
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if (
+            self._animated_dragging_progress
+            and event.button() == Qt.LeftButton
+        ):
+            self._animated_dragging_progress = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
     def update_merge_visual(self):
         """更新删合模式下的视觉效果"""
         if self.is_merge_target:
@@ -1077,6 +1279,22 @@ class ThumbnailItem(QtWidgets.QWidget):
             self._rainbow_timer.stop()
             self._rainbow_timer = None
     
+    def _toggle_clicked_state(self):
+        if self.is_clicked:
+            self.is_clicked = False
+            self.stop_rainbow_animation()
+            self.update()
+            return
+
+        parent = self.parent()
+        while parent and not isinstance(parent, QtWidgets.QDialog):
+            parent = parent.parent()
+        if parent and hasattr(parent, 'clear_all_clicked_states'):
+            parent.clear_all_clicked_states()
+        self.is_clicked = True
+        self.start_rainbow_animation()
+        self.update()
+
     def contextMenuEvent(self, event):
         # 删合模式下禁用右键菜单，但不阻止事件传递
         # 右键事件已在mousePressEvent中处理
@@ -1097,7 +1315,7 @@ class ThumbnailItem(QtWidgets.QWidget):
                 padding: 5px;
             }
             QMenu::item {
-                padding: 5px 20px;
+                padding: 5px 20px 5px 28px;
                 color: #333;
             }
             QMenu::item:selected {
@@ -1118,6 +1336,17 @@ class ThumbnailItem(QtWidgets.QWidget):
         
         # 添加工具栏功能选项
         menu.addSeparator()
+
+        loop_action = None
+        if self.is_animated_webp and self.animated_frame_count > 1:
+            loop_action = menu.addAction("循环播放")
+            loop_text = (
+                "\u5faa\u73af\u64ad\u653e: \u5f00"
+                if self._animated_loop_enabled()
+                else "\u5faa\u73af\u64ad\u653e: \u5173"
+            )
+            loop_action.setText(loop_text)
+            menu.addSeparator()
         
         # 布局设置
         layout_settings_action = menu.addAction("布局设置")
@@ -1163,6 +1392,11 @@ class ThumbnailItem(QtWidgets.QWidget):
             # 打开布局设置
             if parent and hasattr(parent, 'open_layout_settings'):
                 parent.open_layout_settings()
+        elif loop_action and action == loop_action:
+            if parent and hasattr(parent, '_set_animated_webp_loop_playback'):
+                parent._set_animated_webp_loop_playback(
+                    not self._animated_loop_enabled()
+                )
         elif toggle_layout_action and action == toggle_layout_action:
             # 切换布局模式
             if parent and hasattr(parent, 'toggle_layout_mode'):
@@ -1210,6 +1444,10 @@ class MasonryWidget(QtWidgets.QWidget):
     
     def clear_items(self):
         for item in self.items:
+            try:
+                item.dispose()
+            except Exception:
+                pass
             item.setParent(None)
             item.deleteLater()
         self.items.clear()
@@ -2032,7 +2270,36 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             total_spacing = (self.columns - 1) * self.spacing
             col_width = (available_width - total_spacing) // self.columns
             self.thumbnail_width = max(250, col_width)
-    
+
+    def _ensure_animated_webp_settings(self):
+        if self.labeling_widget and hasattr(self.labeling_widget, "_config"):
+            settings = self.labeling_widget._config.setdefault(
+                "animated_webp_masonry", {}
+            )
+            settings.setdefault("loop_playback", True)
+            return settings
+
+        if not hasattr(self, "_animated_webp_settings_cache"):
+            self._animated_webp_settings_cache = {"loop_playback": True}
+        return self._animated_webp_settings_cache
+
+    def _animated_webp_loop_enabled(self):
+        return self._ensure_animated_webp_settings().get(
+            "loop_playback", True
+        )
+
+    def _set_animated_webp_loop_playback(self, value):
+        settings = self._ensure_animated_webp_settings()
+        settings["loop_playback"] = bool(value)
+        if self.labeling_widget and hasattr(self.labeling_widget, "_config"):
+            save_config(self.labeling_widget._config)
+        for item in self.masonry_widget.items:
+            if item.animated_player is not None:
+                item.animated_player.configure(
+                    loop_enabled=self._animated_webp_loop_enabled(),
+                    end_action_enabled=False,
+                )
+
     def create_thumbnail_items(self):
         """创建所有缩略图项"""
         edited_color = self._get_manually_edited_color().name()
@@ -3520,6 +3787,11 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         if hasattr(self, 'load_timer'):
             self.load_timer.stop()
         self.thread_pool.clear()
+        for item in self.masonry_widget.items:
+            try:
+                item.dispose()
+            except Exception:
+                pass
         
         # 关闭窗口时恢复主窗口的快捷键
         self._restore_main_window_shortcuts()

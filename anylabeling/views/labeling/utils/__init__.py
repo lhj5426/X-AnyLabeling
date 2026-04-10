@@ -27,6 +27,8 @@ from .general import (
     find_most_similar_label,
 )
 from .image import (
+    AnimatedWebPError,
+    AnimatedWebPReader,
     apply_exif_orientation,
     get_pil_img_dim,
     img_arr_to_b64,

@@ -78,6 +78,7 @@ from .widgets import (
     LabelToolDialog,
     TagSortDialog,
     AngleCorrectionDialog,
+    AnimatedWebPView,
     KeymapDialog,
     AlignmentDialog,
     ColorManagerDialog,
@@ -103,52 +104,79 @@ LABEL_OPACITY = 128
 class MergeThread(QtCore.QThread):
     progress = QtCore.pyqtSignal(int, str)
     finished = QtCore.pyqtSignal(str)
-    log_message = QtCore.pyqtSignal(str)  # 新增：用于发送详细日志
+    log_message = QtCore.pyqtSignal(str)
 
     def __init__(self, files, config, start_page=1, parent=None):
         super().__init__(parent)
         self.files = files
         self.config = config
-        self.start_page = start_page  # 起始页码
+        self.start_page = start_page
+        self.failed_pages = []
 
     def run(self):
         success_count = 0
         fail_count = 0
-        self.failed_pages = []  # 记录失败的页码及原因（作为实例变量）
-        total_files = len(self.files)
-        
-        for i, file_path in enumerate(self.files):
+        self.failed_pages = []
+
+        for index, file_path in enumerate(self.files):
             if self.isInterruptionRequested():
                 break
-            
-            label_file = os.path.splitext(file_path)[0] + ".json"
-            
-            # 获取页码（文件名）
+
+            label_file = os.path.splitext(file_path)[0] + '.json'
             page_name = os.path.basename(file_path)
-            # 计算实际页码（起始页码 + 偏移量）
-            page_number = self.start_page + i
-            
-            self.progress.emit(i, f"正在处理: {page_name}")
-            self.log_message.emit(f"处理页面: {page_name}")
-            
-            success, message, fail_reason = merger.process_file(label_file, self.config)
+            page_number = self.start_page + index
+
+            self.progress.emit(index, f'Processing: {page_name}')
+            self.log_message.emit(f'Processing page: {page_name}')
+
+            success, message, fail_reason = merger.process_file(
+                label_file, self.config
+            )
             if success:
                 success_count += 1
-                # 如果有合并信息，发送详细日志
-                if message and message != "处理成功":
+                if message and message != '????':
                     self.log_message.emit(message)
             else:
                 fail_count += 1
                 self.failed_pages.append((page_number, fail_reason))
-        
+
         if self.isInterruptionRequested():
-            final_message = "操作被用户取消。"
+            final_message = 'Operation cancelled.'
         else:
-            final_message = f"处理完成！成功修改 {success_count} 个文件。"
+            final_message = f'Merge finished. Updated {success_count} file(s).'
             if fail_count > 0:
-                final_message += f"{fail_count} 个文件处理失败或无需处理。"
-        
+                final_message += (
+                    f' {fail_count} file(s) failed or needed no changes.'
+                )
+
         self.finished.emit(final_message)
+
+
+class AnimatedWebPPreloadThread(QtCore.QThread):
+    frame_ready = QtCore.pyqtSignal(str, int, object)
+
+    def __init__(self, filename, start_index=0, parent=None):
+        super().__init__(parent)
+        self.filename = filename
+        self.start_index = start_index
+
+    def run(self):
+        try:
+            from PIL import Image
+
+            with Image.open(self.filename) as image:
+                total_frames = getattr(image, 'n_frames', 1)
+                for frame_index in range(self.start_index, total_frames):
+                    if self.isInterruptionRequested():
+                        break
+                    image.seek(frame_index)
+                    frame = image.copy()
+                    qimage = utils.pil_to_qimage(frame)
+                    self.frame_ready.emit(self.filename, frame_index, qimage)
+        except Exception as exc:
+            logger.warning(
+                f'Animated WEBP background preload failed for {self.filename}: {exc}'
+            )
 
 
 class TagSortThread(QtCore.QThread):
@@ -412,6 +440,31 @@ class LabelingWidget(QtWidgets.QWidget):
         self.fn_to_index = {}
         self.cache_auto_label = None
         self.cache_auto_label_group_id = None
+        self.is_animated_webp_mode = False
+        self.animated_webp_movie = None
+        self.animated_webp_source_size = QtCore.QSize()
+        self.animated_webp_target_size = QtCore.QSize()
+        self.animated_webp_display_scale = 1.0
+        self.animated_webp_reader = None
+        self.animated_webp_preload_thread = None
+        self.animated_webp_preload_source = None
+        self.animated_webp_frame_count = 0
+        self.animated_webp_current_frame = 0
+        self.animated_webp_is_playing = False
+        self.animated_webp_is_seeking = False
+        self.animated_webp_resume_after_seek = False
+        self.animated_webp_timer = QTimer(self)
+        self.animated_webp_timer.setSingleShot(True)
+        self.animated_webp_timer.setTimerType(Qt.PreciseTimer)
+        self.animated_webp_timer.timeout.connect(
+            self._advance_animated_webp_frame
+        )
+        self.animated_webp_end_timer = QTimer(self)
+        self.animated_webp_end_timer.setSingleShot(True)
+        self.animated_webp_end_timer.timeout.connect(
+            self._on_animated_webp_end_reached
+        )
+        self.animated_webp_end_action_pending = False
         self.object_manager_dialog = None
         self.highlight_settings_dialog = HighlightSettingsDialog(parent=self, config=self._config)
         self.expand_margins_dialog = None
@@ -1129,6 +1182,17 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         self.label_list.setItemDelegate(HTMLDelegate(parent=self))
         self.canvas.zoom_request.connect(self.zoom_request)
+        self.animated_webp_view = AnimatedWebPView(self)
+        self.animated_webp_view.toggle_requested.connect(
+            self.toggle_animated_webp_playback
+        )
+        self.animated_webp_view.seek_requested.connect(
+            self._on_animated_canvas_seek
+        )
+        self.animated_webp_view.context_menu_requested.connect(
+            self.show_animated_webp_context_menu
+        )
+        self._ensure_animated_webp_settings()
 
         self.load_labels(self._config["labels"])
 
@@ -1165,6 +1229,12 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.drawing_cancelled.connect(self.on_drawing_cancelled)
         self.canvas.hide_shapes_requested.connect(self.hide_shapes_by_path)
         self.canvas.delete_shapes_requested.connect(self.delete_shapes_by_path)
+        self.canvas.animation_toggle_requested.connect(
+            self.toggle_animated_webp_playback
+        )
+        self.canvas.animation_seek_requested.connect(
+            self._on_animated_canvas_seek
+        )
         # Connect mouse position signal to navigator for real-time position indicator
         self.canvas.mouse_pos_changed.connect(self._on_canvas_mouse_pos_changed)
         # [Feature] support for automatically switching to editing mode
@@ -2047,6 +2117,13 @@ class LabelingWidget(QtWidgets.QWidget):
             checkable=True,
             enabled=False,
         )
+        cycle_zoom_mode = action(
+            self.tr("Cycle Zoom Mode"),
+            self.cycle_zoom_mode,
+            icon="fit-window",
+            tip=self.tr("Switch between fit window, fit width, and 100%"),
+            enabled=False,
+        )
         brightness_contrast = action(
             self.tr("&Set Brightness Contrast"),
             self.brightness_contrast,
@@ -2590,6 +2667,7 @@ class LabelingWidget(QtWidgets.QWidget):
             zoom_org,
             fit_window,
             fit_width,
+            cycle_zoom_mode,
             zoom_at_mouse, # Add the new action here
         )
         self.zoom_mode = self.FIT_WINDOW
@@ -2781,6 +2859,7 @@ class LabelingWidget(QtWidgets.QWidget):
             keep_prev_contrast=keep_prev_contrast,
             fit_window=fit_window,
             fit_width=fit_width,
+            cycle_zoom_mode=cycle_zoom_mode,
             brightness_contrast=brightness_contrast,
             set_cross_line=set_cross_line,
             toggle_cross_line=toggle_cross_line,
@@ -2891,6 +2970,7 @@ class LabelingWidget(QtWidgets.QWidget):
             group_selected_shapes=group_selected_shapes,
             ungroup_selected_shapes=ungroup_selected_shapes,
         )
+        self._update_cycle_zoom_mode_action()
 
         self.canvas.vertex_selected.connect(
             self.actions.remove_point.setEnabled
@@ -3159,7 +3239,7 @@ class LabelingWidget(QtWidgets.QWidget):
             loop_thru_labels,
             None,
             zoom,
-            fit_width,
+            cycle_zoom_mode,
             open_chatbot,
             open_vqa,
             toggle_auto_labeling_widget,
@@ -3238,8 +3318,65 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas_container = QWidget()
         canvas_container_layout = QVBoxLayout(self.canvas_container)
         canvas_container_layout.setContentsMargins(0, 0, 0, 0)
-        canvas_container_layout.setSpacing(0)
+        canvas_container_layout.setSpacing(6)
         canvas_container_layout.addWidget(scroll_area)
+
+        self.animated_progress_container = QWidget()
+        animated_progress_layout = QHBoxLayout(
+            self.animated_progress_container
+        )
+        animated_progress_layout.setContentsMargins(0, 0, 0, 0)
+        animated_progress_layout.setSpacing(8)
+
+        self.animated_progress_slider = QtWidgets.QSlider(Qt.Horizontal)
+        self.animated_progress_slider.setRange(0, 0)
+        self.animated_progress_slider.setTracking(True)
+        self.animated_progress_slider.setStyleSheet(
+            """
+            QSlider::groove:horizontal {
+                height: 12px;
+                background: #444a54;
+                border-radius: 6px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #59c28a;
+                border-radius: 6px;
+            }
+            QSlider::add-page:horizontal {
+                background: #252930;
+                border-radius: 6px;
+            }
+            QSlider::handle:horizontal {
+                width: 14px;
+                margin: -3px 0;
+                background: #f4f7fb;
+                border-radius: 7px;
+            }
+            """
+        )
+        self.animated_progress_slider.valueChanged.connect(
+            self._on_animated_progress_changed
+        )
+        self.animated_progress_slider.sliderPressed.connect(
+            self._on_animated_progress_pressed
+        )
+        self.animated_progress_slider.sliderReleased.connect(
+            self._on_animated_progress_released
+        )
+
+        self.animated_progress_label = QLabel()
+        self.animated_progress_label.setMinimumWidth(72)
+        self.animated_progress_label.setAlignment(
+            Qt.AlignRight | Qt.AlignVCenter
+        )
+        self.animated_progress_label.setStyleSheet(
+            "color: #cfd6df; font-size: 10pt; font-weight: bold;"
+        )
+
+        animated_progress_layout.addWidget(self.animated_progress_slider, 1)
+        animated_progress_layout.addWidget(self.animated_progress_label)
+        self.animated_progress_container.hide()
+        canvas_container_layout.addWidget(self.animated_progress_container)
         
         # Create overlay info label (fixed position at bottom-left)
         self.canvas_overlay_label = QLabel(self.canvas_container)
@@ -3549,6 +3686,46 @@ class LabelingWidget(QtWidgets.QWidget):
     def central_widget(self):
         return self._central_widget
 
+    def _active_image_widget(self):
+        if self.is_animated_webp_mode:
+            return self.animated_webp_view
+        return self.canvas
+
+    def _active_image_pixmap(self):
+        if self.is_animated_webp_mode:
+            return self.animated_webp_view.pixmap
+        return getattr(self.canvas, "pixmap", None)
+
+    def _active_source_size(self):
+        if (
+            self.is_animated_webp_mode
+            and not self.animated_webp_source_size.isEmpty()
+        ):
+            return self.animated_webp_source_size
+        pixmap = self._active_image_pixmap()
+        if pixmap is None or pixmap.isNull():
+            return QtCore.QSize()
+        return pixmap.size()
+
+    def _active_image_scale(self):
+        if self.is_animated_webp_mode and self.animated_webp_movie is not None:
+            return self.animated_webp_display_scale
+        return self._active_image_widget().scale
+
+    def _set_active_image_widget(self, animated):
+        target = self.animated_webp_view if animated else self.canvas
+        current = self._central_widget.widget()
+        if current is target:
+            self.is_animated_webp_mode = animated
+            return
+
+        current = self._central_widget.takeWidget()
+        if current is not None and current is not target:
+            current.setParent(None)
+
+        self._central_widget.setWidget(target)
+        self.is_animated_webp_mode = animated
+
     def toolbar(self, title, actions=None):
         toolbar = ToolBar(title)
         toolbar.setObjectName(f"{title}ToolBar")
@@ -3721,6 +3898,147 @@ class LabelingWidget(QtWidgets.QWidget):
     def status(self, message, delay=5000):
         self.statusBar().showMessage(message, delay)
 
+    def _format_current_image_status(self):
+        if not self.filename:
+            return ""
+
+        basename = osp.basename(str(self.filename))
+        image_suffix = ""
+        if self.image_list and self.filename in self.image_list:
+            current_index = self.fn_to_index[str(self.filename)] + 1
+            image_suffix = f": {current_index}/{len(self.image_list)}"
+
+        if self.is_animated_webp_mode and self.animated_webp_frame_count > 1:
+            return (
+                f"{basename} [动态] "
+                f"[{self.animated_webp_current_frame + 1}/{self.animated_webp_frame_count}]"
+                f"{image_suffix}"
+            )
+
+        if image_suffix:
+            return f"{basename}{image_suffix}"
+        return basename
+
+    def _update_current_image_status_bar(self):
+        message = self._format_current_image_status()
+        if message:
+            self.status(message, 0)
+
+    def _ensure_animated_webp_settings(self):
+        settings = self._config.setdefault("animated_webp", {})
+        settings.setdefault("auto_play", True)
+        settings.setdefault("loop_playback", True)
+        settings.setdefault("auto_next", False)
+        return settings
+
+    def _animated_webp_settings(self):
+        return self._ensure_animated_webp_settings()
+
+    def _animated_webp_auto_play_enabled(self):
+        return self._animated_webp_settings().get("auto_play", True)
+
+    def _animated_webp_loop_enabled(self):
+        return self._animated_webp_settings().get("loop_playback", True)
+
+    def _animated_webp_auto_next_enabled(self):
+        return self._animated_webp_settings().get("auto_next", False)
+
+    def _set_animated_webp_setting(self, key, value):
+        settings = self._animated_webp_settings()
+        settings[key] = bool(value)
+        save_config(self._config)
+
+    def _set_animated_webp_auto_play(self, value):
+        self._set_animated_webp_setting("auto_play", value)
+        if (
+            self.is_animated_webp_mode
+            and self.animated_webp_frame_count > 1
+            and not value
+        ):
+            self.pause_animated_webp()
+
+    def _set_animated_webp_loop_playback(self, value):
+        self._set_animated_webp_setting("loop_playback", value)
+
+    def _set_animated_webp_auto_next(self, value):
+        self._set_animated_webp_setting("auto_next", value)
+
+    def show_animated_webp_context_menu(self, global_pos):
+        if not self.is_animated_webp_mode:
+            return
+
+        menu = QtWidgets.QMenu(self)
+
+        auto_play_action = menu.addAction(self.tr("自动播放动图"))
+        auto_play_action.setCheckable(True)
+        auto_play_action.setChecked(self._animated_webp_auto_play_enabled())
+        auto_play_action.triggered.connect(self._set_animated_webp_auto_play)
+
+        loop_action = menu.addAction(self.tr("循环播放"))
+        loop_action.setCheckable(True)
+        loop_action.setChecked(self._animated_webp_loop_enabled())
+        loop_action.triggered.connect(self._set_animated_webp_loop_playback)
+
+        auto_next_action = menu.addAction(self.tr("播放完自动下一页"))
+        auto_next_action.setCheckable(True)
+        auto_next_action.setChecked(self._animated_webp_auto_next_enabled())
+        auto_next_action.triggered.connect(self._set_animated_webp_auto_next)
+
+        menu.exec_(global_pos)
+
+    def _set_zoom_mode_action_state(
+        self,
+        *,
+        fit_window_checked=None,
+        fit_width_checked=None,
+    ):
+        actions_to_restore = []
+
+        if fit_window_checked is not None:
+            actions_to_restore.append(self.actions.fit_window)
+            self.actions.fit_window.blockSignals(True)
+            self.actions.fit_window.setChecked(fit_window_checked)
+
+        if fit_width_checked is not None:
+            actions_to_restore.append(self.actions.fit_width)
+            self.actions.fit_width.blockSignals(True)
+            self.actions.fit_width.setChecked(fit_width_checked)
+
+        for action in actions_to_restore:
+            action.blockSignals(False)
+
+    def _update_cycle_zoom_mode_action(self):
+        cycle_action = getattr(self.actions, "cycle_zoom_mode", None)
+        if cycle_action is None:
+            return
+
+        if self.zoom_mode == self.FIT_WINDOW:
+            icon_name = "fit-window"
+            text = self.tr("适应窗口")
+            tip = self.tr("当前为适应窗口，点击切换到适应宽度")
+        elif self.zoom_mode == self.FIT_WIDTH:
+            icon_name = "fit-width"
+            text = self.tr("适应宽度")
+            tip = self.tr("当前为适应宽度，点击切换到100%")
+        else:
+            icon_name = "zoom"
+            text = self.tr("100%")
+            tip = self.tr("当前为100%，点击切换到适应窗口")
+
+        cycle_action.setText(text)
+        cycle_action.setIcon(utils.new_icon(icon_name))
+        cycle_action.setIconText(text.replace(" ", "\n"))
+        cycle_action.setToolTip(tip)
+        cycle_action.setStatusTip(tip)
+
+    def cycle_zoom_mode(self):
+        if self.zoom_mode == self.FIT_WINDOW:
+            self.set_fit_width(True)
+        elif self.zoom_mode == self.FIT_WIDTH:
+            self.set_zoom(100, scroll_to_top_left=True)
+        else:
+            self.set_fit_window(True)
+
     def reset_state(self):
         self.label_list.clear()
         self.filename = None
@@ -3728,11 +4046,404 @@ class LabelingWidget(QtWidgets.QWidget):
         self.image_data = None
         self.label_file = None
         self.other_data = {}
+        self._clear_animated_webp()
         self.canvas.reset_state()
         self.label_filter_combobox.text_box.clear()
         self.gid_filter_combobox.gid_box.clear()
         # 更新标签页管理器（翻页到空白页时刷新为空）
         self._update_object_manager()
+
+    def _clear_animated_webp(self):
+        self.animated_webp_timer.stop()
+        self.animated_webp_end_timer.stop()
+        self.animated_webp_is_playing = False
+        self.animated_webp_is_seeking = False
+        self.animated_webp_resume_after_seek = False
+        self.animated_webp_end_action_pending = False
+        self.animated_webp_current_frame = 0
+        self.animated_webp_frame_count = 0
+        self.animated_webp_preload_source = None
+        self.animated_webp_source_size = QtCore.QSize()
+        self.animated_webp_target_size = QtCore.QSize()
+        self.animated_webp_display_scale = 1.0
+
+        if self.animated_webp_movie is not None:
+            self.animated_webp_movie.stop()
+            self.animated_webp_movie.deleteLater()
+            self.animated_webp_movie = None
+
+        if self.animated_webp_preload_thread is not None:
+            self.animated_webp_preload_thread.requestInterruption()
+            self.animated_webp_preload_thread.wait(10)
+            self.animated_webp_preload_thread = None
+
+        if self.animated_webp_reader is not None:
+            self.animated_webp_reader.close()
+            self.animated_webp_reader = None
+
+        if hasattr(self, "animated_webp_view") and self.animated_webp_view is not None:
+            self.animated_webp_view.clear()
+
+        self._set_active_image_widget(False)
+
+        if hasattr(self, "animated_progress_slider"):
+            self.animated_progress_slider.blockSignals(True)
+            self.animated_progress_slider.setRange(0, 0)
+            self.animated_progress_slider.setValue(0)
+            self.animated_progress_slider.blockSignals(False)
+
+        if hasattr(self, "animated_progress_label"):
+            self.animated_progress_label.clear()
+
+        if hasattr(self, "animated_progress_container"):
+            self.animated_progress_container.hide()
+
+    def _load_animated_webp(self, filename):
+        self._clear_animated_webp()
+
+        if osp.splitext(filename)[1].lower() != ".webp":
+            return None
+
+        movie = QtGui.QMovie(filename)
+        movie.setCacheMode(QtGui.QMovie.CacheAll)
+        if movie.isValid() and movie.frameCount() > 1 and movie.jumpToFrame(0):
+            movie.frameChanged.connect(self._on_animated_webp_movie_frame_changed)
+            self.animated_webp_movie = movie
+            self.animated_webp_source_size = movie.currentPixmap().size()
+            self.animated_webp_display_scale = 1.0
+            self.animated_webp_frame_count = movie.frameCount()
+            self.animated_webp_current_frame = 0
+            self.animated_webp_preload_source = filename
+            self._set_active_image_widget(True)
+            self.animated_progress_container.hide()
+            pixmap = movie.currentPixmap()
+            self.animated_webp_view.scale = 1.0
+            self.animated_webp_view.set_frame(
+                pixmap, 0, self.animated_webp_frame_count, visible=True
+            )
+            self.canvas.pixmap = pixmap
+            return movie.currentImage()
+
+        try:
+            reader = utils.AnimatedWebPReader(filename)
+        except utils.AnimatedWebPError:
+            return None
+        except Exception as exc:
+            logger.warning(f"Failed to load animated WEBP {filename}: {exc}")
+            return None
+
+        self.animated_webp_reader = reader
+        self.animated_webp_source_size = QtCore.QSize(*reader.size)
+        self.animated_webp_display_scale = 1.0
+        self.animated_webp_frame_count = reader.frame_count
+        self.animated_webp_current_frame = 0
+        self.animated_webp_preload_source = filename
+        self._set_active_image_widget(True)
+        self.animated_progress_container.hide()
+        warmup_count = min(10, reader.frame_count)
+        for frame_index in range(warmup_count):
+            reader.cache_frame(frame_index, reader.get_frame_qimage(frame_index))
+        self._start_animated_webp_preload(filename, warmup_count)
+        return reader.get_frame_qimage(0)
+
+    def _start_animated_webp_preload(self, filename, start_index):
+        if self.animated_webp_reader is None or start_index >= self.animated_webp_frame_count:
+            return
+
+        if self.animated_webp_preload_thread is not None:
+            self.animated_webp_preload_thread.requestInterruption()
+            self.animated_webp_preload_thread.wait(10)
+
+        self.animated_webp_preload_thread = AnimatedWebPPreloadThread(
+            filename, start_index, self
+        )
+        self.animated_webp_preload_thread.frame_ready.connect(
+            self._on_animated_webp_frame_ready
+        )
+        self.animated_webp_preload_thread.finished.connect(
+            self._on_animated_webp_preload_finished
+        )
+        self.animated_webp_preload_thread.start()
+
+    def _on_animated_webp_frame_ready(self, filename, frame_index, qimage):
+        if (
+            self.animated_webp_reader is None
+            or filename != self.animated_webp_preload_source
+        ):
+            return
+        self.animated_webp_reader.cache_frame(frame_index, qimage)
+
+    def _on_animated_webp_preload_finished(self):
+        if self.sender() is self.animated_webp_preload_thread:
+            self.animated_webp_preload_thread = None
+
+    def _update_animated_webp_scaled_playback(self):
+        if (
+            self.animated_webp_movie is None
+            or self.animated_webp_source_size.isEmpty()
+        ):
+            return
+
+        target_scale = max(0.01, 0.01 * self.zoom_widget.value())
+        self.animated_webp_display_scale = target_scale
+        self.animated_webp_view.scale = 1.0
+
+        target_size = QtCore.QSize(
+            max(1, int(round(self.animated_webp_source_size.width() * target_scale))),
+            max(1, int(round(self.animated_webp_source_size.height() * target_scale))),
+        )
+        self.animated_webp_target_size = target_size
+        if self.animated_webp_movie.scaledSize() != target_size:
+            self.animated_webp_movie.setScaledSize(target_size)
+            current_frame = max(
+                0,
+                self.animated_webp_movie.currentFrameNumber(),
+            )
+            if self.animated_webp_movie.state() != QtGui.QMovie.Running:
+                self.animated_webp_movie.jumpToFrame(current_frame)
+            pixmap = self.animated_webp_movie.currentPixmap()
+            if not pixmap.isNull():
+                self._apply_animated_webp_pixmap(pixmap, current_frame)
+
+    def _get_animated_webp_display_pixmap(self, pixmap):
+        if (
+            pixmap.isNull()
+            or self.animated_webp_target_size.isEmpty()
+            or pixmap.size() == self.animated_webp_target_size
+        ):
+            return pixmap
+
+        transformation = (
+            Qt.FastTransformation
+            if self.animated_webp_is_playing
+            else Qt.SmoothTransformation
+        )
+        return pixmap.scaled(
+            self.animated_webp_target_size,
+            Qt.IgnoreAspectRatio,
+            transformation,
+        )
+
+    def _on_animated_webp_movie_frame_changed(self, frame_index):
+        if self.animated_webp_movie is None:
+            return
+        if frame_index == 0:
+            self.animated_webp_end_timer.stop()
+            self.animated_webp_end_action_pending = False
+        self._apply_animated_webp_pixmap(
+            self.animated_webp_movie.currentPixmap(), frame_index
+        )
+        if (
+            self.animated_webp_is_playing
+            and self.animated_webp_frame_count > 1
+            and frame_index >= self.animated_webp_frame_count - 1
+            and (
+                self._animated_webp_auto_next_enabled()
+                or not self._animated_webp_loop_enabled()
+            )
+        ):
+            self._schedule_animated_webp_end_action(0)
+
+    def _update_animated_webp_progress_label(self):
+        return
+
+    def _schedule_animated_webp_end_action(self, delay_ms=0):
+        if self.animated_webp_end_action_pending:
+            return
+        self.animated_webp_end_action_pending = True
+        self.animated_webp_end_timer.start(max(0, int(delay_ms)))
+
+    def _has_next_image_available(self):
+        if not self.filename or not self.image_list:
+            return False
+        current_index = self.fn_to_index.get(str(self.filename), -1)
+        return current_index >= 0 and current_index + 1 < len(self.image_list)
+
+    def _advance_to_next_image_after_animation(self):
+        if not self._has_next_image_available():
+            return False
+        self.open_next_image()
+        return True
+
+    def _on_animated_webp_end_reached(self):
+        self.animated_webp_end_action_pending = False
+
+        if not self.is_animated_webp_mode or self.animated_webp_frame_count <= 1:
+            return
+
+        if self._animated_webp_auto_next_enabled():
+            if not self._advance_to_next_image_after_animation():
+                self.pause_animated_webp()
+            return
+
+        self.pause_animated_webp()
+
+    def _display_animated_webp_frame(self, frame_index, schedule_next=False):
+        if not self.animated_webp_frame_count:
+            return
+
+        frame_index %= self.animated_webp_frame_count
+
+        if self.animated_webp_movie is not None:
+            if self.animated_webp_movie.currentFrameNumber() != frame_index:
+                if not self.animated_webp_movie.jumpToFrame(frame_index):
+                    return
+            pixmap = self.animated_webp_movie.currentPixmap()
+            self._apply_animated_webp_pixmap(pixmap, frame_index)
+        else:
+            if self.animated_webp_reader is None:
+                return
+            try:
+                image = self.animated_webp_reader.get_frame_qimage(frame_index)
+            except Exception as exc:
+                logger.error(
+                    f"Failed to decode animated WEBP frame {frame_index}: {exc}"
+                )
+                self.pause_animated_webp()
+                return
+            pixmap = QtGui.QPixmap.fromImage(image)
+            self._apply_animated_webp_pixmap(pixmap, frame_index)
+
+        if self.navigator_dialog.isVisible() and not self.animated_webp_is_playing:
+            self.navigator_dialog.set_image(pixmap)
+            self.update_navigator_viewport()
+
+        if schedule_next and self.animated_webp_is_playing:
+            self._schedule_animated_webp_next_frame()
+
+    def _apply_animated_webp_pixmap(self, pixmap, frame_index):
+        if pixmap.isNull():
+            return
+        pixmap = self._get_animated_webp_display_pixmap(pixmap)
+        self.animated_webp_current_frame = frame_index
+        self.animated_webp_view.set_frame(
+            pixmap, frame_index, self.animated_webp_frame_count, visible=True
+        )
+        self.canvas.pixmap = pixmap
+        self.canvas.scale = self.animated_webp_view.scale
+        self._update_canvas_overlay_info(None)
+        self._update_current_image_status_bar()
+
+    def _schedule_animated_webp_next_frame(self):
+        if self.animated_webp_reader is None or not self.animated_webp_is_playing:
+            return
+
+        self.animated_webp_end_timer.stop()
+        self.animated_webp_end_action_pending = False
+        delay = self.animated_webp_reader.get_frame_duration(
+            self.animated_webp_current_frame
+        )
+        self.animated_webp_timer.start(max(20, int(delay)))
+
+    def _advance_animated_webp_frame(self):
+        if self.animated_webp_reader is None or not self.animated_webp_is_playing:
+            return
+
+        next_frame = self.animated_webp_current_frame + 1
+        if next_frame >= self.animated_webp_frame_count:
+            if self._animated_webp_auto_next_enabled():
+                self._schedule_animated_webp_end_action(0)
+                return
+            if not self._animated_webp_loop_enabled():
+                self.pause_animated_webp()
+                return
+            next_frame = 0
+        self._display_animated_webp_frame(next_frame, schedule_next=True)
+
+    def play_animated_webp(self):
+        if self.animated_webp_frame_count <= 1:
+            return
+
+        self.animated_webp_end_timer.stop()
+        self.animated_webp_end_action_pending = False
+
+        if self.animated_webp_movie is not None:
+            if (
+                self.animated_webp_current_frame >= self.animated_webp_frame_count - 1
+                and (
+                    self._animated_webp_auto_next_enabled()
+                    or not self._animated_webp_loop_enabled()
+                )
+            ):
+                self.animated_webp_movie.jumpToFrame(0)
+            if self.animated_webp_movie.state() == QtGui.QMovie.NotRunning:
+                self.animated_webp_movie.start()
+            else:
+                self.animated_webp_movie.setPaused(False)
+            self.animated_webp_is_playing = True
+            return
+
+        if self.animated_webp_reader is None:
+            return
+
+        if (
+            self.animated_webp_current_frame >= self.animated_webp_frame_count - 1
+            and (
+                self._animated_webp_auto_next_enabled()
+                or not self._animated_webp_loop_enabled()
+            )
+        ):
+            self._display_animated_webp_frame(0, schedule_next=False)
+        self.animated_webp_is_playing = True
+        self._schedule_animated_webp_next_frame()
+
+    def pause_animated_webp(self):
+        if self.animated_webp_movie is not None:
+            if self.animated_webp_movie.state() != QtGui.QMovie.NotRunning:
+                self.animated_webp_movie.setPaused(True)
+        self.animated_webp_is_playing = False
+        self.animated_webp_timer.stop()
+        self.animated_webp_end_timer.stop()
+        self.animated_webp_end_action_pending = False
+
+    def toggle_animated_webp_playback(self):
+        if self.animated_webp_movie is None and self.animated_webp_reader is None:
+            return
+
+        if self.animated_webp_is_playing:
+            self.pause_animated_webp()
+        else:
+            self.play_animated_webp()
+
+    def _on_animated_progress_pressed(self):
+        if self.animated_webp_reader is None:
+            return
+
+        self.animated_webp_is_seeking = True
+        self.animated_webp_resume_after_seek = self.animated_webp_is_playing
+        self.pause_animated_webp()
+
+    def _on_animated_progress_changed(self, value):
+        if self.animated_webp_reader is None:
+            return
+
+        self._display_animated_webp_frame(value, schedule_next=False)
+
+    def _on_animated_progress_released(self):
+        if self.animated_webp_reader is None:
+            return
+
+        self.animated_webp_is_seeking = False
+        if self.animated_webp_resume_after_seek:
+            self.play_animated_webp()
+        self.animated_webp_resume_after_seek = False
+
+    def _on_animated_canvas_seek(self, ratio):
+        if not self.animated_webp_frame_count:
+            return
+
+        self.animated_webp_resume_after_seek = self.animated_webp_is_playing
+        self.pause_animated_webp()
+        target_frame = int(
+            round(
+                max(0.0, min(1.0, ratio))
+                * max(0, self.animated_webp_frame_count - 1)
+            )
+        )
+        self._display_animated_webp_frame(target_frame, schedule_next=False)
+        if self.animated_webp_resume_after_seek:
+            self.play_animated_webp()
+        self.animated_webp_resume_after_seek = False
 
     def reset_attribute(self, text):
         # Skip validation for auto-labeling special constants
@@ -9529,6 +10240,23 @@ class LabelingWidget(QtWidgets.QWidget):
         # Update canvas overlay info label
         self._update_canvas_overlay_info(pos)
 
+    def _get_canvas_overlay_file_info(self):
+        if not self.filename:
+            return ""
+
+        base_name = osp.basename(str(self.filename))
+        info = f"已加载{base_name}"
+
+        if self.is_animated_webp_mode and self.animated_webp_frame_count > 1:
+            info += (
+                f"[动态] "
+                f"[{self.animated_webp_current_frame + 1}/{self.animated_webp_frame_count}]"
+            )
+        else:
+            info += "[静态]"
+
+        return info
+
     def _update_canvas_overlay_info(self, mouse_pos):
         """Update the canvas overlay info label with mouse and shape info."""
         if not hasattr(self, 'canvas_overlay_label'):
@@ -9540,6 +10268,9 @@ class LabelingWidget(QtWidgets.QWidget):
             return
         
         info_lines = []
+        file_info = self._get_canvas_overlay_file_info()
+        if file_info:
+            info_lines.append(file_info)
         
         # Mouse coordinates + selection info on same line
         mouse_line = ""
@@ -9570,10 +10301,6 @@ class LabelingWidget(QtWidgets.QWidget):
                 width = x_max - x_min
                 height = y_max - y_min
                 info_lines.append(f"矩形: ({x_min:.2f},{y_min:.2f})-({x_max:.2f},{y_max:.2f}) W={width:.2f} H={height:.2f}")
-        
-        if not info_lines:
-            self.canvas_overlay_label.hide()
-            return
         
         # Update label text
         self.canvas_overlay_label.setText("\n".join(info_lines))
@@ -12303,6 +13030,10 @@ class LabelingWidget(QtWidgets.QWidget):
         - shape_width (float): The width of the shape.
         - pos (QPointF): The current mouse coordinates inside the shape.
         """
+        if self.is_animated_webp_mode:
+            self._update_current_image_status_bar()
+            return
+
         num_images = len(self.image_list)
         basename = osp.basename(str(self.filename))
         if shape_height > 0 and shape_width > 0:
@@ -12363,7 +13094,7 @@ class LabelingWidget(QtWidgets.QWidget):
             
         # Get scroll area and canvas dimensions
         scroll_area = self._central_widget
-        canvas_size = self.canvas.size()
+        canvas_size = self._active_image_widget().size()
         scroll_area_size = scroll_area.viewport().size()
         
         # Calculate target position based on ratios
@@ -12384,7 +13115,7 @@ class LabelingWidget(QtWidgets.QWidget):
             
         # Get scroll area and canvas dimensions
         scroll_area = self._central_widget
-        canvas_size = self.canvas.size()
+        canvas_size = self._active_image_widget().size()
         scroll_area_size = scroll_area.viewport().size()
         
         if canvas_size.width() <= 0 or canvas_size.height() <= 0:
@@ -12467,14 +13198,14 @@ class LabelingWidget(QtWidgets.QWidget):
                 # Convert navigator mouse position to image coordinates (ratio-based)
                 image_pos = self._convert_navigator_pos_to_image_coords(mouse_pos)
                 if image_pos:
-                    old_scale = self.canvas.scale
+                    old_scale = self._active_image_scale()
                     
                     # Save scroll position BEFORE zoom
                     sx = self.scroll_bars[Qt.Horizontal].value()
                     sy = self.scroll_bars[Qt.Vertical].value()
                     
                     # Get viewport size before zoom
-                    scroll_area = self.canvas._get_scroll_area()
+                    scroll_area = self._central_widget
                     viewport_w = scroll_area.viewport().width() if scroll_area else 0
                     viewport_h = scroll_area.viewport().height() if scroll_area else 0
                     
@@ -12483,10 +13214,15 @@ class LabelingWidget(QtWidgets.QWidget):
                     self.zoom_widget.setValue(zoom_percentage)
                     self.zoom_widget.blockSignals(False)
                     self.zoom_mode = self.MANUAL_ZOOM
+                    self._set_zoom_mode_action_state(
+                        fit_window_checked=False,
+                        fit_width_checked=False,
+                    )
+                    self._update_cycle_zoom_mode_action()
                     self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
                     self.paint_canvas()
                     
-                    new_scale = self.canvas.scale
+                    new_scale = self._active_image_scale()
                     
                     # Calculate scale ratio
                     if old_scale > 0:
@@ -12495,7 +13231,7 @@ class LabelingWidget(QtWidgets.QWidget):
                         scale_ratio = 1.0
                     
                     # In PS pan mode, use the same logic as zoom_request
-                    if self.canvas.pan_ps_style and self.canvas.pixmap and scale_ratio != 1.0 and scroll_area:
+                    if self.canvas.pan_ps_style and self._active_image_pixmap() and scale_ratio != 1.0 and scroll_area:
                         # image_pos is in original image pixel coordinates
                         image_x = image_pos.x()
                         image_y = image_pos.y()
@@ -12550,7 +13286,8 @@ class LabelingWidget(QtWidgets.QWidget):
             
             # Handle direct zoom changes (from slider/button controls)
             # For slider/button zoom, center on the red rectangle center in navigator (like PS navigator)
-            if hasattr(self, 'canvas') and hasattr(self.canvas, 'width') and hasattr(self.canvas, 'height'):
+            active_widget = self._active_image_widget()
+            if hasattr(active_widget, 'width') and hasattr(active_widget, 'height'):
                 # Get navigator viewport rectangle center - this is the red rectangle in navigator
                 if hasattr(self.navigator_dialog, 'navigator'):
                     nav_widget = self.navigator_dialog.navigator
@@ -12566,20 +13303,25 @@ class LabelingWidget(QtWidgets.QWidget):
                         
                         if canvas_pos:
                             # Save old dimensions
-                            canvas_width_old = self.canvas.width()
-                            canvas_height_old = self.canvas.height()
+                            canvas_width_old = active_widget.width()
+                            canvas_height_old = active_widget.height()
                             
                             # Apply zoom - block signals to prevent double paint_canvas
                             self.zoom_widget.blockSignals(True)
                             self.zoom_widget.setValue(zoom_percentage)
                             self.zoom_widget.blockSignals(False)
                             self.zoom_mode = self.MANUAL_ZOOM
+                            self._set_zoom_mode_action_state(
+                                fit_window_checked=False,
+                                fit_width_checked=False,
+                            )
+                            self._update_cycle_zoom_mode_action()
                             self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
                             self.paint_canvas()
                             
                             # Calculate new dimensions and adjust scrollbars to keep red rectangle center fixed
-                            canvas_width_new = self.canvas.width()
-                            canvas_height_new = self.canvas.height()
+                            canvas_width_new = active_widget.width()
+                            canvas_height_new = active_widget.height()
                             
                             if canvas_width_old != canvas_width_new:
                                 canvas_scale_factor = canvas_width_new / canvas_width_old
@@ -12596,6 +13338,11 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.zoom_widget.setValue(zoom_percentage)
                 self.zoom_widget.blockSignals(False)
                 self.zoom_mode = self.MANUAL_ZOOM
+                self._set_zoom_mode_action_state(
+                    fit_window_checked=False,
+                    fit_width_checked=False,
+                )
+                self._update_cycle_zoom_mode_action()
                 self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
                 self.paint_canvas()
             else:
@@ -12604,6 +13351,11 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.zoom_widget.setValue(zoom_percentage)
                 self.zoom_widget.blockSignals(False)
                 self.zoom_mode = self.MANUAL_ZOOM
+                self._set_zoom_mode_action_state(
+                    fit_window_checked=False,
+                    fit_width_checked=False,
+                )
+                self._update_cycle_zoom_mode_action()
                 self.zoom_values[self.filename] = (self.zoom_mode, zoom_percentage)
                 self.paint_canvas()
         finally:
@@ -12658,16 +13410,18 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # In PS pan mode, convert to scaled image coordinates (not canvas widget coordinates)
         # because canvas widget includes viewport padding
-        if self.canvas.pan_ps_style and self.canvas.pixmap:
+        source_size = self._active_source_size()
+        active_widget = self._active_image_widget()
+        if self.canvas.pan_ps_style and not source_size.isEmpty():
             # Get the actual scaled image size
-            scaled_image_w = self.canvas.scale * self.canvas.pixmap.width()
-            scaled_image_h = self.canvas.scale * self.canvas.pixmap.height()
+            scaled_image_w = self._active_image_scale() * source_size.width()
+            scaled_image_h = self._active_image_scale() * source_size.height()
             canvas_x = int(x_ratio * scaled_image_w)
             canvas_y = int(y_ratio * scaled_image_h)
         else:
             # Original mode: use canvas widget size
-            canvas_x = int(x_ratio * self.canvas.width())
-            canvas_y = int(y_ratio * self.canvas.height())
+            canvas_x = int(x_ratio * active_widget.width())
+            canvas_y = int(y_ratio * active_widget.height())
         
         return QtCore.QPoint(canvas_x, canvas_y)
 
@@ -12698,7 +13452,8 @@ class LabelingWidget(QtWidgets.QWidget):
         if not navigator_widget.image_rect or navigator_widget.image_rect.isEmpty():
             return None
         
-        if not self.canvas.pixmap or self.canvas.pixmap.isNull():
+        source_size = self._active_source_size()
+        if source_size.isEmpty():
             return None
             
         # Convert navigator position to relative image coordinates
@@ -12715,8 +13470,8 @@ class LabelingWidget(QtWidgets.QWidget):
         y_ratio = relative_y / navigator_widget.image_rect.height()
         
         # Convert ratio to original image pixel coordinates
-        image_x = x_ratio * self.canvas.pixmap.width()
-        image_y = y_ratio * self.canvas.pixmap.height()
+        image_x = x_ratio * source_size.width()
+        image_y = y_ratio * source_size.height()
         
         return QtCore.QPointF(image_x, image_y)
 
@@ -12764,9 +13519,12 @@ class LabelingWidget(QtWidgets.QWidget):
             print(f"Failed to save navigator visibility: {e}")
 
     def set_zoom(self, value, scroll_to_top_left=True):
-        self.actions.fit_width.setChecked(False)
-        self.actions.fit_window.setChecked(False)
+        self._set_zoom_mode_action_state(
+            fit_window_checked=False,
+            fit_width_checked=False,
+        )
         self.zoom_mode = self.MANUAL_ZOOM
+        self._update_cycle_zoom_mode_action()
         # 设置标志，防止paint_canvas中的center_canvas_scrollbars覆盖滚动位置
         # 必须在zoom_widget.setValue之前设置，因为setValue会触发paint_canvas
         if scroll_to_top_left:
@@ -12824,19 +13582,19 @@ class LabelingWidget(QtWidgets.QWidget):
         
         try:
             # Save old scale and scroll position BEFORE zoom
-            old_scale = self.canvas.scale
+            old_scale = self._active_image_scale()
             sx = self.scroll_bars[Qt.Horizontal].value()
             sy = self.scroll_bars[Qt.Vertical].value()
             
             # Get viewport size
-            scroll_area = self.canvas._get_scroll_area()
+            scroll_area = self._central_widget
             viewport_w = scroll_area.viewport().width() if scroll_area else 0
             viewport_h = scroll_area.viewport().height() if scroll_area else 0
 
             # Apply zoom
             self.set_zoom(new_zoom, scroll_to_top_left=False)
             
-            new_scale = self.canvas.scale
+            new_scale = self._active_image_scale()
             
             # Calculate scale ratio
             if old_scale > 0:
@@ -12846,7 +13604,7 @@ class LabelingWidget(QtWidgets.QWidget):
             
             if scale_ratio != 1.0 and scroll_area:
                 # In PS pan mode, use image-based calculation
-                if self.canvas.pan_ps_style and self.canvas.pixmap:
+                if self.canvas.pan_ps_style and self._active_image_pixmap():
                     mouse_canvas_x = canvas_mouse_pos.x()
                     mouse_canvas_y = canvas_mouse_pos.y()
                     
@@ -12909,14 +13667,14 @@ class LabelingWidget(QtWidgets.QWidget):
         self._zooming = True
         
         try:
-            old_scale = self.canvas.scale
+            old_scale = self._active_image_scale()
             
             # Save scroll position BEFORE zoom (important!)
             sx = self.scroll_bars[Qt.Horizontal].value()
             sy = self.scroll_bars[Qt.Vertical].value()
             
             # Get viewport size before zoom
-            scroll_area = self.canvas._get_scroll_area()
+            scroll_area = self._central_widget
             viewport_w = scroll_area.viewport().width() if scroll_area else 0
             viewport_h = scroll_area.viewport().height() if scroll_area else 0
             
@@ -12924,7 +13682,7 @@ class LabelingWidget(QtWidgets.QWidget):
             units = 1.1 if delta > 0 else 0.9
             self.add_zoom(units)
             
-            new_scale = self.canvas.scale
+            new_scale = self._active_image_scale()
             
             # Calculate scale ratio
             if old_scale > 0:
@@ -12933,7 +13691,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 scale_ratio = 1.0
             
             # In PS pan mode, use scale ratio for accurate calculation
-            if self.canvas.pan_ps_style and self.canvas.pixmap and scale_ratio != 1.0 and scroll_area:
+            if self.canvas.pan_ps_style and self._active_image_pixmap() and scale_ratio != 1.0 and scroll_area:
                 # pos is mouse position relative to canvas widget (NOT viewport!)
                 # pos is already in canvas coordinates
                 mouse_canvas_x = pos.x()
@@ -12989,8 +13747,14 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def set_fit_window(self, value=True):
         if value:
-            self.actions.fit_width.setChecked(False)
+            self._set_zoom_mode_action_state(
+                fit_window_checked=True,
+                fit_width_checked=False,
+            )
+        else:
+            self._set_zoom_mode_action_state(fit_window_checked=False)
         self.zoom_mode = self.FIT_WINDOW if value else self.MANUAL_ZOOM
+        self._update_cycle_zoom_mode_action()
         
         if value:
             # 进入适应窗口模式：居中显示
@@ -13011,8 +13775,14 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def set_fit_width(self, value=True):
         if value:
-            self.actions.fit_window.setChecked(False)
+            self._set_zoom_mode_action_state(
+                fit_window_checked=False,
+                fit_width_checked=True,
+            )
+        else:
+            self._set_zoom_mode_action_state(fit_width_checked=False)
         self.zoom_mode = self.FIT_WIDTH if value else self.MANUAL_ZOOM
+        self._update_cycle_zoom_mode_action()
         
         if value:
             # 进入适应宽度模式：显示左上角
@@ -13286,6 +14056,98 @@ class LabelingWidget(QtWidgets.QWidget):
         if next_files:
             self.next_files_changed.emit(next_files)
 
+    def _finish_loading_animated_webp_file(self, filename, image):
+        self.image = image
+        self.filename = filename
+        self.image_path = filename
+        self.image_data = None
+        self.label_file = None
+        self.other_data = {}
+
+        try:
+            self.shape_text_edit.textChanged.disconnect()
+        except TypeError:
+            pass
+        self.shape_text_edit.setPlainText("")
+        self.shape_text_edit.textChanged.connect(self.shape_text_changed)
+
+        self._update_file_list_item_color(filename, False)
+        self.load_flags({k: False for k in self.image_flags or []})
+        self.set_clean()
+        self.canvas.setEnabled(False)
+
+        pixmap = QtGui.QPixmap.fromImage(image)
+        self.animated_webp_view.set_pixmap(pixmap)
+        self.animated_webp_view.set_progress(
+            0, self.animated_webp_frame_count, visible=True
+        )
+        self.canvas.pixmap = pixmap
+        self.navigator_dialog.set_image(pixmap)
+        self.update_navigator_shapes()
+
+        if hasattr(self, "image_list") and self.filename:
+            try:
+                current_index = self.fn_to_index.get(str(self.filename), 0) + 1
+                total_files = len(self.image_list)
+                self.navigator_dialog.set_file_info(
+                    self.filename, current_index, total_files
+                )
+            except Exception:
+                self.navigator_dialog.set_file_info(self.filename, 1, 1)
+
+        is_initial_load = not self.zoom_values
+        if self.filename in self.zoom_values:
+            self.zoom_mode = self.zoom_values[self.filename][0]
+            self.set_zoom(
+                self.zoom_values[self.filename][1], scroll_to_top_left=False
+            )
+        elif is_initial_load or not self._config["keep_prev_scale"]:
+            self.adjust_scale(initial=True)
+
+        for orientation in self.scroll_values:
+            if self.filename in self.scroll_values[orientation]:
+                self.set_scroll(
+                    orientation,
+                    self.scroll_values[orientation][self.filename],
+                )
+
+        self.paint_canvas()
+        if self._animated_webp_auto_play_enabled():
+            self.play_animated_webp()
+        else:
+            self.pause_animated_webp()
+        self._update_canvas_overlay_info(None)
+        self._update_current_image_status_bar()
+        self.add_recent_file(self.filename)
+        self.toggle_actions(True)
+        self.animated_webp_view.setFocus()
+        msg = str(self.tr("Loaded %s")) % osp.basename(str(filename))
+        self.status(msg)
+        self.update_thumbnail_display()
+        self._update_expand_margins_colors()
+        self._update_alignment_dialog_page_range()
+        self._update_tag_sort_dialog_page_range()
+        self._update_rectangle_scale_page_range()
+        self._update_page_text_dialog()
+
+        if (
+            hasattr(self, "vertical_viewer_dialog")
+            and self.vertical_viewer_dialog
+            and self.vertical_viewer_dialog.isVisible()
+            and self.vertical_viewer_dialog.sync_scroll_enabled
+        ):
+            self.vertical_viewer_dialog.jump_to_image(self.filename)
+
+        if (
+            hasattr(self, "horizontal_viewer_dialog")
+            and self.horizontal_viewer_dialog
+            and self.horizontal_viewer_dialog.isVisible()
+            and self.horizontal_viewer_dialog.sync_scroll_enabled
+        ):
+            self.horizontal_viewer_dialog.jump_to_image(self.filename)
+
+        return True
+
     def load_file(self, filename=None):  # noqa: C901
         """Load the specified file, or the last opened file if None."""
 
@@ -13325,6 +14187,10 @@ class LabelingWidget(QtWidgets.QWidget):
         self.status(
             str(self.tr("Loading %s...")) % osp.basename(str(filename))
         )
+        image = self._load_animated_webp(filename)
+        if image is not None:
+            return self._finish_loading_animated_webp_file(filename, image)
+
         label_file = osp.splitext(filename)[0] + ".json"
         image_dir = None
         if self.output_dir:
@@ -13381,6 +14247,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # TODO(jack): icc profile issue warning
         # - qt.gui.icc: fromIccProfile: failed minimal tag size sanity
         # - qt.gui.icc: fromIccProfile: invalid tag offset alignment
+        is_animated_webp = False
         image = QtGui.QImage.fromData(self.image_data)
 
         if image.isNull():
@@ -13396,13 +14263,15 @@ class LabelingWidget(QtWidgets.QWidget):
                 f"*.{fmt.data().decode()}"
                 for fmt in QtGui.QImageReader.supportedImageFormats()
             ]
-            # Explicitly add avif/heic/jxl to suggests if not present
+            # Explicitly add avif/heic/jxl/webp to suggests if not present
             if "*.avif" not in formats:
                 formats.append("*.avif")
             if "*.heic" not in formats:
                 formats.append("*.heic")
             if "*.jxl" not in formats:
                 formats.append("*.jxl")
+            if "*.webp" not in formats:
+                formats.append("*.webp")
             self.error_message(
                 self.tr("Error opening file"),
                 self.tr(
@@ -13435,13 +14304,13 @@ class LabelingWidget(QtWidgets.QWidget):
             except:
                 self.navigator_dialog.set_file_info(self.filename, 1, 1)
         
-        if self._config["keep_prev"]:
+        if self._config["keep_prev"] and not is_animated_webp:
             prev_shapes = self.canvas.shapes
         self.canvas.load_pixmap(QtGui.QPixmap.fromImage(image))
 
         # load label flags
         flags = {k: False for k in self.image_flags or []}
-        if self.label_file:
+        if self.label_file and not is_animated_webp:
             for shape in self.label_file.shapes:
                 default_flags = {}
                 if self._config["label_flags"]:
@@ -13462,7 +14331,11 @@ class LabelingWidget(QtWidgets.QWidget):
         self.load_flags(flags)
 
         # load shapes
-        if self._config["keep_prev"] and self.no_shape():
+        if (
+            not is_animated_webp
+            and self._config["keep_prev"]
+            and self.no_shape()
+        ):
             self.load_shapes(
                 prev_shapes, replace=False, update_last_label=False
             )
@@ -13594,6 +14467,10 @@ class LabelingWidget(QtWidgets.QWidget):
             self.brightness_contrast_dialog.on_new_value()
 
         self.paint_canvas()
+        self._update_canvas_overlay_info(None)
+        self._update_current_image_status_bar()
+        if is_animated_webp:
+            self.play_animated_webp()
         self.add_recent_file(self.filename)
         self.toggle_actions(True)
         self.canvas.setFocus()
@@ -13679,7 +14556,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def resizeEvent(self, _):
         if (
-            self.canvas
+            self._active_image_widget()
             and not self.image.isNull()
             and self.zoom_mode != self.MANUAL_ZOOM
         ):
@@ -13700,9 +14577,16 @@ class LabelingWidget(QtWidgets.QWidget):
             center_scrollbars = True
         
         assert not self.image.isNull(), "cannot paint null image"
-        self.canvas.scale = 0.01 * self.zoom_widget.value()
-        self.canvas.adjustSize()
-        self.canvas.update()
+        scale = 0.01 * self.zoom_widget.value()
+        active_widget = self._active_image_widget()
+        if self.is_animated_webp_mode and self.animated_webp_movie is not None:
+            self.animated_webp_display_scale = scale
+            self._update_animated_webp_scaled_playback()
+        else:
+            active_widget.scale = scale
+            active_widget.adjustSize()
+            active_widget.update()
+        self.canvas.scale = scale
 
         # PS风格时，让图片居中显示（仅在需要时，且不是正在缩放，且不是手动设置缩放）
         manual_pending = getattr(self, '_manual_zoom_pending', False)
@@ -13741,24 +14625,26 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def scale_fit_window(self):
         """Figure out the size of the pixmap to fit the main widget."""
-        if not self.canvas.pixmap:
+        source_size = self._active_source_size()
+        if source_size.isEmpty():
             return 1.0
         e = 2.0  # So that no scrollbars are generated.
         w1 = self.central_widget().width() - e
         h1 = self.central_widget().height() - e
         wh_ratio1 = w1 / h1
         # Calculate a new scale value based on the pixmap's aspect ratio.
-        w2 = self.canvas.pixmap.width() - 0.0
-        h2 = self.canvas.pixmap.height() - 0.0
+        w2 = source_size.width() - 0.0
+        h2 = source_size.height() - 0.0
         wh_ratio2 = w2 / h2
         return w1 / w2 if wh_ratio2 >= wh_ratio1 else h1 / h2
 
     def scale_fit_width(self):
         # The epsilon does not seem to work too well here.
-        if not self.canvas.pixmap:
+        source_size = self._active_source_size()
+        if source_size.isEmpty():
             return 1.0
         w = self.central_widget().width() - 2.0
-        return w / self.canvas.pixmap.width()
+        return w / source_size.width()
 
     # QT Overload
     def closeEvent(self, event):
@@ -13812,13 +14698,15 @@ class LabelingWidget(QtWidgets.QWidget):
             f".{fmt.data().decode().lower()}"
             for fmt in QtGui.QImageReader.supportedImageFormats()
         ]
-        # Explicitly add avif, heic and jxl support
+        # Explicitly add avif, heic, jxl and webp support
         if ".avif" not in extensions:
             extensions.append(".avif")
         if ".heic" not in extensions:
             extensions.append(".heic")
         if ".jxl" not in extensions:
             extensions.append(".jxl")
+        if ".webp" not in extensions:
+            extensions.append(".webp")
         
         video_extensions = ('.asf', '.avi', '.m4v', '.mkv', '.mov', '.mp4', '.mpeg', '.mpg', '.ts', '.wmv')
         if event.mimeData().hasUrls():
@@ -13859,13 +14747,15 @@ class LabelingWidget(QtWidgets.QWidget):
             f".{fmt.data().decode().lower()}"
             for fmt in QtGui.QImageReader.supportedImageFormats()
         ]
-        # Explicitly add avif, heic and jxl support
+        # Explicitly add avif, heic, jxl and webp support
         if ".avif" not in extensions:
             extensions.append(".avif")
         if ".heic" not in extensions:
             extensions.append(".heic")
         if ".jxl" not in extensions:
             extensions.append(".jxl")
+        if ".webp" not in extensions:
+            extensions.append(".webp")
         
         image_files = [i for i in items if i.lower().endswith(tuple(extensions))]
         if image_files:
@@ -13979,6 +14869,8 @@ class LabelingWidget(QtWidgets.QWidget):
             f"*.{fmt.data().decode()}"
             for fmt in QtGui.QImageReader.supportedImageFormats()
         ]
+        if "*.webp" not in formats:
+            formats.append("*.webp")
         filters = self.tr("Image & Label files (%s)") % " ".join(
             formats + [f"*{LabelFile.suffix}"]
         )
@@ -14367,6 +15259,8 @@ class LabelingWidget(QtWidgets.QWidget):
             f".{fmt.data().decode().lower()}"
             for fmt in QtGui.QImageReader.supportedImageFormats()
         ]
+        if ".webp" not in extensions:
+            extensions.append(".webp")
 
         self.filename = None
         for file in image_files:

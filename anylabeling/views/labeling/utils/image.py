@@ -20,6 +20,89 @@ except ImportError:
     pass  # JXL plugin not installed
 
 
+class AnimatedWebPError(Exception):
+    """Raised when an animated WEBP file cannot be decoded."""
+
+
+class AnimatedWebPReader:
+    """Sequential reader for animated WEBP files backed by Pillow."""
+
+    DEFAULT_FRAME_DURATION_MS = 67
+    MIN_FRAME_DURATION_MS = 20
+
+    def __init__(self, filename):
+        self.filename = filename
+        self._image = None
+        self._current_frame_index = 0
+        self._frame_cache = {}
+        self._open_image()
+
+        if (
+            self._image.format != "WEBP"
+            or not getattr(self._image, "is_animated", False)
+            or getattr(self._image, "n_frames", 1) <= 1
+        ):
+            self.close()
+            raise AnimatedWebPError(
+                f"{filename} is not a valid animated WEBP file"
+            )
+
+        self.frame_count = self._image.n_frames
+        self.size = self._image.size
+        first_duration = self._image.info.get("duration")
+        if first_duration is None:
+            first_duration = self.DEFAULT_FRAME_DURATION_MS
+        self.default_frame_duration = max(
+            self.MIN_FRAME_DURATION_MS, int(first_duration)
+        )
+        self.frame_durations = [self.default_frame_duration] * self.frame_count
+
+    def _open_image(self):
+        if self._image is not None:
+            self._image.close()
+        self._image = PIL.Image.open(self.filename)
+        self._current_frame_index = 0
+
+    def _seek(self, frame_index):
+        if not 0 <= frame_index < self.frame_count:
+            raise IndexError(f"Frame index out of range: {frame_index}")
+
+        if self._image is None:
+            self._open_image()
+
+        if frame_index < self._current_frame_index:
+            self._open_image()
+
+        if frame_index != self._current_frame_index:
+            self._image.seek(frame_index)
+            self._current_frame_index = frame_index
+
+    def get_frame_qimage(self, frame_index):
+        cached_frame = self._frame_cache.get(frame_index)
+        if cached_frame is not None:
+            return cached_frame
+        self._seek(frame_index)
+        frame = self._image.copy()
+        qimage = pil_to_qimage(frame)
+        self._frame_cache[frame_index] = qimage
+        return qimage
+
+    def get_frame_duration(self, frame_index):
+        return self.frame_durations[frame_index]
+
+    def cache_frame(self, frame_index, qimage):
+        self._frame_cache[frame_index] = qimage
+
+    def has_frame(self, frame_index):
+        return frame_index in self._frame_cache
+
+    def close(self):
+        if self._image is not None:
+            self._image.close()
+            self._image = None
+        self._frame_cache.clear()
+
+
 def img_data_to_pil(img_data):
     f = io.BytesIO()
     f.write(img_data)
