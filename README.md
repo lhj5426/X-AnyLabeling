@@ -57,6 +57,11 @@ https://www.basiccat.org/zh/imagetrans/
 
 增强看图看漫画的阅读体验 并可用于筛选图片用 
 
+并且支持播放控制WEBP动态图的进度控制
+
+<img width="1273" height="879" alt="image" src="https://github.com/user-attachments/assets/5341fd53-1451-4cfd-a5ea-7197b2d4593d" />
+
+
 本工具打通了看漫画的第一步文字检测  和看漫画的最后一步看的阅读体验
 
 是一款围绕看漫画这个核心魔改并开发的工具
