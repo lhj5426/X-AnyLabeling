@@ -59,7 +59,8 @@ https://www.basiccat.org/zh/imagetrans/
 
 并且支持播放控制WEBP动态图的进度控制
 
-<img width="1273" height="879" alt="image" src="https://github.com/user-attachments/assets/5341fd53-1451-4cfd-a5ea-7197b2d4593d" />
+<img width="1581" height="1055" alt="image" src="https://github.com/user-attachments/assets/b3d61a1d-e770-4086-8c57-a723e1219292" />
+
 
 
 本工具打通了看漫画的第一步文字检测  和看漫画的最后一步看的阅读体验
