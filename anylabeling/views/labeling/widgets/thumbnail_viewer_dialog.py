@@ -1,8 +1,18 @@
 """瀑布流缩略图查看器 - 性能优化版"""
 
-from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtCore import Qt
 import os
+import shutil
+from PyQt5 import QtCore, QtGui, QtWidgets
+
+def _get_win_long_path(path):
+    """处理 Windows 长路径问题"""
+    path = os.path.abspath(os.path.normpath(path))
+    if os.name == 'nt' and not path.startswith('\\\\?\\'):
+        if len(path) > 240 or True:  # 总是使用长路径前缀以确保安全
+            return '\\\\?\\' + path
+    return path
+
+from PyQt5.QtCore import Qt
 import json
 import time
 from pathlib import Path
@@ -494,7 +504,7 @@ class ThumbnailItem(QtWidgets.QWidget):
         self.label_stats = {}  # 标签统计
         self.total_labels = 0  # 总标签数
         self.difficult_count = 0  # 困难标记数量
-        if os.path.exists(json_path):
+        if os.path.exists(_get_win_long_path(json_path)):
             try:
                 with open(json_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -1278,6 +1288,27 @@ class ThumbnailItem(QtWidgets.QWidget):
         if self._rainbow_timer:
             self._rainbow_timer.stop()
             self._rainbow_timer = None
+
+    def stop_if_obscured(self, is_mostly_visible):
+        """如果被遮挡超过60%，强制停止"""
+        if not self.is_animated_webp or not self.animated_player:
+            return
+            
+        if not is_mostly_visible:
+            # 只有在运行中才进行暂停
+            player = self.animated_player
+            # 兼容检测：如果是QMovie播放，判断state；如果是Reader播放，判断isActive
+            is_running = False
+            if player.movie:
+                is_running = player.movie.state() == QtGui.QMovie.Running
+            else:
+                is_running = player.timer.isActive()
+                
+            if is_running:
+                player.pause()
+                self.update() # 强制刷新显示当前停下的那一帧
+
+
     
     def _toggle_clicked_state(self):
         if self.is_clicked:
@@ -2582,7 +2613,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         path = item.image_path
         json_path = os.path.splitext(path)[0] + ".json"
         
-        if not os.path.exists(json_path):
+        if not os.path.exists(_get_win_long_path(json_path)):
             # JSON文件不存在，创建一个带有manually_edited标记的文件
             data = {
                 "version": "3.2.2",
@@ -3138,33 +3169,37 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         try:
             # 1) 重命名目标文件
             if os.path.abspath(target_path) != os.path.abspath(new_path):
-                os.replace(target_path, new_path)
+                if target_path in self.items_map:
+                    self.items_map[target_path].dispose()
+                os.replace(_get_win_long_path(target_path), _get_win_long_path(new_path))
                 # 同时重命名JSON文件
                 target_json = os.path.splitext(target_path)[0] + ".json"
                 new_json = os.path.splitext(new_path)[0] + ".json"
-                if os.path.exists(target_json):
-                    os.replace(target_json, new_json)
+                if os.path.exists(_get_win_long_path(target_json)):
+                    os.replace(_get_win_long_path(target_json), _get_win_long_path(new_json))
             
             # 2) 移动其他文件到_delete_文件夹
             image_path = os.path.dirname(target_path)
-            delete_folder = os.path.join(image_path, "..", "_delete_")
-            os.makedirs(delete_folder, exist_ok=True)
+            delete_folder = os.path.abspath(os.path.join(image_path, "..", "_delete_"))
+            os.makedirs(_get_win_long_path(delete_folder), exist_ok=True)
             
             deleted = []
             failed = []
             for path in delete_list:
                 try:
-                    if os.path.exists(path):
+                    if os.path.exists(_get_win_long_path(path)):
                         image_name = os.path.basename(path)
                         save_file = os.path.join(delete_folder, image_name)
-                        shutil.move(path, save_file)
+                        if path in self.items_map:
+                            self.items_map[path].dispose()
+                        shutil.move(_get_win_long_path(path), _get_win_long_path(save_file))
                         deleted.append(path)
                         # 同时移动JSON文件
                         json_path = os.path.splitext(path)[0] + ".json"
-                        if os.path.exists(json_path):
+                        if os.path.exists(_get_win_long_path(json_path)):
                             json_name = os.path.basename(json_path)
                             json_save_file = os.path.join(delete_folder, json_name)
-                            shutil.move(json_path, json_save_file)
+                            shutil.move(_get_win_long_path(json_path), _get_win_long_path(json_save_file))
                 except Exception as e:
                     failed.append((path, str(e)))
             
@@ -3174,7 +3209,12 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             # 发出文件列表变化信号，通知主窗口刷新
             self.files_changed.emit()
             
-            # 静默完成，不弹出提示框
+            if failed:
+                print(f"[合并操作] 部分文件移动失败 (共 {len(failed)} 个):")
+                for p, err in failed[:20]:
+                    print(f"  - {os.path.basename(p)}: {err}")
+                if len(failed) > 20:
+                    print(f"  ... 还有 {len(failed) - 20} 个错误未列出")
             
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "错误", f"合并失败：{str(e)}")
@@ -3242,25 +3282,27 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             if self.deletion_list:
                 first_path = self.deletion_list[0]
                 image_path = os.path.dirname(first_path)
-                delete_folder = os.path.join(image_path, "..", "_delete_")
-                os.makedirs(delete_folder, exist_ok=True)
+                delete_folder = os.path.abspath(os.path.join(image_path, "..", "_delete_"))
+                os.makedirs(_get_win_long_path(delete_folder), exist_ok=True)
             
             deleted = []
             failed = []
             
             for path in self.deletion_list:
                 try:
-                    if os.path.exists(path):
+                    if os.path.exists(_get_win_long_path(path)):
                         image_name = os.path.basename(path)
                         save_file = os.path.join(delete_folder, image_name)
-                        shutil.move(path, save_file)
+                        if path in self.items_map:
+                            self.items_map[path].dispose()
+                        shutil.move(_get_win_long_path(path), _get_win_long_path(save_file))
                         deleted.append(path)
                         # 同时移动JSON文件
                         json_path = os.path.splitext(path)[0] + ".json"
-                        if os.path.exists(json_path):
+                        if os.path.exists(_get_win_long_path(json_path)):
                             json_name = os.path.basename(json_path)
                             json_save_file = os.path.join(delete_folder, json_name)
-                            shutil.move(json_path, json_save_file)
+                            shutil.move(_get_win_long_path(json_path), _get_win_long_path(json_save_file))
                 except Exception as e:
                     failed.append((path, str(e)))
             
@@ -3270,7 +3312,12 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             # 发出文件列表变化信号，通知主窗口刷新
             self.files_changed.emit()
             
-            # 静默完成，不弹出提示框
+            if failed:
+                print(f"[合并操作] 部分文件移动失败 (共 {len(failed)} 个):")
+                for p, err in failed[:20]:
+                    print(f"  - {os.path.basename(p)}: {err}")
+                if len(failed) > 20:
+                    print(f"  ... 还有 {len(failed) - 20} 个错误未列出")
             
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "错误", f"删除失败：{str(e)}")
@@ -3384,23 +3431,25 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         for path in to_delete:
             try:
-                if os.path.exists(path):
+                if os.path.exists(_get_win_long_path(path)):
                     # 创建_delete_文件夹
                     image_path, image_name = os.path.split(path)
-                    delete_folder = os.path.join(image_path, "..", "_delete_")
-                    os.makedirs(delete_folder, exist_ok=True)
+                    delete_folder = os.path.abspath(os.path.join(image_path, "..", "_delete_"))
+                    os.makedirs(_get_win_long_path(delete_folder), exist_ok=True)
                     
                     # 移动图片文件
                     save_file = os.path.join(delete_folder, image_name)
-                    shutil.move(path, save_file)
+                    if path in self.items_map:
+                        self.items_map[path].dispose()
+                    shutil.move(_get_win_long_path(path), _get_win_long_path(save_file))
                     deleted.append(path)
                     
                     # 移动对应的JSON文件
                     json_path = os.path.splitext(path)[0] + ".json"
-                    if os.path.exists(json_path):
+                    if os.path.exists(_get_win_long_path(json_path)):
                         json_name = os.path.basename(json_path)
                         json_save_file = os.path.join(delete_folder, json_name)
-                        shutil.move(json_path, json_save_file)
+                        shutil.move(_get_win_long_path(json_path), _get_win_long_path(json_save_file))
             except Exception as e:
                 failed.append((path, str(e)))
         
@@ -3414,6 +3463,13 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.multi_select_label.setText("已选中: 0")
         self.multi_select_label.setStyleSheet("color: #666; font-size: 12px; padding-left: 15px;")
         
+        if failed:
+            print(f"[批量删除] 部分文件移动失败 (共 {len(failed)} 个):")
+            for p, err in failed[:20]:
+                print(f"  - {os.path.basename(p)}: {err}")
+            if len(failed) > 20:
+                print(f"  ... 还有 {len(failed) - 20} 个错误未列出")
+            
         # 更新界面
         new_image_list = [p for p in self.image_list if p not in deleted]
         current_file = self.current_filename if self.current_filename not in deleted else None
@@ -3836,54 +3892,55 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             self.toolbar.hide()
     
     def update_title_with_position(self):
-        """更新窗口标题，显示当前完全可见的最后一张图片序号"""
+        """更新窗口标题并检测视口内外的图片"""
         if not self.masonry_widget.items:
             self.setWindowTitle("瀑布流缩略图")
             return
         
-        # 获取滚动区域的可见范围
-        scroll_value = self.scroll_area.verticalScrollBar().value()
-        viewport_height = self.scroll_area.viewport().height()
-        visible_bottom = scroll_value + viewport_height
+        # 获取视口（Viewport）的全局矩形
+        viewport = self.scroll_area.viewport()
+        viewport_rect_global = QtCore.QRect(viewport.mapToGlobal(QtCore.QPoint(0, 0)), viewport.size())
         
-        # 如果滚动位置在顶部（容差10像素），直接显示第一张
-        if scroll_value <= 10:
-            self.setWindowTitle(f"瀑布流缩略图 - 1/{len(self.masonry_widget.items)}")
-            return
-        
-        # 找到最后一张完全可见的图片
         last_visible_index = 0
         found_fully_visible = False
+        first_partially_visible_index = -1
         
+        # 遍历所有项目更新停止状态
         for i, item in enumerate(self.masonry_widget.items):
-            item_top = item.y()
-            item_bottom = item.y() + item.height()
+            # 获取 item 的全局矩形
+            item_rect_global = QtCore.QRect(item.mapToGlobal(QtCore.QPoint(0, 0)), item.size())
             
-            # 图片必须完全在可见区域内：顶部和底部都要在可见范围内
-            if item_top >= scroll_value and item_bottom <= visible_bottom:
-                last_visible_index = i
-                found_fully_visible = True
-            elif item_bottom > visible_bottom:
-                # 图片底部超出可见区域，停止查找
-                break
-        
-        # 如果没有找到完全可见的图片（滚轮快速滚动时），使用部分可见的图片
-        if not found_fully_visible:
-            # 找到第一张至少部分可见的图片（顶部在可见区域内，或者跨越可见区域顶部）
-            for i, item in enumerate(self.masonry_widget.items):
-                item_top = item.y()
-                item_bottom = item.y() + item.height()
+            # 计算相交区域
+            intersected = viewport_rect_global.intersected(item_rect_global)
+            if intersected.isEmpty():
+                visible_h = 0
+            else:
+                visible_h = intersected.height()
+            
+            # --- 核心逻辑：超过60%遮挡即停止 ---
+            if item.is_animated_webp:
+                item_h = item.height()
+                # 计算可见比例
+                visible_ratio = visible_h / max(1, item_h)
                 
-                # 图片至少部分可见：底部在可见区域内，或者跨越整个可见区域
-                if item_bottom > scroll_value and item_top < visible_bottom:
+                # 规则：如果可见区域 < 40% (即遮挡 > 60%)
+                # 或者图片完全不在视口内，则停止播放
+                is_mostly_visible = visible_h > 0 and visible_ratio >= 0.4
+                item.stop_if_obscured(is_mostly_visible)
+            
+            # 标题显示逻辑（需要基本在视口内）
+            if visible_h > 0:
+                if first_partially_visible_index == -1:
+                    first_partially_visible_index = i
+                # 完全可见判定
+                if visible_h >= item.height() * 0.95:
                     last_visible_index = i
-                    # 继续查找，直到找到最后一张部分可见的
-                elif item_top >= visible_bottom:
-                    # 图片完全在可见区域下方，停止查找
-                    break
-        
-        # 更新标题：显示 "序号/总数"
-        current_num = last_visible_index + 1  # 从1开始计数
+                    found_fully_visible = True
+
+        if not found_fully_visible and first_partially_visible_index != -1:
+            last_visible_index = first_partially_visible_index
+            
+        current_num = last_visible_index + 1
         total_num = len(self.masonry_widget.items)
         self.setWindowTitle(f"瀑布流缩略图 - {current_num}/{total_num}")
     
