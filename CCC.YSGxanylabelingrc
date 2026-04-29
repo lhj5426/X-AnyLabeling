@@ -38,7 +38,7 @@ canvas:
   zoom_at_mouse_shortcut: Ctrl+B
 canvas_overlay_info_enabled: false
 canvas_overlay_position: top_left
-canvas_pan_ps_style: true
+canvas_pan_ps_style: false
 crosshair_highlight: false
 crosshair_highlight_horizontal: false
 crosshair_highlight_vertical: false
@@ -433,14 +433,24 @@ magnifier_show_crosshair: true
 magnifier_width: 2000
 magnifier_zoom: 1.0
 manually_edited_color: '#0000FF'
+masonry_settings:
+  border_radius: 0
+  border_width: 1
+  columns: 3
+  grid_mode: true
+  horizontal_mode: false
+  row_height: 200
+  show_hover_info: false
+  spacing: 0
+  toolbar_visible: false
 model_hub: github
 move_mode: parameter
 navigator:
-  height: 758
-  position_x: 1337
-  position_y: 2175
+  height: 371
+  position_x: 895
+  position_y: 426
   visible: true
-  width: 514
+  width: 335
 navigator_mouse_indicator_enabled: true
 no_highlight_labels: other
 overlap_detect_enabled: true
