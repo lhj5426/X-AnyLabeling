@@ -247,6 +247,7 @@ class LayoutSettingsDialog(QtWidgets.QDialog):
         if not hasattr(parent, 'layout_mode_btn'):
             return  # 父对话框还未完全初始化，跳过
         
+        view_anchor = parent.capture_view_anchor()
         settings = self.get_settings()
         
         # 应用设置
@@ -278,6 +279,7 @@ class LayoutSettingsDialog(QtWidgets.QDialog):
             parent.masonry_widget._do_relayout()  # 立即布局，不延迟
         
         parent.save_masonry_settings()
+        parent.restore_view_anchor_later(view_anchor)
     
     def get_settings(self):
         """获取设置"""
@@ -2502,6 +2504,68 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # 启动高亮动画
         target_item.start_highlight()
+
+    def capture_view_anchor(self):
+        """记录当前视口锚点，用于布局变化后恢复位置。"""
+        if not hasattr(self, 'scroll_area') or self.scroll_area is None:
+            return None
+        if not self.masonry_widget.items:
+            return None
+
+        scroll_bar = self.scroll_area.verticalScrollBar()
+        current_scroll = scroll_bar.value()
+        viewport_height = self.scroll_area.viewport().height()
+        visible_bottom = current_scroll + viewport_height
+
+        first_visible_item = None
+        for item in self.masonry_widget.items:
+            item_top = item.y()
+            item_bottom = item_top + item.height()
+            if item_bottom > current_scroll and item_top < visible_bottom:
+                first_visible_item = item
+                break
+
+        if first_visible_item is None:
+            return None
+
+        return {
+            "image_path": first_visible_item.image_path,
+            "offset": max(0, current_scroll - first_visible_item.y()),
+        }
+
+    def restore_view_anchor(self, anchor):
+        """按锚点恢复视口位置。"""
+        if not anchor:
+            return False
+        if not hasattr(self, 'scroll_area') or self.scroll_area is None:
+            return False
+
+        target_item = self.items_map.get(anchor.get("image_path"))
+        if target_item is None:
+            return False
+
+        scroll_bar = self.scroll_area.verticalScrollBar()
+        target_scroll = target_item.y() + max(0, int(anchor.get("offset", 0)))
+        target_scroll = max(0, min(target_scroll, scroll_bar.maximum()))
+        scroll_bar.setValue(target_scroll)
+        return True
+
+    def restore_view_anchor_later(self, anchor, delay=120, retries=3):
+        """在重新布局完成后延迟恢复视口位置。"""
+        if not anchor:
+            return
+
+        def _restore(remaining_retries):
+            restored = self.restore_view_anchor(anchor)
+            if not restored and remaining_retries > 0:
+                QtCore.QTimer.singleShot(
+                    delay,
+                    lambda: _restore(remaining_retries - 1)
+                )
+            elif restored:
+                self.update_title_with_position()
+
+        QtCore.QTimer.singleShot(delay, lambda: _restore(retries))
     
     def get_load_width(self):
         """获取加载宽度/高度"""
