@@ -36,6 +36,12 @@ from anylabeling.views.labeling.widgets.searchable_model_dropdown import (
 )
 
 
+def _normalize_classes(classes):
+    if isinstance(classes, dict):
+        return list(classes.values())
+    return classes or []
+
+
 class AutoLabelingWidget(QWidget):
     new_model_selected = pyqtSignal(str)
     new_custom_model_selected = pyqtSignal(str)
@@ -941,7 +947,7 @@ class AutoLabelingWidget(QWidget):
         # 更新模型的过滤类别设置
         if model_config.get("model"):
             # 获取模型原始的所有类别
-            model_classes = model_config.get("classes", [])
+            model_classes = _normalize_classes(model_config.get("classes", []))
             # 将类别名称转换为索引
             # 注意：selected_classes 为空列表时应该返回空列表（不显示任何标签）
             # 只有在 selected_classes 为 None 时才返回 None（显示所有标签）

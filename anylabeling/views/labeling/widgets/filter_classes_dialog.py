@@ -8,6 +8,12 @@ import yaml
 from PyQt5 import QtWidgets, QtCore
 
 
+def _normalize_classes(classes):
+    if isinstance(classes, dict):
+        return list(classes.values())
+    return classes or []
+
+
 class FilterClassesDialog(QtWidgets.QDialog):
     """对话框用于选择要过滤的类别"""
 
@@ -152,7 +158,7 @@ class FilterClassesDialog(QtWidgets.QDialog):
                 yaml_config = yaml.safe_load(f)
 
             # 获取classes字段
-            yaml_classes = yaml_config.get("classes", [])
+            yaml_classes = _normalize_classes(yaml_config.get("classes", []))
 
             if not yaml_classes:
                 QtWidgets.QMessageBox.warning(

@@ -32,6 +32,7 @@ class RFDETR(Model):
             "input_conf",
             "edit_conf",
             "toggle_preserve_existing_annotations",
+            "button_filter_classes",
         ]
         output_modes = {
             "rectangle": QCoreApplication.translate("Model", "Rectangle"),
@@ -52,9 +53,29 @@ class RFDETR(Model):
             )
         self.net = OnnxBaseModel(model_abs_path, __preferred_device__)
         self.classes = self.config["classes"]
+        if isinstance(self.classes, dict):
+            self.classes = list(self.classes.values())
+        self.filter_classes = self.config.get("filter_classes", None)
+        if self.filter_classes:
+            self.filter_classes = [
+                i
+                for i, item in enumerate(self.classes)
+                if item in self.filter_classes
+            ]
+
+        net_input_shape = self.net.get_input_shape()
+        self.batch_size = 1
+        if len(net_input_shape) == 4 and isinstance(net_input_shape[0], int):
+            self.batch_size = net_input_shape[0]
 
         input_width = self.config.get("input_width", 560)
         input_height = self.config.get("input_height", 560)
+        if len(net_input_shape) == 4:
+            net_input_height, net_input_width = net_input_shape[-2:]
+            if isinstance(net_input_width, int):
+                input_width = net_input_width
+            if isinstance(net_input_height, int):
+                input_height = net_input_height
         self.input_shape = (input_height, input_width)
 
         self.conf_thres = self.config.get("conf_threshold", 0.50)
@@ -80,12 +101,14 @@ class RFDETR(Model):
         Returns:
             numpy.ndarray: The pre-processed output.
         """
-        # Convert grayscale to RGB if needed
-        if input_image.mode == "L":
+        # RF-DETR expects RGB input; drop alpha or palette modes if present.
+        if input_image.mode != "RGB":
             input_image = input_image.convert("RGB")
 
+        input_h, input_w = self.input_shape
+
         # resize with bilinear interpolation
-        image = input_image.resize(self.input_shape, Image.BILINEAR)
+        image = input_image.resize((input_w, input_h), Image.BILINEAR)
 
         # convert to numpy array
         image = np.array(image)
@@ -107,6 +130,8 @@ class RFDETR(Model):
 
         # add batch dimension
         image = np.expand_dims(image, axis=0)
+        if self.batch_size > 1:
+            image = np.repeat(image, self.batch_size, axis=0)
 
         # convert to contiguous array
         image = np.ascontiguousarray(image)
@@ -155,6 +180,8 @@ class RFDETR(Model):
         boxes = boxes * scale_fct[:, None, :]
 
         keep = scores[0] > self.conf_thres
+        if self.filter_classes is not None:
+            keep = keep & np.isin(labels[0], self.filter_classes)
         scores = scores[0][keep].tolist()
         labels = labels[0][keep].tolist()
         boxes = boxes[0][keep].tolist()
