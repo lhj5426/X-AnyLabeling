@@ -286,6 +286,10 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.fit_height_mode = True
         self.thread_pool = QtCore.QThreadPool()
         self.thread_pool.setMaxThreadCount(4) 
+
+        # Enable dropping image folders/files onto this viewer, matching the
+        # vertical viewer and masonry thumbnail viewer behavior.
+        self.setAcceptDrops(True)
         
         # UI Setup
         layout = QtWidgets.QVBoxLayout(self)
@@ -314,6 +318,8 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             
         self.view.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.view.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.view.setAcceptDrops(False)
+        self.view.viewport().setAcceptDrops(False)
         
         self.view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self.show_context_menu)
@@ -331,6 +337,8 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.thumbnail_list.setWrapping(False)
         self.thumbnail_list.setResizeMode(QtWidgets.QListWidget.Adjust)
         self.thumbnail_list.setDragDropMode(QtWidgets.QAbstractItemView.NoDragDrop)
+        self.thumbnail_list.setAcceptDrops(False)
+        self.thumbnail_list.viewport().setAcceptDrops(False)
         self.thumbnail_list.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.thumbnail_list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOn)
         self.thumbnail_list.setStyleSheet("""
@@ -715,6 +723,70 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
     def reload_scene(self):
         # Clear cache and reload
         self.populate_scene()
+
+    def dragEnterEvent(self, event):
+        """Accept dropped folders or supported image files."""
+        if event.mimeData().hasUrls():
+            items = [i.toLocalFile() for i in event.mimeData().urls()]
+            extensions = [
+                f".{fmt.data().decode().lower()}"
+                for fmt in QtGui.QImageReader.supportedImageFormats()
+            ]
+            if any(os.path.isdir(i) or i.lower().endswith(tuple(extensions)) for i in items):
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        """Open a dropped folder, or open the containing folder for a dropped image."""
+        if not self.labeling_widget:
+            event.ignore()
+            return
+
+        items = [i.toLocalFile() for i in event.mimeData().urls()]
+
+        folders = [i for i in items if os.path.isdir(i)]
+        if folders:
+            folder_path = folders[0]
+            recursive = False
+            if hasattr(self.labeling_widget, "_config"):
+                recursive = self.labeling_widget._config.get("load_subfolders", False)
+
+            if hasattr(self.labeling_widget, "import_image_folder"):
+                self.labeling_widget.import_image_folder(folder_path, recursive=recursive)
+                event.accept()
+            else:
+                event.ignore()
+            return
+
+        extensions = [
+            f".{fmt.data().decode().lower()}"
+            for fmt in QtGui.QImageReader.supportedImageFormats()
+        ]
+        image_files = [i for i in items if i.lower().endswith(tuple(extensions))]
+        if image_files:
+            first_image = image_files[0]
+            folder_path = os.path.dirname(first_image)
+            recursive = False
+            if hasattr(self.labeling_widget, "_config"):
+                recursive = self.labeling_widget._config.get("load_subfolders", False)
+
+            if hasattr(self.labeling_widget, "import_image_folder"):
+                self.labeling_widget.import_image_folder(folder_path, recursive=recursive)
+                QtCore.QTimer.singleShot(100, lambda: self._load_dropped_image(first_image))
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.ignore()
+
+    def _load_dropped_image(self, image_path):
+        """Load the dropped image after its folder has been imported."""
+        if self.labeling_widget and hasattr(self.labeling_widget, "load_file"):
+            if hasattr(self.labeling_widget, "fn_to_index") and image_path in self.labeling_widget.fn_to_index:
+                self.labeling_widget.load_file(image_path)
 
     def toggle_thumbnails(self):
         self.thumbnails_visible = not self.thumbnails_visible
