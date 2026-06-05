@@ -2,12 +2,14 @@ alignment_tool_settings:
   angle_labels: shuqing, hengxie
   label_filter: balloon, qipao, changfangtiao, other
   stretch_align_mode: false
-  window_x: 752
-  window_y: 102
+  window_x: 753
+  window_y: 133
 animated_webp:
   auto_next: false
-  auto_play: true
+  auto_play: false
   loop_playback: true
+animated_webp_masonry:
+  loop_playback: false
 auto_highlight_shape: false
 auto_save: true
 auto_switch_to_edit_mode: true
@@ -45,28 +47,7 @@ crosshair_highlight_vertical: false
 crosshair_normal: false
 crosshair_normal_horizontal: false
 crosshair_normal_vertical: false
-custom_models:
-- classes:
-  - balloon
-  - qipao
-  - shuqing
-  - changfangtiao
-  - hengxie
-  - other
-  conf_threshold: 0.65
-  confidence threshold: 0.76
-  config_file: J:\G\Desktop\yoloV11_40yuan\runs\train\056\weights\epoch145.yaml
-  display_name: 056epoch145
-  input height: 1640
-  input width: 1640
-  iou_threshold: 0.45
-  is_custom_model: true
-  last_used: 1758435081.0439758
-  model_path: epoch145.onnx
-  name: yolov8n-r20230520
-  nms threshold: 0.65
-  provider: Ultralytics
-  type: yolov8
+custom_models: []
 default_highlight_exclude_locked: true
 default_shape_color:
 - 0
@@ -117,25 +98,7 @@ expand_margins_values:
   - 0.0
   - 0.0
   - 0.0
-  balloon2:
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
   changfangtiao:
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  changfangtiao2:
   - 0.0
   - 0.0
   - 0.0
@@ -163,15 +126,6 @@ expand_margins_values:
   - 0.0
   - 0.0
   qipao:
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  - 0.0
-  qipao2:
   - 0.0
   - 0.0
   - 0.0
@@ -209,10 +163,12 @@ handle_highlight_point: false
 handle_highlight_square: false
 handle_normal_point: true
 handle_normal_square: true
+hide_selected_mode: false
+hide_unselected_mode: true
 highlight_enabled_by_default: true
 highlight_mixed_mode: true
 highlight_negative: other
-highlight_positive: 'balloon, qipao, changfangtiao,shuqing, hengxie '
+highlight_positive: balloon, qipao, changfangtiao,shuqing, hengxie,piqao
 highlight_use_border_color: false
 keep_prev: false
 keep_prev_brightness: false
@@ -255,10 +211,18 @@ label_border_colors:
   - 85
   - 170
   - 255
+  hengxie:
+  - 0
+  - 0
+  - 0
   other:
   - 255
   - 3
   - 62
+  piqao:
+  - 170
+  - 170
+  - 255
   qipao:
   - 0
   - 0
@@ -266,12 +230,16 @@ label_border_colors:
 label_border_widths:
   balloon: 1.0
   changfangtiao: 1.0
+  hengxie: 2.0
   other: 2.0
+  piqao: 2.0
   qipao: 2.0
 label_border_widths_selected:
   balloon: 2.0
   changfangtiao: 2.0
+  hengxie: 2.0
   other: 5.0
+  piqao: 2.0
   qipao: 2.0
 label_colors:
   balloon:
@@ -290,6 +258,10 @@ label_colors:
   - 255
   - 3
   - 62
+  piqao:
+  - 170
+  - 170
+  - 255
   qipao:
   - 85
   - 255
@@ -439,18 +411,47 @@ masonry_settings:
   columns: 3
   grid_mode: true
   horizontal_mode: false
-  row_height: 200
+  row_height: 400
   show_hover_info: false
   spacing: 0
   toolbar_visible: false
+merge_tool_settings:
+  allow_negative_gap: true
+  enable_exclude_labels: true
+  exclude_labels: other
+  group_states:
+  - checked: true
+    text: balloon
+  - checked: true
+    text: qipao
+  - checked: true
+    text: shuqing
+  - checked: true
+    text: changfangtiao
+  - checked: true
+    text: hengxie
+  - checked: true
+    text: other
+  label_merge_strategy: PREFER_SHORTER
+  ltr_labels: ''
+  max_horizontal_gap: 10
+  max_vertical_gap: 10
+  merge_mode: VERTICAL
+  min_height_overlap_ratio: 90
+  min_width_overlap_ratio: 90
+  output_shape_type: rectangle
+  require_same_label: false
+  rtl_labels: balloon,qipao,shuqing
+  ttb_labels: changfangtiao,hengxie
+  use_specific_groups: false
 model_hub: github
 move_mode: parameter
 navigator:
-  height: 371
-  position_x: 895
-  position_y: 426
-  visible: true
-  width: 335
+  height: 253
+  position_x: 1643
+  position_y: 791
+  visible: false
+  width: 263
 navigator_mouse_indicator_enabled: true
 no_highlight_labels: other
 overlap_detect_enabled: true
@@ -628,6 +629,7 @@ shortcuts:
   paste_polygon: Ctrl+V
   quit: Ctrl+Q
   rectangle_scale_tool: Alt+7
+  region_batch_delete_tool: Ctrl+Alt+R
   remove_selected_point: Backspace
   save: Ctrl+S
   save_as: Ctrl+Shift+S
@@ -673,10 +675,10 @@ show_degrees: true
 show_edge_direction: false
 show_groups: false
 show_label_text_field: true
-show_labels: false
+show_labels: true
 show_linking: false
 show_order: true
-show_overlap: true
+show_overlap: false
 show_scores: true
 show_shapes: true
 show_texts: false
@@ -716,6 +718,7 @@ spacing_guide_line_color:
 spacing_guide_line_width: 2.0
 spacing_guide_max_shapes: 0
 spacing_guide_opacity: 0.8
+spacing_guide_selected_only: false
 spacing_guide_snap_distance: 10
 spacing_guide_text_bg_color:
 - 0
