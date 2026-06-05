@@ -234,6 +234,7 @@ shortcuts:
   tag_sort_tool: Alt+1
   angle_correction_tool: Alt+2
   merge_tool: Alt+3
+  region_batch_delete_tool: Ctrl+Alt+R
   dual_color_tool: Alt+4
   mask_generator_tool: Alt+5
   traffic_light_tool: Alt+6
