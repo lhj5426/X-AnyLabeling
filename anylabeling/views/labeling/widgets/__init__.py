@@ -47,6 +47,7 @@ from .rectangle_scale_dialog import RectangleScaleDialog
 from .page_text_dialog import PageTextDialog
 from .highlight_settings_dialog import HighlightSettingsDialog
 from .label_sync_dialog import LabelSyncDialog
+from .region_batch_delete_dialog import RegionBatchDeleteDialog
 
 
 __all__ = [
@@ -99,4 +100,5 @@ __all__ = [
     "HighlightSettingsDialog",
     "WheelSettingsDialog",
     "LabelSyncDialog",
+    "RegionBatchDeleteDialog",
 ]

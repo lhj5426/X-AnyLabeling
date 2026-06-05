@@ -88,6 +88,7 @@ from .widgets import (
     Rectangle3WidthDialog,
     PageTextDialog,
     HighlightSettingsDialog,
+    RegionBatchDeleteDialog,
 )
 from .widgets.label_sync_dialog import LabelSyncDialog
 from .widgets.rectangle_scale_dialog import RectangleScaleDialog
@@ -432,6 +433,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.wheel_settings_dialog = None
         self.rectangle3_width_dialog = None
         self.rectangle_scale_dialog = None
+        self.region_batch_delete_dialog = None
         self.traffic_light_dialog = None # New dialog instance
 
         self.supported_shape = Shape.get_supported_shape()
@@ -1887,6 +1889,13 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="union",
             tip=self.tr("根据规则合并标注对象"),
         )
+        region_batch_delete_tool = action(
+            self.tr("区域批量删除"),
+            self.toggle_region_batch_delete_dialog,
+            shortcuts.get("region_batch_delete_tool"),
+            icon="delete",
+            tip=self.tr("框选固定区域，批量删除该区域内命中的同名标签"),
+        )
         dual_color_label_tool = action(
             self.tr("双色标签工具"),
             self.toggle_label_tool,
@@ -2787,6 +2796,7 @@ class LabelingWidget(QtWidgets.QWidget):
             segmentation_tool=segmentation_tool,
             wheel_settings_tool=wheel_settings_tool,
             merge_tool=merge_shapes,
+            region_batch_delete_tool=region_batch_delete_tool,
             dual_color_tool=dual_color_label_tool,
             mask_generator_tool=mask_generator_tool,
             traffic_light_tool=traffic_light_tool,
@@ -3037,6 +3047,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 alignment_tool,
                 segmentation_tool,
                 merge_shapes,
+                region_batch_delete_tool,
                 dual_color_label_tool,
                 mask_generator_tool,
                 traffic_light_tool,
@@ -7576,6 +7587,7 @@ class LabelingWidget(QtWidgets.QWidget):
             "alignment_tool": "alignment_tool",
             "segmentation_tool": "segmentation_tool",
             "merge_tool": "merge_tool",
+            "region_batch_delete_tool": "region_batch_delete_tool",
             "dual_color_tool": "dual_color_tool",
             "mask_generator_tool": "mask_generator_tool",
             "traffic_light_tool": "traffic_light_tool",
@@ -7814,6 +7826,12 @@ class LabelingWidget(QtWidgets.QWidget):
         """切换区域合并工具窗口"""
         self._toggle_dialog('merge_tool_dialog', self.open_merge_tool)
 
+    def toggle_region_batch_delete_dialog(self):
+        self._toggle_dialog(
+            'region_batch_delete_dialog',
+            self.open_region_batch_delete_dialog,
+        )
+
     def toggle_label_tool(self):
         """切换双色标签工具窗口"""
         self._toggle_dialog('label_tool_dialog', self.open_label_tool)
@@ -7956,6 +7974,46 @@ class LabelingWidget(QtWidgets.QWidget):
             self.label_sync_dialog.activateWindow()
         else:
             self.label_sync_dialog.show()
+
+    def open_region_batch_delete_dialog(self):
+        if not self.filename:
+            self.error_message("区域批量删除", "请先打开一个图片文件。")
+            return
+
+        if self.region_batch_delete_dialog is None:
+            self.region_batch_delete_dialog = RegionBatchDeleteDialog(
+                self,
+                self.image,
+                self.canvas.shapes,
+                bool(self.image_list),
+                show_labels=bool(getattr(self.canvas, "show_labels", True)),
+                show_scores=bool(getattr(self.canvas, "show_scores", True)),
+                show_order=bool(getattr(self.canvas, "show_order", True)),
+            )
+            self.region_batch_delete_dialog.setAttribute(
+                QtCore.Qt.WA_DeleteOnClose, False
+            )
+        else:
+            self._update_region_batch_delete_dialog(force=True)
+
+        self.region_batch_delete_dialog.show()
+        self.region_batch_delete_dialog.raise_()
+        self.region_batch_delete_dialog.activateWindow()
+
+    def _update_region_batch_delete_dialog(self, force=False):
+        dialog = getattr(self, "region_batch_delete_dialog", None)
+        if dialog is None:
+            return
+        if not force and not dialog.isVisible():
+            return
+        dialog.update_preview(
+            self.image,
+            self.canvas.shapes,
+            bool(self.image_list),
+            show_labels=bool(getattr(self.canvas, "show_labels", True)),
+            show_scores=bool(getattr(self.canvas, "show_scores", True)),
+            show_order=bool(getattr(self.canvas, "show_order", True)),
+        )
 
     def _update_label_sync_dialog(self, initial_selection=None, force_update=False):
         """
@@ -9003,6 +9061,9 @@ class LabelingWidget(QtWidgets.QWidget):
             "toggle_magnifier_auto_detect": getattr(self.actions, 'toggle_magnifier_auto_detect', None),
             # Tool functions
             "edit_digit_shortcut": self.actions.digit_shortcut_manager,
+            "region_batch_delete_tool": getattr(
+                self.actions, "region_batch_delete_tool", None
+            ),
         }
 
         # Map action text patterns to shortcut keys for dynamic lookup
@@ -13887,6 +13948,14 @@ class LabelingWidget(QtWidgets.QWidget):
         assert hasattr(self.canvas, key), f"Canvas has no attribute {key}"
         setattr(self.canvas, key, value)
         self.canvas.update()
+        if key in ("show_labels", "show_scores", "show_order"):
+            dialog = getattr(self, "region_batch_delete_dialog", None)
+            if dialog is not None and dialog.isVisible():
+                dialog.update_display_options(
+                    show_labels=bool(getattr(self.canvas, "show_labels", True)),
+                    show_scores=bool(getattr(self.canvas, "show_scores", True)),
+                    show_order=bool(getattr(self.canvas, "show_order", True)),
+                )
 
     def on_new_brightness_contrast(self, qimage):
         self.canvas.load_pixmap(
@@ -14468,6 +14537,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.paint_canvas()
         self._update_canvas_overlay_info(None)
+        self._update_region_batch_delete_dialog()
         self._update_current_image_status_bar()
         if is_animated_webp:
             self.play_animated_webp()

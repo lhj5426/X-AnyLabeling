@@ -27,6 +27,8 @@ from anylabeling.views.labeling.utils.general import is_possible_rectangle
 class LabelConverter:
     def __init__(self, classes_file=None, pose_cfg_file=None):
         self.classes = []
+        self.yolo_skipped_unknown_label_files = {}
+        self.yolo_skipped_unknown_label_details = {}
         if classes_file:
             with open(classes_file, "r", encoding="utf-8") as f:
                 self.classes = f.read().splitlines()
@@ -40,6 +42,48 @@ class LabelConverter:
                     self.pose_classes[class_name] = keypoint_name
                 self.classes = list(self.pose_classes.keys())
             logger.info(f"Loading pose classes: {self.pose_classes}")
+
+    def _yolo_class_index(self, label, input_file):
+        if label in self.classes:
+            return self.classes.index(label)
+        label = label or "(empty)"
+        self.yolo_skipped_unknown_label_files.setdefault(label, set()).add(
+            input_file
+        )
+        file_counts = self.yolo_skipped_unknown_label_details.setdefault(
+            input_file, {}
+        )
+        file_counts[label] = file_counts.get(label, 0) + 1
+        logger.warning(
+            f"YOLO export skipped unknown label '{label}' in {input_file}."
+        )
+        return None
+
+    def yolo_skipped_unknown_labels_text(self):
+        if not self.yolo_skipped_unknown_label_files:
+            return ""
+        summary = ", ".join(
+            f"{label} x{len(files)}页"
+            for label, files in sorted(
+                self.yolo_skipped_unknown_label_files.items()
+            )
+        )
+        return f"\n\n未导出的未知标签: {summary}"
+
+    def yolo_skipped_unknown_labels_details(self):
+        if not self.yolo_skipped_unknown_label_details:
+            return ""
+        lines = []
+        for input_file, label_counts in sorted(
+            self.yolo_skipped_unknown_label_details.items()
+        ):
+            labels = ", ".join(
+                f"{label} x{count}"
+                for label, count in sorted(label_counts.items())
+            )
+            lines.append(f"{osp.basename(input_file)}: {labels}")
+        return "\n".join(lines)
+
 
     def reset(self):
         self.custom_data = dict(
@@ -1608,7 +1652,9 @@ class LabelConverter:
                         )
                         points = rectangle_from_diagonal(points)
 
-                    class_index = self.classes.index(label)
+                    class_index = self._yolo_class_index(label, input_file)
+                    if class_index is None:
+                        continue
 
                     x_center = (points[0][0] + points[2][0]) / (
                         2 * image_width
@@ -1633,7 +1679,9 @@ class LabelConverter:
                     )
                     if len(points) < 3:
                         continue
-                    class_index = self.classes.index(label)
+                    class_index = self._yolo_class_index(label, input_file)
+                    if class_index is None:
+                        continue
                     norm_points = points / image_size
                     f.write(
                         f"{class_index} "
@@ -1667,7 +1715,9 @@ class LabelConverter:
                         for i in range(8)
                     ]
                     x0, y0, x1, y1, x2, y2, x3, y3 = normalized_coords
-                    class_index = self.classes.index(label)
+                    class_index = self._yolo_class_index(label, input_file)
+                    if class_index is None:
+                        continue
                     f.write(
                         f"{class_index} {x0} {y0} {x1} {y1} {x2} {y2} {x3} {y3}\n"
                     )
@@ -1714,7 +1764,9 @@ class LabelConverter:
                 )
                 for data in pose_data.values():
                     box_label = data["box_label"]
-                    box_index = classes.index(box_label)
+                    box_index = self._yolo_class_index(box_label, input_file)
+                    if box_index is None:
+                        continue
                     kpt_names = self.pose_classes[box_label]
                     rectangle = data["rectangle"]
                     x_center = (rectangle[0][0] + rectangle[2][0]) / (

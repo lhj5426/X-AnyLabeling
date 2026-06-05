@@ -7,7 +7,7 @@ import time
 import math
 
 from PyQt5 import QtWidgets, QtGui
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
@@ -964,6 +964,48 @@ def export_yolo_annotation(self, mode):
             "%s"
         )
         message_text = template % save_path
+        skipped_text = ""
+        if hasattr(converter, "yolo_skipped_unknown_labels_text"):
+            skipped_text = converter.yolo_skipped_unknown_labels_text()
+
+        if skipped_text:
+            message_box = QtWidgets.QMessageBox(self)
+            message_box.setIcon(QtWidgets.QMessageBox.Warning)
+            message_box.setWindowTitle(self.tr("YOLO导出完成"))
+            message_box.setText(
+                message_text
+                + "\n\n部分标签不在类别文件中，已跳过未导出。"
+                + skipped_text
+            )
+            if hasattr(converter, "yolo_skipped_unknown_labels_details"):
+                skipped_details = converter.yolo_skipped_unknown_labels_details()
+                if skipped_details:
+                    message_box.setDetailedText(skipped_details)
+            message_box.setStandardButtons(QtWidgets.QMessageBox.Ok)
+            ok_button = message_box.button(QtWidgets.QMessageBox.Ok)
+            if ok_button is not None:
+                ok_button.setText(self.tr("确定"))
+            def relabel_details_button():
+                for button in message_box.findChildren(QtWidgets.QPushButton):
+                    if button.text() in ("Show Details...", "Show Details"):
+                        button.setText(self.tr("详细信息"))
+                        button.clicked.connect(
+                            lambda: QTimer.singleShot(
+                                0, relabel_details_button
+                            )
+                        )
+                    elif button.text() in ("Hide Details...", "Hide Details"):
+                        button.setText(self.tr("隐藏详情"))
+                        button.clicked.connect(
+                            lambda: QTimer.singleShot(
+                                0, relabel_details_button
+                            )
+                        )
+
+            relabel_details_button()
+            message_box.exec_()
+            return
+
         popup = Popup(
             message_text,
             self,

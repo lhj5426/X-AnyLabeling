@@ -150,6 +150,7 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
                 ("alignment_tool", self.tr("矩形对齐工具")),
                 ("segmentation_tool", self.tr("矩形分割工具")),
                 ("merge_tool", self.tr("区域合并工具")),
+                ("region_batch_delete_tool", self.tr("区域批量删除")),
                 ("dual_color_tool", self.tr("双色标签工具")),
                 ("mask_generator_tool", self.tr("掩膜生成")),
                 ("traffic_light_tool", self.tr("红绿灯窗口")),
