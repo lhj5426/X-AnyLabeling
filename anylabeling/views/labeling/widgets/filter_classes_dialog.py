@@ -18,7 +18,8 @@ class FilterClassesDialog(QtWidgets.QDialog):
     """对话框用于选择要过滤的类别"""
 
     def __init__(self, all_classes, current_filter_classes=None,
-                 extra_labels_from_yaml=None, on_yaml_import=None, on_apply=None, parent=None):
+                 extra_labels_from_yaml=None, on_yaml_import=None, on_apply=None,
+                 info_text=None, parent=None):
         """
         初始化过滤类别对话框
 
@@ -28,6 +29,7 @@ class FilterClassesDialog(QtWidgets.QDialog):
             extra_labels_from_yaml: 从YAML导入的额外标签列表
             on_yaml_import: 导入YAML标签时的回调函数
             on_apply: 点击应用时的回调函数
+            info_text: 自定义说明文字
             parent: 父窗口
         """
         super(FilterClassesDialog, self).__init__(parent)
@@ -36,6 +38,7 @@ class FilterClassesDialog(QtWidgets.QDialog):
         self.extra_labels_from_yaml = extra_labels_from_yaml or []
         self.on_yaml_import = on_yaml_import
         self.on_apply = on_apply
+        self.info_text = info_text
 
         # 设置为非模态窗口
         self.setWindowModality(QtCore.Qt.NonModal)
@@ -53,11 +56,11 @@ class FilterClassesDialog(QtWidgets.QDialog):
         main_layout = QtWidgets.QVBoxLayout()
 
         # 说明文字
-        info_label = QtWidgets.QLabel(
-            self.tr("勾选要从检测结果中显示的标签：\n"
-                   "未勾选的标签将被过滤掉，不会在检测结果中显示\n"
-                   "注意：从YAML文件导入的标签会在软件关闭后自动清空")
+        default_info = self.tr(
+            "勾选要执行 OCR 的标签：\n"
+            "未勾选的标签将被跳过，不会进行 OCR 识别"
         )
+        info_label = QtWidgets.QLabel(self.info_text or default_info)
         info_label.setWordWrap(True)
         info_label.setStyleSheet("padding: 10px; background-color: #f0f0f0; border-radius: 5px;")
         main_layout.addWidget(info_label)

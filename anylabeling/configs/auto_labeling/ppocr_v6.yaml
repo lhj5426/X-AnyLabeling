@@ -1,0 +1,15 @@
+type: ppocr_v6
+name: ppocr_v6-r20260613
+provider: PaddlePaddle
+display_name: PP-OCRv6
+det_model_path: F:\A01\OnnxOCR-ppocrv6\onnxocr\models\ppocrv6\medium\det\det.onnx
+rec_model_path: F:\A01\OnnxOCR-ppocrv6\onnxocr\models\ppocrv6\small\rec\rec.onnx
+rec_char_dict_path: F:\A01\OnnxOCR-ppocrv6\onnxocr\models\ppocrv6\ppocrv6_dict.txt
+drop_score: 0.5
+det_db_thresh: 0.2
+det_db_box_thresh: 0.45
+det_db_unclip_ratio: 1.4
+det_limit_type: min
+det_limit_side_len: 736
+rec_image_shape: "3, 48, 320"
+use_angle_cls: False

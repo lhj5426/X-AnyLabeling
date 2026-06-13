@@ -215,6 +215,20 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="button_recog_selected">
+       <property name="text">
+        <string>识别选中框</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="button_recog_all">
+       <property name="text">
+        <string>识别全图框</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="QLineEdit" name="edit_text">
         <property name="placeholderText">
             <string>Enter text prompt here, e.g., person.car.bicycle</string>
@@ -367,6 +381,32 @@
        </property>
        <property name="toolTip">
         <string>配置检测结果中显示的标签</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="toggle_use_existing_boxes">
+       <property name="text">
+        <string>检测+OCR</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
+       </property>
+       <property name="checked">
+        <bool>false</bool>
+       </property>
+       <property name="toolTip">
+        <string>切换OCR模式：检测+OCR / 使用已有框OCR</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="button_detect_only">
+       <property name="text">
+        <string>仅检测</string>
+       </property>
+       <property name="toolTip">
+        <string>仅运行文字检测，不进行OCR识别</string>
        </property>
       </widget>
      </item>

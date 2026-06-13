@@ -70,6 +70,8 @@
   config_file: ":/internimage_l_22kto1k_384.yaml"
 - model_name: "japan_ppocr-r20240803"
   config_file: ":/japan_ppocr.yaml"
+- model_name: "ppocr_v6-r20260613"
+  config_file: ":/ppocr_v6.yaml"
 - model_name: "mobile_sam_vit_h-r20230810"
   config_file: ":/mobile_sam_vit_h.yaml"
 - model_name: "open_vision-r20241010"

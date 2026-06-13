@@ -191,6 +191,97 @@ def cancel_operation(self):
     self.cancel_processing = True
 
 
+def _predict_with_existing_boxes(self, image_file):
+    """使用已有检测框进行 OCR（不运行检测器），直接修改 JSON 文件，不改框只加文字"""
+    import json, os, cv2, numpy as np
+
+    label_file = os.path.splitext(image_file)[0] + ".json"
+    if not os.path.exists(label_file):
+        return False
+
+    try:
+        with open(label_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+
+    shapes = data.get("shapes", [])
+    if not shapes:
+        return False
+
+    # 读取过滤标签
+    filter_classes = self.auto_labeling_widget.model_manager.loaded_model_config.get(
+        "filter_classes", None
+    )
+
+    # 提取框坐标（过滤器标签）
+    boxes = []
+    box_indices = []  # 记录 shapes 中哪些下标被送 OCR
+    for i, s in enumerate(shapes):
+        if filter_classes is not None and s.get("label") not in filter_classes:
+            continue
+        pts = s.get("points", [])
+        if len(pts) == 4:
+            boxes.append([[int(p[0]), int(p[1])] for p in pts])
+            box_indices.append(i)
+
+    if not boxes:
+        return False
+
+    img = cv2.imdecode(np.fromfile(image_file, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return False
+
+    model = self.auto_labeling_widget.model_manager.loaded_model_config.get("model")
+    if not model or not hasattr(model, "predict_shapes_from_boxes"):
+        return False
+
+    result, timing = model.predict_shapes_from_boxes(img, boxes, image_file)
+    if result is None or not result.shapes:
+        return False
+
+    # 直接把 OCR 文字写回对应原框
+    for j, idx in enumerate(box_indices):
+        if j < len(result.shapes):
+            shapes[idx]["description"] = result.shapes[j].description or ""
+            shapes[idx]["score"] = float(result.shapes[j].score)
+
+    # 打印日志（按标签分组，带序号和耗时）
+    import time, sys
+    from collections import defaultdict
+    t_total = time.time()
+    timing_str = f"[框识别耗时] 读图={timing.get('读图',0):.3f}s  裁剪+识别={timing.get('裁剪+识别',0):.3f}s  总={timing.get('总',0):.3f}s" if timing else ""
+    grouped = defaultdict(list)
+    for j, idx in enumerate(box_indices):
+        if j < len(result.shapes):
+            text = result.shapes[j].description or ""
+            score = float(result.shapes[j].score)
+            grouped[shapes[idx].get("label", "")].append((boxes[j], text, score))
+    fname = os.path.basename(image_file)
+    print(f"\n[批量已有框OCR] {fname}  共{len(box_indices)}个框 → {timing_str}")
+    for label, items in sorted(grouped.items()):
+        print(f"标签:{label}  ({len(items)}个)")
+        for idx, item in enumerate(items, 1):
+            coord, text, score = item
+            print(f"标签:{label}({idx})")
+            print(f"[{coord}, ('{text}', {score:.4f})]")
+    sys.stdout.flush()
+
+    data["shapes"] = shapes
+    data["manually_edited"] = False
+
+    # 处理 output_dir
+    if self.output_dir:
+        output_label_file = osp.join(self.output_dir, osp.basename(label_file))
+    else:
+        output_label_file = label_file
+
+    with open(output_label_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    return True
+
+
 def save_auto_labeling_result(self, image_file, auto_labeling_result):
     try:
         label_file = osp.splitext(image_file)[0] + ".json"
@@ -296,13 +387,24 @@ def process_next_image(self, progress_dialog):
                     )
                 )
             else:
-                auto_labeling_result = (
-                    self.auto_labeling_widget.model_manager.predict_shapes(
-                        self.image, image_file, batch=batch
-                    )
+                # 检查是否启用"使用已有框"模式
+                use_existing = (
+                    hasattr(self.auto_labeling_widget, 'toggle_use_existing_boxes')
+                    and self.auto_labeling_widget.toggle_use_existing_boxes.isChecked()
                 )
+                if use_existing:
+                    _predict_with_existing_boxes(
+                        self, image_file
+                    )
+                    auto_labeling_result = None  # 跳过 save_auto_labeling_result
+                else:
+                    auto_labeling_result = (
+                        self.auto_labeling_widget.model_manager.predict_shapes(
+                            self.image, image_file, batch=batch
+                        )
+                    )
 
-            if batch:
+            if batch and auto_labeling_result is not None:
                 save_auto_labeling_result(
                     self, image_file, auto_labeling_result
                 )

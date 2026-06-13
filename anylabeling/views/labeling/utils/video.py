@@ -30,9 +30,12 @@ from PyQt5.QtWidgets import (
 from anylabeling.views.labeling.chatbot.style import ChatbotDialogStyle
 from anylabeling.views.labeling.logger import logger
 
+# 防止 ONNX GPU 推理时 cuDNN 算法搜索超时
+os.environ.setdefault("ORT_CUDNN_CONV_ALGO_SEARCH", "HEURISTIC")
+
 # 全局OCR模型（单例，只加载一次）
 _ocr_model = None
-_ocr_model_path = None  # 当前加载的OCR模型路径
+_ocr_model_path = None  # 当前加载的V6模型路径
 
 # OCR路径历史记录文件
 OCR_PATH_HISTORY_FILE = osp.join(osp.expanduser("~"), ".ocr_path_history.json")
@@ -56,11 +59,9 @@ def save_ocr_path_history(ocr_path):
     import json
     try:
         history = load_ocr_path_history()
-        # 移除重复项，添加到最前面
         if ocr_path in history:
             history.remove(ocr_path)
         history.insert(0, ocr_path)
-        # 只保留最近10个
         history = history[:10]
         with open(OCR_PATH_HISTORY_FILE, 'w', encoding='utf-8') as f:
             json.dump(history, f, ensure_ascii=False, indent=2)
@@ -68,51 +69,200 @@ def save_ocr_path_history(ocr_path):
         logger.warning(f"Failed to save OCR path history: {e}")
 
 
+class PPOCRv6Wrapper:
+    """包装 PP-OCRv6 的 TextSystem，提供与 ONNXPaddleOcr.ocr() 兼容的接口"""
+    def __init__(self, text_system):
+        self.text_system = text_system
+
+    def ocr(self, img):
+        dt_boxes, rec_res, scores = self.text_system(img)
+        if dt_boxes is None:
+            return None
+        result = []
+        for box, (text, score) in zip(dt_boxes, rec_res):
+            result.append([box.tolist(), (text, score)])
+        return [result]
+
+
+class _OnnxYoloWrapper:
+    """包装 ONNX 检测模型，提供轻量推理接口（跳过 Shape 创建，只返检测结果）"""
+    def __init__(self, model):
+        import numpy as np
+        self.model = model
+        classes = model.config.get("classes", [])
+        if isinstance(classes, dict):
+            classes = list(classes.values())
+        self.names = {i: name for i, name in enumerate(classes)}
+        self._last_boxes = np.array([])
+
+    def __call__(self, frame, conf=0.25, classes=None, verbose=False):
+        # 设置当前帧的阈值和过滤
+        self.model.conf_thres = conf
+        if classes is not None:
+            self.model.filter_classes = classes
+        # 轻量推理：直接走 preprocess→inference→postprocess
+        blob = self.model.preprocess(frame, upsample_mode="letterbox")
+        outputs = self.model.inference(blob)
+        boxes, class_ids, scores, _, _ = self.model.postprocess(outputs)
+        self._last_boxes = boxes if boxes.size else np.array([])
+        return [self]
+
+    @property
+    def boxes(self):
+        class _Boxes:
+            def __init__(self, boxes):
+                self._b = boxes
+            def __len__(self):
+                return len(self._b) if hasattr(self._b, '__len__') else 0
+        return _Boxes(self._last_boxes)
+
+
+def _load_model_from_yaml(yaml_path):
+    """从 YAML 加载模型，与主界面相同的加载逻辑"""
+    import yaml
+    if not yaml_path or not osp.isfile(yaml_path):
+        return None
+    with open(yaml_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    config['config_file'] = osp.abspath(yaml_path)
+    config_dir = osp.dirname(yaml_path)
+    for key in ['model_path', 'det_model_path', 'rec_model_path', 'rec_char_dict_path']:
+        if key in config and not osp.isabs(str(config[key])):
+            config[key] = osp.abspath(osp.join(config_dir, config[key]))
+    model_type = config.get('type', '')
+    def _on_message(msg):
+        logger.info(f"[{model_type}] {msg}")
+    # 类型 → 模块、类名 映射（与 model_manager 一致）
+    TYPE_MAP = {
+        "yolov5": ("anylabeling.services.auto_labeling.yolov5", "YOLOv5"),
+        "yolov8": ("anylabeling.services.auto_labeling.yolov8", "YOLOv8"),
+        "yolov9": ("anylabeling.services.auto_labeling.yolov9", "YOLOv9"),
+        "yolov10": ("anylabeling.services.auto_labeling.yolov10", "YOLOv10"),
+        "yolo11": ("anylabeling.services.auto_labeling.yolo11", "YOLO11"),
+        "yolo12": ("anylabeling.services.auto_labeling.yolo12", "YOLO12"),
+        "yolo26": ("anylabeling.services.auto_labeling.yolo26", "YOLO26"),
+        "doclayout_yolo": ("anylabeling.services.auto_labeling.doclayout_yolo", "DocLayoutYOLO"),
+        "gold_yolo": ("anylabeling.services.auto_labeling.gold_yolo", "GoldYOLO"),
+        "rtdetr": ("anylabeling.services.auto_labeling.rtdetr", "RTDETR"),
+        "rtdetrv2": ("anylabeling.services.auto_labeling.rtdetrv2", "RTDETRv2"),
+        "rfdetr": ("anylabeling.services.auto_labeling.rfdetr", "RFDETR"),
+        "ppocr_v4": ("anylabeling.services.auto_labeling.ppocr_v4", "PPOCRv4"),
+        "ppocr_v6": ("anylabeling.services.auto_labeling.ppocr_v6", "PPOCRv6"),
+    }
+    try:
+        if model_type in TYPE_MAP:
+            module_path, class_name = TYPE_MAP[model_type]
+            from importlib import import_module
+            module = import_module(module_path)
+            model_cls = getattr(module, class_name)
+            model = model_cls(config, _on_message)
+            logger.info(f"Model loaded from YAML: {model_type}")
+            return model
+    except Exception as e:
+        logger.error(f"Failed to load model from YAML {yaml_path}: {e}")
+        import traceback; traceback.print_exc()
+    return None
+
+
 def get_ocr_model(ocr_path=None):
-    """获取OCR模型单例"""
+    """获取OCR模型单例 - PP-OCRv6"""
     global _ocr_model, _ocr_model_path
-    
-    # 如果指定了新路径且与当前不同，重新加载
+
     if ocr_path and ocr_path != _ocr_model_path:
         _ocr_model = None
         _ocr_model_path = None
-    
+
     if _ocr_model is None:
         try:
-            import sys
-            
-            # 确定OCR路径
+            import yaml, onnxruntime as ort
+            from anylabeling.services.auto_labeling.utils.ppocr_utils.text_system import TextSystem
+            from anylabeling.services.auto_labeling.ppocr_v4 import Args
+
             if ocr_path:
                 final_ocr_path = ocr_path
             else:
-                # 默认路径：项目目录下的 OnnxOCR-main
-                final_ocr_path = osp.join(osp.dirname(osp.dirname(osp.dirname(osp.dirname(__file__)))), "OnnxOCR-main")
-            
+                final_ocr_path = osp.join(osp.dirname(osp.dirname(osp.dirname(osp.dirname(__file__)))), "ppocr_v6")
+
             if not osp.exists(final_ocr_path):
                 logger.error(f"OCR path not found: {final_ocr_path}")
                 return None
-            
-            if final_ocr_path not in sys.path:
-                sys.path.insert(0, final_ocr_path)
-            
-            from onnxocr.onnx_paddleocr import ONNXPaddleOcr
-            
-            # 检查GPU可用性
+
+            yaml_file = None
+            for f in os.listdir(final_ocr_path):
+                if f.endswith('.yaml') or f.endswith('.yml'):
+                    yaml_file = osp.join(final_ocr_path, f)
+                    break
+            if not yaml_file:
+                logger.error(f"No YAML config found in: {final_ocr_path}")
+                return None
+
+            with open(yaml_file, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+            config['config_file'] = yaml_file
+            config_dir = osp.dirname(yaml_file)
+            for key in ['det_model_path', 'rec_model_path', 'rec_char_dict_path']:
+                if key in config and not osp.isabs(config[key]):
+                    config[key] = osp.abspath(osp.join(config_dir, config[key]))
+
+            # GPU / providers
+            providers = ["CPUExecutionProvider"]
             try:
-                import onnxruntime as ort
-                providers = ort.get_available_providers()
-                use_gpu = 'CUDAExecutionProvider' in providers
+                if 'CUDAExecutionProvider' in ort.get_available_providers():
+                    providers = [("CUDAExecutionProvider", {"cudnn_conv_algo_search": "DEFAULT", "device_id": 0})]
             except:
-                use_gpu = False
-            
-            _ocr_model = ONNXPaddleOcr(use_angle_cls=True, use_gpu=use_gpu)
+                pass
+            sess_opts = ort.SessionOptions()
+            sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            sess_opts.enable_mem_pattern = True
+
+            det_net = ort.InferenceSession(config['det_model_path'], providers=providers, sess_options=sess_opts)
+            rec_net = ort.InferenceSession(config['rec_model_path'], providers=providers, sess_options=sess_opts)
+
+            args = Args(
+                use_onnx=True, use_gpu=('CUDA' in str(providers)),
+                use_xpu=False, use_npu=False, ir_optim=True,
+                use_tensorrt=False, min_subgraph_size=15, precision="fp32",
+                gpu_mem=500, gpu_id=0, page_num=0,
+                det_algorithm="DB", det_model=det_net,
+                det_limit_side_len=config.get('det_limit_side_len', 736),
+                det_limit_type=config.get('det_limit_type', 'min'),
+                det_box_type="quad",
+                det_db_thresh=config.get('det_db_thresh', 0.2),
+                det_db_box_thresh=config.get('det_db_box_thresh', 0.45),
+                det_db_unclip_ratio=config.get('det_db_unclip_ratio', 1.4),
+                max_batch_size=10, use_dilation=False,
+                det_db_score_mode="fast",
+                det_east_score_thresh=0.8, det_east_cover_thresh=0.1,
+                det_east_nms_thresh=0.2,
+                det_sast_score_thresh=0.5, det_sast_nms_thresh=0.2,
+                det_pse_thresh=0, det_pse_box_thresh=0.85,
+                det_pse_min_area=16, det_pse_scale=1,
+                det_fce_box_type="poly",
+                rec_algorithm="SVTR", rec_model=rec_net,
+                rec_char_dict_path=config['rec_char_dict_path'],
+                rec_batch_num=config.get('rec_batch_num', 6),
+                rec_image_shape=config.get('rec_image_shape', "3,48,320"),
+                max_text_length=25, use_space_char=True,
+                use_angle_cls=config.get('use_angle_cls', False),
+                drop_score=config.get('drop_score', 0.5),
+                cls_model=None, cls_batch_num=6, cls_image_shape="3,48,192",
+                cls_thresh=0.9, label_list=['0', '180'],
+                use_onnx_det_output_tensors=True,
+                use_onnx_rec_output_tensors=False,
+                draw_img_save_dir="./inference_results_cls",
+                save_crop_res=False,
+            )
+
+            text_system = TextSystem(args)
+            _ocr_model = PPOCRv6Wrapper(text_system)
             _ocr_model_path = final_ocr_path
-            logger.info(f"OCR model loaded from: {final_ocr_path}, GPU: {use_gpu}")
-            
-            # 保存到历史记录
+            logger.info(f"PP-OCRv6 loaded from: {final_ocr_path}")
+
             save_ocr_path_history(final_ocr_path)
         except Exception as e:
-            logger.error(f"Failed to load OCR model: {e}")
+            logger.error(f"Failed to load PP-OCRv6: {e}")
+            import traceback
+            traceback.print_exc()
             _ocr_model = None
             _ocr_model_path = None
     return _ocr_model
@@ -1038,7 +1188,7 @@ class FrameExtractionDialog(QDialog):
         self.yolo_checkbox.stateChanged.connect(self.on_yolo_changed)
         
         self.yolo_model_btn = QPushButton("选择模型")
-        self.yolo_model_btn.setToolTip("选择 YOLO .pt 模型文件")
+        self.yolo_model_btn.setToolTip("选择 YOLO YAML 配置文件")
         self.yolo_model_btn.setEnabled(True)  # 默认启用
         self.yolo_model_btn.clicked.connect(self.select_yolo_model)
         
@@ -1140,9 +1290,9 @@ class FrameExtractionDialog(QDialog):
         
         # OCR路径选择行
         ocr_path_layout = QHBoxLayout()
-        self.ocr_path_label = QLabel("OCR路径:")
-        self.ocr_path_btn = QPushButton("选择路径")
-        self.ocr_path_btn.setToolTip("选择 OnnxOCR-main 文件夹路径")
+        self.ocr_path_label = QLabel("加载模型:")
+        self.ocr_path_btn = QPushButton("选择YAML")
+        self.ocr_path_btn.setToolTip("选择 PP-OCRv6 的 YAML 配置文件")
         self.ocr_path_btn.setEnabled(True)
         self.ocr_path_btn.clicked.connect(self.select_ocr_path)
         
@@ -1323,27 +1473,33 @@ class FrameExtractionDialog(QDialog):
         """加载OCR路径历史记录"""
         history = load_ocr_path_history()
         for path in history:
-            self.ocr_path_combo.addItem(osp.basename(path), path)
-        # 如果有历史记录，自动使用第一个（但不改变下拉框显示文字）
+            # 在文件夹里找 YAML 文件
+            yaml_in_folder = None
+            if osp.isdir(path):
+                for f in os.listdir(path):
+                    if f.endswith('.yaml') or f.endswith('.yml'):
+                        yaml_in_folder = osp.join(path, f)
+                        break
+            if yaml_in_folder:
+                self.ocr_path_combo.addItem(osp.basename(yaml_in_folder), yaml_in_folder)
+            elif osp.isfile(path) and (path.endswith('.yaml') or path.endswith('.yml')):
+                self.ocr_path_combo.addItem(osp.basename(path), path)
         if history:
-            self.ocr_path = history[0]
+            self.ocr_path = history[0] if osp.isfile(history[0]) else None
     
     def select_ocr_path(self):
-        """选择OCR路径"""
-        folder_path = QFileDialog.getExistingDirectory(
+        """选择OCR配置文件"""
+        file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "选择 OnnxOCR-main 文件夹",
+            "选择 PP-OCRv6 YAML 配置文件",
             "",
+            "YAML 文件 (*.yaml *.yml);;所有文件 (*)",
         )
-        if folder_path:
-            self.ocr_path = folder_path
-            # 更新下拉框显示
-            folder_name = osp.basename(folder_path)
-            self.ocr_path_combo.setItemText(0, folder_name)
+        if file_path:
+            self.ocr_path = file_path
+            self.ocr_path_combo.setItemText(0, osp.basename(file_path))
             self.ocr_path_combo.setCurrentIndex(0)
-            # 保存到历史记录
-            save_ocr_path_history(folder_path)
-            # 刷新下拉框历史
+            save_ocr_path_history(file_path)
             while self.ocr_path_combo.count() > 1:
                 self.ocr_path_combo.removeItem(1)
             self.load_ocr_path_history()
@@ -1408,9 +1564,9 @@ class FrameExtractionDialog(QDialog):
         """选择YOLO模型文件"""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "选择 YOLO 模型",
+            "选择 YOLO YAML 配置文件",
             "",
-            "YOLO模型 (*.pt);;所有文件 (*)"
+            "YAML 文件 (*.yaml *.yml);;所有文件 (*)"
         )
         if file_path:
             self.yolo_model_path = file_path
@@ -1630,81 +1786,59 @@ def extract_frames_from_video(self, input_file, out_dir):
         
         # 验证YOLO设置
         yolo_model = None
-        yolo_class_ids = None  # 用于存储类别ID
+        yolo_class_ids = []
         if use_yolo:
             if not yolo_model_path:
                 popup = Popup(
-                    "请先选择YOLO模型文件",
+                    "请先选择YOLO YAML配置文件",
                     self,
                     icon=new_icon_path("warning", "svg"),
                 )
                 popup.show_popup(self, position="center")
                 return None
-            try:
-                from ultralytics import YOLO
-                import torch
-                
-                # 检测GPU可用性并设置设备
-                if torch.cuda.is_available():
-                    device = 'cuda:0'
-                else:
-                    device = 'cpu'
-                
-                yolo_model = YOLO(yolo_model_path)
-                yolo_model.to(device)
-                logger.info(f"YOLO model loaded: {yolo_model_path}, Device: {device}")
-                
-                # 如果指定了类别过滤，获取类别ID
+            raw_model = _load_model_from_yaml(yolo_model_path)
+            if raw_model is None:
+                popup = Popup(
+                    f"加载YOLO模型失败",
+                    self,
+                    icon=new_icon_path("warning", "svg"),
+                )
+                popup.show_popup(self, position="center")
+                return None
+            yolo_model = _OnnxYoloWrapper(raw_model)
+            classes = raw_model.config.get("classes", [])
+            if isinstance(classes, dict):
+                classes = list(classes.values())
+            if classes:
+                name_to_id = {str(v).lower(): k for k, v in enumerate(classes)}
                 if yolo_classes:
-                    # 获取模型的类别名称映射
-                    model_names = yolo_model.names  # {0: 'person', 1: 'bicycle', ...}
-                    # 反转映射: {'person': 0, 'bicycle': 1, ...}
-                    name_to_id = {v.lower(): k for k, v in model_names.items()}
-                    yolo_class_ids = []
                     for cls_name in yolo_classes:
                         cls_lower = cls_name.lower()
                         if cls_lower in name_to_id:
                             yolo_class_ids.append(name_to_id[cls_lower])
-                        else:
-                            logger.warning(f"类别 '{cls_name}' 不在模型中，已忽略")
-                    if not yolo_class_ids:
-                        popup = Popup(
-                            f"指定的类别都不在模型中\n可用类别: {', '.join(list(model_names.values())[:10])}...",
-                            self,
-                            icon=new_icon_path("warning", "svg"),
-                        )
-                        popup.show_popup(self, position="center")
-                        return None
-                    logger.info(f"YOLO filtering classes: {yolo_classes} -> IDs: {yolo_class_ids}")
-            except ImportError:
-                popup = Popup(
-                    "未安装 ultralytics 库，请运行: pip install ultralytics",
-                    self,
-                    icon=new_icon_path("warning", "svg"),
-                )
-                popup.show_popup(self, position="center")
-                return None
-            except Exception as e:
-                popup = Popup(
-                    f"加载YOLO模型失败: {e}",
-                    self,
-                    icon=new_icon_path("warning", "svg"),
-                )
-                popup.show_popup(self, position="center")
-                return None
+                logger.info(f"YOLO ({raw_model.config.get('type','')}) loaded, classes: {classes[:5]}...")
         
         # 获取OCR模型（如果启用了OCR去重）
         ocr_model = None
         if use_ocr:
-            ocr_model = get_ocr_model(ocr_path)
-            if ocr_model is None:
+            if not ocr_path:
                 popup = Popup(
-                    "加载OCR模型失败\n请选择正确的 OnnxOCR-main 文件夹路径",
+                    "请先选择OCR YAML配置文件",
                     self,
                     icon=new_icon_path("warning", "svg"),
                 )
                 popup.show_popup(self, position="center")
                 return None
+            raw_ocr = _load_model_from_yaml(ocr_path)
+            if raw_ocr is None or not hasattr(raw_ocr, 'text_system'):
+                popup = Popup(
+                    "加载OCR模型失败",
+                    self,
+                    icon=new_icon_path("warning", "svg"),
+                )
+                popup.show_popup(self, position="center")
+                return None
+            ocr_model = PPOCRv6Wrapper(raw_ocr.text_system)
         
         # 创建输出文件夹
         logger.info(f"Creating output directory: {out_dir}")

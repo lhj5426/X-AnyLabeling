@@ -1,9 +1,10 @@
 import os
+import sys
 import yaml
 import collections
 
 from PyQt5 import uic
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, QPoint, Qt
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, QPoint, QTimer, Qt
 from PyQt5.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -49,6 +50,7 @@ class AutoLabelingWidget(QWidget):
     auto_segmentation_disabled = pyqtSignal()
     auto_labeling_mode_changed = pyqtSignal(AutoLabelingMode)
     clear_auto_labeling_action_requested = pyqtSignal()
+    recog_selected_finished = pyqtSignal(str)  # 选中框识别完成，携带描述文本
     finish_auto_labeling_object_action_requested = pyqtSignal()
     cache_auto_label_changed = pyqtSignal()
     auto_decode_mode_changed = pyqtSignal(bool)
@@ -142,6 +144,38 @@ class AutoLabelingWidget(QWidget):
         self.button_run.setShortcut("I")
         self.button_run.setStyleSheet(get_highlight_button_style())
         self.button_run.clicked.connect(self.run_prediction)
+
+        # --- Configuration for: button_recog_selected ---
+        self.button_recog_selected.setStyleSheet(get_highlight_button_style())
+        self.button_recog_selected.clicked.connect(
+            self.run_recognition_on_selected
+        )
+        # 跨线程安全：子线程完成 OCR 后通过信号更新 UI
+        self.recog_selected_finished.connect(
+            self._on_recog_selected_finished
+        )
+
+        # --- Configuration for: button_recog_all ---
+        self.button_recog_all.setStyleSheet(get_highlight_button_style())
+        self.button_recog_all.clicked.connect(
+            self.run_recognition_on_all
+        )
+
+        # --- Configuration for: toggle_use_existing_boxes ---
+        self.toggle_use_existing_boxes.setCheckable(True)
+        self.toggle_use_existing_boxes.setChecked(False)
+        self.toggle_use_existing_boxes.setStyleSheet(
+            self._get_replace_button_style("#d9534f", "#c9302c")
+        )
+        self.toggle_use_existing_boxes.toggled.connect(
+            self._on_toggle_use_existing_boxes
+        )
+
+        # --- Configuration for: button_detect_only ---
+        self.button_detect_only.setStyleSheet(
+            self._get_replace_button_style("#f0ad4e", "#ec971f")
+        )
+        self.button_detect_only.clicked.connect(self.run_detect_only)
 
         # --- Configuration for: button_reset_tracker ---
         self.button_reset_tracker.setStyleSheet(get_normal_button_style())
@@ -602,6 +636,168 @@ class AutoLabelingWidget(QWidget):
                 text_prompt=self.edit_text.text(),
             )
 
+    def run_recognition_on_selected(self):
+        """只对画布上选中的框进行 OCR 识别（跳过全图检测）"""
+        if self.parent.filename is None:
+            return
+
+        # 获取画布上选中的形状
+        selected = self.parent.canvas.selected_shapes
+        if not selected:
+            self.model_manager.new_model_status.emit(
+                self.tr("请先选中要识别的检测框")
+            )
+            return
+
+        # 检查模型是否支持框识别
+        model = self.model_manager.loaded_model_config.get("model")
+        if not hasattr(model, "predict_shapes_from_boxes"):
+            self.model_manager.new_model_status.emit(
+                self.tr("当前模型不支持选中框识别")
+            )
+            return
+
+        # 提取框坐标，记住对应的 shape 对象
+        box_infos = []  # [(shape, [pts])]
+        for shape in selected:
+            pts = [[int(p.x()), int(p.y())] for p in shape.points]
+            box_infos.append((shape, pts))
+
+        if not box_infos:
+            return
+
+        self.model_manager.new_model_status.emit(
+            self.tr("正在识别选中框...")
+        )
+        # 不触发 prediction_started，避免加载遮罩遮盖画布
+
+        def _do_ocr():
+            import time
+            t0 = time.time()
+            boxes = [bi[1] for bi in box_infos]
+            result, timing = model.predict_shapes_from_boxes(
+                self.parent.image, boxes, self.parent.filename
+            )
+            timing_str = f"[框识别耗时] 读图={timing.get('读图',0):.3f}s  裁剪+识别={timing.get('裁剪+识别',0):.3f}s  总={timing.get('总',0):.3f}s" if timing else f"耗时={time.time()-t0:.3f}s"
+            # 打印：选中OCR，带完整坐标和置信度
+            fname = os.path.basename(self.parent.filename) if self.parent.filename else "image"
+            label = box_infos[0][0].label if box_infos else ""
+            out = []
+            for i, (shape, _) in enumerate(box_infos):
+                if i < len(result.shapes):
+                    text = result.shapes[i].description
+                    score = result.shapes[i].score
+                    out.append([boxes[i], (text, score)])
+                    shape.description = text
+                    shape.score = score
+            print(f"\n[选中OCR] 标签:{label}  {fname} → {timing_str}")
+            print(out)
+            sys.stdout.flush()
+            # 触发画布和标签列表重绘
+            self.parent.canvas.update()
+            self.parent.label_list.viewport().update()
+            # 通过信号把描述文本传回主线程更新 UI
+            desc = ""
+            if box_infos and len(result.shapes) > 0:
+                desc = result.shapes[0].description or ""
+            self.recog_selected_finished.emit(desc)
+            self.model_manager.new_model_status.emit(
+                self.tr("选中框识别完成。查看结果。")
+            )
+
+        # 主线程异步执行，避免跨线程 CUDA 上下文切换开销
+        QTimer.singleShot(0, _do_ocr)
+
+    def run_recognition_on_all(self):
+        """对全图已有的所有框执行 OCR 识别（不运行检测器）"""
+        if self.parent.filename is None:
+            return
+
+        model = self.model_manager.loaded_model_config.get("model")
+        if not hasattr(model, "predict_shapes_from_boxes"):
+            self.model_manager.new_model_status.emit(
+                self.tr("当前模型不支持框识别")
+            )
+            return
+
+        # 获取画布上所有框
+        all_shapes = list(self.parent.canvas.shapes)
+        if not all_shapes:
+            self.model_manager.new_model_status.emit(
+                self.tr("画布上没有检测框")
+            )
+            return
+
+        # 读取过滤标签设置（标签名列表）
+        filter_classes = self.model_manager.loaded_model_config.get(
+            "filter_classes", None
+        )
+
+        # 根据过滤标签筛选框
+        box_infos = []
+        for shape in all_shapes:
+            if filter_classes is not None and shape.label not in filter_classes:
+                continue
+            pts = [[int(p.x()), int(p.y())] for p in shape.points]
+            box_infos.append((shape, pts))
+
+        if not box_infos:
+            self.model_manager.new_model_status.emit(
+                self.tr("没有符合条件的框（已被标签过滤）")
+            )
+            return
+
+        self.model_manager.new_model_status.emit(
+            self.tr(f"正在识别 {len(box_infos)} 个框...")
+        )
+
+        def _do_ocr():
+            import time
+            t0 = time.time()
+            boxes = [bi[1] for bi in box_infos]
+            result, timing = model.predict_shapes_from_boxes(
+                self.parent.image, boxes, self.parent.filename
+            )
+            timing_str = f"[框识别耗时] 读图={timing.get('读图',0):.3f}s  裁剪+识别={timing.get('裁剪+识别',0):.3f}s  总={timing.get('总',0):.3f}s" if timing else f"耗时={time.time()-t0:.3f}s"
+            # 按标签分组，保留完整坐标和置信度，并添加序号
+            from collections import defaultdict
+            grouped = defaultdict(list)
+            for i, (shape, _) in enumerate(box_infos):
+                if i < len(result.shapes):
+                    text = result.shapes[i].description
+                    score = result.shapes[i].score
+                    shape.description = text
+                    shape.score = score
+                    grouped[shape.label].append([boxes[i], (text, score)])
+
+            fname = os.path.basename(self.parent.filename) if self.parent.filename else "image"
+            print(f"\n[全图框OCR] {fname}  共{len(box_infos)}个框 → {timing_str}")
+            for label, items in sorted(grouped.items()):
+                print(f"标签:{label}  ({len(items)}个)")
+                for idx, item in enumerate(items, 1):
+                    print(f"标签:{label}({idx})")
+                    print(f"{item}")
+            sys.stdout.flush()
+
+            self.parent.canvas.update()
+            self.parent.label_list.viewport().update()
+            self.model_manager.new_model_status.emit(
+                self.tr(f"全图框识别完成。共处理 {len(box_infos)} 个框。")
+            )
+
+        QTimer.singleShot(0, _do_ocr)
+
+    def _on_recog_selected_finished(self, description):
+        """主线程回调：更新右侧文本描述"""
+        try:
+            self.parent.shape_text_edit.textChanged.disconnect()
+        except Exception:
+            pass
+        self.parent.shape_text_edit.setPlainText(description)
+        self.parent.shape_text_edit.textChanged.connect(
+            self.parent.shape_text_changed
+        )
+
     def unload_and_hide(self):
         """Unload model and hide widget"""
         self.hide()
@@ -728,6 +924,8 @@ class AutoLabelingWidget(QWidget):
         """Hide labeling widgets by default"""
         widgets = [
             "button_run",
+            "button_recog_selected",
+            "button_recog_all",
             "button_add_point",
             "button_remove_point",
             "button_add_rect",
@@ -747,6 +945,8 @@ class AutoLabelingWidget(QWidget):
             "button_set_api_token",
             "button_reset_tracker",
             "button_filter_classes",
+            "toggle_use_existing_boxes",
+            "button_detect_only",
             "upn_select_combobox",
             "gd_select_combobox",
             "florence2_select_combobox",
@@ -782,6 +982,39 @@ class AutoLabelingWidget(QWidget):
         self.model_manager.set_auto_labeling_preserve_existing_annotations_state(
             state
         )
+
+    def _on_toggle_use_existing_boxes(self, checked):
+        """切换OCR模式：检测+OCR / 使用已有框OCR"""
+        if checked:
+            self.toggle_use_existing_boxes.setText(self.tr("已有框OCR"))
+            self.toggle_use_existing_boxes.setStyleSheet(
+                self._get_replace_button_style("#5cb85c", "#4cae4c")
+            )
+        else:
+            self.toggle_use_existing_boxes.setText(self.tr("检测+OCR"))
+            self.toggle_use_existing_boxes.setStyleSheet(
+                self._get_replace_button_style("#d9534f", "#c9302c")
+            )
+
+    def run_detect_only(self):
+        """仅检测按钮：只跑检测器画框，不做 OCR"""
+        if self.parent.filename is None:
+            return
+
+        model = self.model_manager.loaded_model_config.get("model")
+        if not model or not hasattr(model, "predict_shapes_detect_only"):
+            self.model_manager.new_model_status.emit(
+                self.tr("当前模型不支持仅检测")
+            )
+            return
+
+        def _do():
+            result = model.predict_shapes_detect_only(
+                self.parent.image, self.parent.filename
+            )
+            self.model_manager.new_auto_labeling_result.emit(result)
+
+        QTimer.singleShot(0, _do)
 
     def on_end2end_state_changed(self, state):
         """Handle end2end mode state changed"""
@@ -922,12 +1155,25 @@ class AutoLabelingWidget(QWidget):
         current_filter_classes = model_config.get("filter_classes", []) if hasattr(self, '_session_filter_applied') else []
 
         # 创建非模态对话框，允许同时操作主界面
+        # OCR 模式下用 OCR 说明文字，检测模式下用检测说明文字
+        model_type = self.model_manager.loaded_model_config.get("type", "")
+        if "ppocr" in model_type:
+            info_text = self.tr(
+                "勾选要执行 OCR 的标签：\n"
+                "未勾选的标签将被跳过，不会进行 OCR 识别"
+            )
+        else:
+            info_text = self.tr(
+                "勾选要从检测结果中显示的标签：\n"
+                "未勾选的标签将被过滤掉，不会在检测结果中显示"
+            )
         dialog = FilterClassesDialog(
             all_classes=all_classes,
             current_filter_classes=current_filter_classes,
             extra_labels_from_yaml=self.extra_labels_from_yaml,
             on_yaml_import=self.on_yaml_labels_imported,
-            on_apply=self.apply_filter_classes,  # 添加应用回调
+            on_apply=self.apply_filter_classes,
+            info_text=info_text,
             parent=self
         )
 
@@ -1017,7 +1263,7 @@ class AutoLabelingWidget(QWidget):
             "caption": ["button_run"],
             "detailed_cap": ["button_run"],
             "more_detailed_cap": ["button_run"],
-            "ocr": ["button_run"],
+            "ocr": ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes", "button_detect_only"],
             "ocr_with_region": ["button_run"],
             "od": ["button_run"],
             "region_proposal": ["button_run"],
@@ -1068,6 +1314,9 @@ class AutoLabelingWidget(QWidget):
         widgets_to_manage = [
             "edit_text",
             "button_run",
+            "button_recog_selected",
+            "button_recog_all",
+            "button_filter_classes",
             "button_send",
             "button_add_rect",
             "button_clear",

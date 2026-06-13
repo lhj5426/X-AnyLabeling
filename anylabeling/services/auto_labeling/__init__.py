@@ -20,6 +20,7 @@ _CUSTOM_MODELS = [
     "yolox_dwpose",
     "clrnet",
     "ppocr_v4",
+    "ppocr_v6",
     "yolov5_sam",
     "yolov8_sam2",
     "efficientvit_sam",
