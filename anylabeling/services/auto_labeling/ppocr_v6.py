@@ -30,12 +30,14 @@ class PPOCRv6(PPOCRv4):
             "rec_model_path",
             "rec_char_dict_path",
         ]
-        widgets = ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes", "button_detect_only"]
+        widgets = ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes", "button_detect_only", "toggle_preserve_existing_annotations"]
         output_modes = PPOCRv4.Meta.output_modes
         default_output_mode = PPOCRv4.Meta.default_output_mode
 
     def __init__(self, model_config, on_message) -> None:
         super(PPOCRv4, self).__init__(model_config, on_message)
+
+        self.replace = True
 
         self.det_net = self.load_model("det_model_path")
         self.rec_net = self.load_model("rec_model_path")
@@ -272,8 +274,11 @@ class PPOCRv6(PPOCRv4):
             shape.add_point(QtCore.QPointF(*pt4))
             shapes.append(shape)
 
-        result = AutoLabelingResult(shapes, replace=True)
+        result = AutoLabelingResult(shapes, replace=self.replace)
         return result
+
+    def set_auto_labeling_preserve_existing_annotations_state(self, state):
+        self.replace = not state
 
     def predict_shapes_detect_only(self, image, image_path=None):
         """仅检测文字区域，不 OCR 识别"""
@@ -321,7 +326,7 @@ class PPOCRv6(PPOCRv4):
             shape.add_point(QtCore.QPointF(*pt4))
             shapes.append(shape)
 
-        return AutoLabelingResult(shapes, replace=True)
+        return AutoLabelingResult(shapes, replace=self.replace)
 
     def predict_shapes_from_boxes(self, image, boxes, image_path=None):
         """

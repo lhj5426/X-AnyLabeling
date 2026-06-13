@@ -261,6 +261,7 @@ _AUTO_LABELING_PRESERVE_EXISTING_ANNOTATIONS_STATE_MODELS = [
     "yolox",
     "doclayout_yolo",
     "florence2",
+    "ppocr_v6",
     "rfdetr",
     "dfine",
     "yolo12",
