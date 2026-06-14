@@ -19,6 +19,7 @@ from .export import (
     export_labelplus_annotation,
     export_mtu_json_annotation,
     export_description_txt,
+    export_ocr_subtitle,
 )
 from .general import (
     gradient_text,

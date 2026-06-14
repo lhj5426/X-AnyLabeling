@@ -34,7 +34,31 @@ class FileFilterDialog(QDialog):
         self.label_widget = parent  # 保存label_widget的引用
         self.available_labels = available_labels or []
         self.init_ui()
-        
+
+        # 监听标签库变化，自动刷新标签列表
+        if self.label_widget and hasattr(self.label_widget, 'unique_label_list'):
+            try:
+                self.label_widget.unique_label_list.model().rowsInserted.connect(
+                    self._on_label_list_changed)
+                self.label_widget.unique_label_list.model().rowsRemoved.connect(
+                    self._on_label_list_changed)
+            except Exception:
+                pass
+
+    def _on_label_list_changed(self, *args):
+        """标签库变化时自动刷新"""
+        if not self.label_widget or not hasattr(self.label_widget, 'unique_label_list'):
+            return
+        # 合并 _config 和 unique_label_list 中的标签
+        labels = list(self.label_widget._config.get('labels', []))
+        for row in range(self.label_widget.unique_label_list.count()):
+            item = self.label_widget.unique_label_list.item(row)
+            if item:
+                label_text = item.data(Qt.UserRole)
+                if label_text and label_text not in labels:
+                    labels.append(label_text)
+        self.update_label_list(labels)
+
     def init_ui(self):
         """初始化UI"""
         layout = QVBoxLayout()

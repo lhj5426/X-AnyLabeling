@@ -338,6 +338,8 @@ class ModelManager(QObject):
             self.loaded_model_config["model"].unload()
             self.loaded_model_config = None
             self.auto_segmentation_model_unselected.emit()
+            import gc
+            gc.collect()
 
         model_config = copy.deepcopy(self.model_configs[model_id])
         if model_config["type"] == "yolov5":
@@ -2082,6 +2084,8 @@ class ModelManager(QObject):
         if self.loaded_model_config is not None:
             self.loaded_model_config["model"].unload()
             self.loaded_model_config = None
+            import gc
+            gc.collect()
 
     def predict_shapes(
         self,
@@ -2125,10 +2129,13 @@ class ModelManager(QObject):
                 )
 
         except Exception as e:  # noqa
-            logger.error(f"Error in predict_shapes: {e}")
+            err_msg = str(e)
+            logger.error(f"Error in predict_shapes: {err_msg}")
             template = "Error in model prediction: {error_message}"
             translated_template = self.tr(template)
-            error_text = translated_template.format(error_message=str(e))
+            error_text = translated_template.format(
+                error_message=err_msg[:120] + "..." if len(err_msg) > 120 else err_msg
+            )
             self.new_model_status.emit(error_text)
 
         self.prediction_finished.emit()

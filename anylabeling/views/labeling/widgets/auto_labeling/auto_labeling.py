@@ -126,6 +126,7 @@ class AutoLabelingWidget(QWidget):
         self.initial_preserve_annotations_state = False
         self.initial_rotation_state = False
         self.initial_filter_non_rotated_state = False
+        self._filter_non_rotated_first_show = True
 
         # 保存从YAML导入的额外标签（在软件运行期间持久化）
         self.extra_labels_from_yaml = []
@@ -331,6 +332,17 @@ class AutoLabelingWidget(QWidget):
         )
         self.toggle_filter_non_rotated.toggled.connect(
             self.on_filter_non_rotated_state_changed
+        )
+
+        # --- Configuration for: toggle_batch_detect_only ---
+        self.toggle_batch_detect_only.setChecked(False)
+        self.toggle_batch_detect_only.setCheckable(True)
+        self.toggle_batch_detect_only.setStyleSheet(
+            self._get_replace_button_style("#e67e22", "#d35400")
+        )
+        self.toggle_batch_detect_only.setText(self.tr("批量仅检测关"))
+        self.toggle_batch_detect_only.clicked.connect(
+            self._update_batch_detect_only_state
         )
 
         # ===================================
@@ -843,6 +855,7 @@ class AutoLabelingWidget(QWidget):
 
     def on_new_model_status(self, status):
         self.model_status_label.setText(status)
+        self.model_status_label.setWordWrap(True)
 
     def on_new_model_loaded(self, model_config):
         """Enable model select combobox"""
@@ -956,6 +969,7 @@ class AutoLabelingWidget(QWidget):
         """Update widget status"""
         if not model_config or "model" not in model_config:
             return
+        self.hide_labeling_widgets()
         widgets = model_config["model"].get_required_widgets()
         for widget_name in widgets:
             if hasattr(self, widget_name):
@@ -994,6 +1008,7 @@ class AutoLabelingWidget(QWidget):
             "button_detect_only",
             "toggle_rotation",
             "toggle_filter_non_rotated",
+            "toggle_batch_detect_only",
             "upn_select_combobox",
             "gd_select_combobox",
             "florence2_select_combobox",
@@ -1155,7 +1170,14 @@ class AutoLabelingWidget(QWidget):
             self.toggle_rotation.setStyleSheet(
                 self._get_replace_button_style("#5bc0de", "#46b8da")
             )
+        if not self.model_manager.loaded_model_config \
+                or 'toggle_rotation' not in self.model_manager.loaded_model_config["model"].Meta.widgets:
+            return
         self.toggle_filter_non_rotated.setVisible(checked)
+        if checked and self._filter_non_rotated_first_show:
+            self._filter_non_rotated_first_show = False
+            self.toggle_filter_non_rotated.setChecked(True)
+            self._update_filter_non_rotated_button_state(True)
 
     def _update_filter_non_rotated_button_state(self, checked):
         """更新过滤非旋转按钮的状态"""
@@ -1175,6 +1197,18 @@ class AutoLabelingWidget(QWidget):
         """Handle filter non-rotated state changed"""
         self.initial_filter_non_rotated_state = state
         self.model_manager.set_auto_labeling_filter_non_rotated(state)
+
+    def _update_batch_detect_only_state(self, checked):
+        if checked:
+            self.toggle_batch_detect_only.setText(self.tr("批量仅检测开"))
+            self.toggle_batch_detect_only.setStyleSheet(
+                self._get_replace_button_style("#5cb85c", "#4cae4c")
+            )
+        else:
+            self.toggle_batch_detect_only.setText(self.tr("批量仅检测关"))
+            self.toggle_batch_detect_only.setStyleSheet(
+                self._get_replace_button_style("#e67e22", "#d35400")
+            )
 
     def _update_end2end_button_state(self, checked, tooltip_on, tooltip_off):
         """更新 End2End 按钮的状态和颜色"""

@@ -30,7 +30,7 @@ class PPOCRv6(PPOCRv4):
             "rec_model_path",
             "rec_char_dict_path",
         ]
-        widgets = ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes", "button_detect_only", "toggle_preserve_existing_annotations", "toggle_rotation", "toggle_filter_non_rotated"]
+        widgets = ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes", "button_detect_only", "toggle_preserve_existing_annotations", "toggle_rotation", "toggle_filter_non_rotated", "toggle_batch_detect_only"]
         output_modes = PPOCRv4.Meta.output_modes
         default_output_mode = PPOCRv4.Meta.default_output_mode
 
@@ -105,7 +105,7 @@ class PPOCRv6(PPOCRv4):
                 (
                     "CUDAExecutionProvider",
                     {
-                        "cudnn_conv_algo_search": "DEFAULT",
+                        "cudnn_conv_algo_search": "HEURISTIC",
                         "device_id": 0,
                     },
                 )

@@ -2657,6 +2657,20 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="format_coco",
             tip=self.tr("导出标注框中的文本内容到TXT文件（每个图片一个TXT）"),
         )
+        export_ocr_srt = action(
+            self.tr("导出 OCR 字幕 → SRT"),
+            lambda: utils.export_ocr_subtitle(self, "srt"),
+            None,
+            icon="format_coco",
+            tip=self.tr("从 OCR 标注 JSON 生成 SRT 字幕文件"),
+        )
+        export_ocr_ass = action(
+            self.tr("导出 OCR 字幕 → ASS"),
+            lambda: utils.export_ocr_subtitle(self, "ass"),
+            None,
+            icon="format_coco",
+            tip=self.tr("从 OCR 标注 JSON 生成 ASS 字幕文件"),
+        )
         # Create action for zoom at mouse
         zoom_at_mouse = action(
             self.tr("Zoom at Mouse"),
@@ -3160,6 +3174,9 @@ class LabelingWidget(QtWidgets.QWidget):
                 export_mtu_json_annotation,
                 None,
                 export_description_txt,
+                None,
+                export_ocr_srt,
+                export_ocr_ass,
             ),
         )
         utils.add_actions(
@@ -9989,18 +10006,27 @@ class LabelingWidget(QtWidgets.QWidget):
                 # This can happen if the file is no longer in the list after a filter change, which is fine.
                 pass
     
+    def _get_all_labels(self):
+        """获取所有可用标签：_config + unique_label_list 合并"""
+        labels = list(self._config.get("labels", []))
+        for row in range(self.unique_label_list.count()):
+            item = self.unique_label_list.item(row)
+            if item:
+                label_text = item.data(Qt.UserRole)
+                if label_text and label_text not in labels:
+                    labels.append(label_text)
+        return labels
+
     def show_file_filter_dialog(self):
         """显示文件过滤对话框"""
+        available_labels = self._get_all_labels()
         if not self.file_filter_dialog:
-            # 获取所有可用的标签
-            available_labels = self._config.get("labels", [])
             self.file_filter_dialog = FileFilterDialog(self, available_labels)
             self.file_filter_dialog.filter_applied.connect(self.apply_file_filter)
         else:
             # 更新可用标签列表
-            available_labels = self._config.get("labels", [])
             self.file_filter_dialog.update_label_list(available_labels)
-        
+
         self.file_filter_dialog.show()
     
     def apply_file_filter(self, filter_config):
@@ -15647,19 +15673,26 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # 文本内容过滤
         if mode == 'text':
-            # 检查shapes中是否有description字段（文本内容）
             shapes = data.get("shapes", [])
+            if not shapes:
+                # 没有标注框 → 不包含文本
+                return value == 'no_text'
+
             has_text = False
+            has_empty = False
             for shape in shapes:
                 description = shape.get("description")
                 if description and str(description).strip() and str(description).strip().lower() != "null":
                     has_text = True
-                    break
-            
+                else:
+                    has_empty = True
+
             if value == 'has_text':
-                return has_text
+                # 包含文本：所有框都有文本 = 没有一个框是空的
+                return not has_empty
             elif value == 'no_text':
-                return not has_text
+                # 不包含文本：只要有一个框没文本就过滤出来
+                return has_empty
         
         # 困难标记过滤
         if mode == 'difficult':

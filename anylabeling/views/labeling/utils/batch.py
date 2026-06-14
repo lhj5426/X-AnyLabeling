@@ -398,11 +398,29 @@ def process_next_image(self, progress_dialog):
                     )
                     auto_labeling_result = None  # 跳过 save_auto_labeling_result
                 else:
-                    auto_labeling_result = (
-                        self.auto_labeling_widget.model_manager.predict_shapes(
-                            self.image, image_file, batch=batch
-                        )
+                    # 检查是否启用"批量仅检测"
+                    detect_only = (
+                        hasattr(self.auto_labeling_widget, 'toggle_batch_detect_only')
+                        and self.auto_labeling_widget.toggle_batch_detect_only.isChecked()
                     )
+                    if detect_only:
+                        model = self.auto_labeling_widget.model_manager.loaded_model_config["model"]
+                        if hasattr(model, "predict_shapes_detect_only"):
+                            auto_labeling_result = model.predict_shapes_detect_only(
+                                self.image, image_file
+                            )
+                        else:
+                            auto_labeling_result = (
+                                self.auto_labeling_widget.model_manager.predict_shapes(
+                                    self.image, image_file, batch=batch
+                                )
+                            )
+                    else:
+                        auto_labeling_result = (
+                            self.auto_labeling_widget.model_manager.predict_shapes(
+                                self.image, image_file, batch=batch
+                            )
+                        )
 
             if batch and auto_labeling_result is not None:
                 save_auto_labeling_result(

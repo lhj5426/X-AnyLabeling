@@ -443,6 +443,22 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="toggle_batch_detect_only">
+       <property name="text">
+        <string>批量仅检测</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
+       </property>
+       <property name="checked">
+        <bool>false</bool>
+       </property>
+       <property name="toolTip">
+        <string>开启：批量执行时仅做文字检测，不进行OCR</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <spacer name="horizontalSpacer">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>
