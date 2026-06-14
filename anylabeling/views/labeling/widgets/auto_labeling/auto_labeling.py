@@ -124,6 +124,8 @@ class AutoLabelingWidget(QWidget):
         self.initial_conf_value = 0
         self.initial_iou_value = 0
         self.initial_preserve_annotations_state = False
+        self.initial_rotation_state = False
+        self.initial_filter_non_rotated_state = False
 
         # 保存从YAML导入的额外标签（在软件运行期间持久化）
         self.extra_labels_from_yaml = []
@@ -292,6 +294,43 @@ class AutoLabelingWidget(QWidget):
         )
         self.toggle_preserve_existing_annotations.toggled.connect(
             self.on_preserve_existing_annotations_state_changed
+        )
+
+        # --- Configuration for: toggle_rotation ---
+        self.toggle_rotation.setChecked(False)
+        self.toggle_rotation.setCheckable(True)
+        self.toggle_rotation.setStyleSheet(
+            self._get_replace_button_style("#5bc0de", "#46b8da")
+        )
+        tooltip_on = self.tr(
+            "开启旋转矩形检测。点击切换为水平矩形。"
+        )
+        tooltip_off = self.tr(
+            "使用水平矩形（轴对齐）。点击切换为旋转矩形。"
+        )
+        self._rotation_tooltip_on = tooltip_on
+        self._rotation_tooltip_off = tooltip_off
+        self.toggle_rotation.setToolTip(tooltip_off)
+        self.toggle_rotation.setText(self.tr("旋转关"))
+        self.toggle_rotation.clicked.connect(
+            lambda checked: self._update_rotation_button_state(checked, tooltip_on, tooltip_off)
+        )
+        self.toggle_rotation.toggled.connect(
+            self.on_rotation_state_changed
+        )
+
+        # --- Configuration for: toggle_filter_non_rotated ---
+        self.toggle_filter_non_rotated.setChecked(False)
+        self.toggle_filter_non_rotated.setCheckable(True)
+        self.toggle_filter_non_rotated.setStyleSheet(
+            self._get_replace_button_style("#8e44ad", "#7d3c98")
+        )
+        self.toggle_filter_non_rotated.hide()
+        self.toggle_filter_non_rotated.clicked.connect(
+            self._update_filter_non_rotated_button_state
+        )
+        self.toggle_filter_non_rotated.toggled.connect(
+            self.on_filter_non_rotated_state_changed
         )
 
         # ===================================
@@ -848,6 +887,12 @@ class AutoLabelingWidget(QWidget):
         self.on_preserve_existing_annotations_state_changed(
             self.initial_preserve_annotations_state
         )
+        self.on_rotation_state_changed(
+            self.initial_rotation_state
+        )
+        self.on_filter_non_rotated_state_changed(
+            self.initial_filter_non_rotated_state
+        )
 
         # Update specific mode in UI if specific model is loaded
         if model_config.get("type") == "upn":
@@ -947,6 +992,8 @@ class AutoLabelingWidget(QWidget):
             "button_filter_classes",
             "toggle_use_existing_boxes",
             "button_detect_only",
+            "toggle_rotation",
+            "toggle_filter_non_rotated",
             "upn_select_combobox",
             "gd_select_combobox",
             "florence2_select_combobox",
@@ -981,6 +1028,14 @@ class AutoLabelingWidget(QWidget):
         self.initial_preserve_annotations_state = state
         self.model_manager.set_auto_labeling_preserve_existing_annotations_state(
             state
+        )
+
+    def on_rotation_state_changed(self, state):
+        """Handle rotation state changed"""
+        self.initial_rotation_state = state
+        self.model_manager.set_auto_labeling_rotation_state(state)
+        self._update_rotation_button_state(
+            state, self._rotation_tooltip_on, self._rotation_tooltip_off
         )
 
     def _on_toggle_use_existing_boxes(self, checked):
@@ -1083,6 +1138,43 @@ class AutoLabelingWidget(QWidget):
             self.toggle_preserve_existing_annotations.setStyleSheet(
                 self._get_replace_button_style("#d9534f", "#c9302c")
             )
+
+    def _update_rotation_button_state(self, checked, tooltip_on, tooltip_off):
+        """更新旋转按钮的状态"""
+        self.toggle_rotation.setToolTip(
+            tooltip_on if checked else tooltip_off
+        )
+        self.toggle_rotation.setText(
+            self.tr("旋转开") if checked else self.tr("旋转关")
+        )
+        if checked:
+            self.toggle_rotation.setStyleSheet(
+                self._get_replace_button_style("#5cb85c", "#4cae4c")
+            )
+        else:
+            self.toggle_rotation.setStyleSheet(
+                self._get_replace_button_style("#5bc0de", "#46b8da")
+            )
+        self.toggle_filter_non_rotated.setVisible(checked)
+
+    def _update_filter_non_rotated_button_state(self, checked):
+        """更新过滤非旋转按钮的状态"""
+        self.toggle_filter_non_rotated.setText(
+            self.tr("过滤水平框开") if checked else self.tr("过滤水平框关")
+        )
+        if checked:
+            self.toggle_filter_non_rotated.setStyleSheet(
+                self._get_replace_button_style("#5cb85c", "#4cae4c")
+            )
+        else:
+            self.toggle_filter_non_rotated.setStyleSheet(
+                self._get_replace_button_style("#8e44ad", "#7d3c98")
+            )
+
+    def on_filter_non_rotated_state_changed(self, state):
+        """Handle filter non-rotated state changed"""
+        self.initial_filter_non_rotated_state = state
+        self.model_manager.set_auto_labeling_filter_non_rotated(state)
 
     def _update_end2end_button_state(self, checked, tooltip_on, tooltip_off):
         """更新 End2End 按钮的状态和颜色"""

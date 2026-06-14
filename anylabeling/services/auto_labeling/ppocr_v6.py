@@ -30,7 +30,7 @@ class PPOCRv6(PPOCRv4):
             "rec_model_path",
             "rec_char_dict_path",
         ]
-        widgets = ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes", "button_detect_only", "toggle_preserve_existing_annotations"]
+        widgets = ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes", "button_detect_only", "toggle_preserve_existing_annotations", "toggle_rotation", "toggle_filter_non_rotated"]
         output_modes = PPOCRv4.Meta.output_modes
         default_output_mode = PPOCRv4.Meta.default_output_mode
 
@@ -38,6 +38,8 @@ class PPOCRv6(PPOCRv4):
         super(PPOCRv4, self).__init__(model_config, on_message)
 
         self.replace = True
+        self.use_rotation = False
+        self.filter_non_rotated = False
 
         self.det_net = self.load_model("det_model_path")
         self.rec_net = self.load_model("rec_model_path")
@@ -235,13 +237,11 @@ class PPOCRv6(PPOCRv4):
         print(f"[全图检测+OCR] {self.config.get('name', 'ppocr_v6')} → [框识别耗时] 读图={t1-t0:.3f}s  推理={t2-t1:.3f}s  总={t2-t0:.3f}s")
         sys.stdout.flush()
         print(os.path.basename(image_path) if image_path else "image")
-        output = []
         for i in range(len(dt_boxes)):
             box = np.array(dt_boxes[i]).astype(np.float32).tolist()
             text = rec_res[i][0]
             score = float(scores[i])
-            output.append([box, (text, score)])
-        print(output)
+            print(f"[{i+1:02d}] [{box}, ('{text}', {score})]")
         print()
 
         results = [
@@ -258,16 +258,32 @@ class PPOCRv6(PPOCRv4):
             score = res["score"]
             points = res["points"]
             description = res["description"]
+            # 旋转关：自动过滤旋转框，只留水平框
+            if not self.use_rotation and self._is_rotated_box(points):
+                continue
+            # 旋转开+过滤开：只留旋转框，过滤水平框
+            if self.use_rotation and self.filter_non_rotated and not self._is_rotated_box(points):
+                continue
+            is_rotated = self.use_rotation and self._is_rotated_box(points)
+            direction = 0.0
+            if is_rotated:
+                import math
+                dx = points[1][0] - points[0][0]
+                dy = points[1][1] - points[0][1]
+                direction = math.atan2(dy, dx)  # 弧度
+                if direction < 0:
+                    direction += 2 * math.pi
             shape = Shape(
-                label="text",
+                label="OCRZX" if is_rotated else "OCR",
                 score=score,
-                shape_type="rectangle",
-                group_id=int(i),
+                shape_type="rotation" if is_rotated else "rectangle",
+                direction=direction,
                 description=description,
             )
             pt1, pt2, pt3, pt4 = points
-            pt2 = [pt3[0], pt1[1]]
-            pt4 = [pt1[0], pt3[1]]
+            if not is_rotated:
+                pt2 = [pt3[0], pt1[1]]
+                pt4 = [pt1[0], pt3[1]]
             shape.add_point(QtCore.QPointF(*pt1))
             shape.add_point(QtCore.QPointF(*pt2))
             shape.add_point(QtCore.QPointF(*pt3))
@@ -279,6 +295,29 @@ class PPOCRv6(PPOCRv4):
 
     def set_auto_labeling_preserve_existing_annotations_state(self, state):
         self.replace = not state
+
+    def set_auto_labeling_rotation_state(self, state):
+        self.use_rotation = state
+
+    def set_auto_labeling_filter_non_rotated(self, state):
+        self.filter_non_rotated = state
+
+    def _is_rotated_box(self, points):
+        """判断框是否为旋转框（非水平/垂直）
+        取顶边(pt1→pt2)角度，对90°取模，超过阈值视为旋转
+        """
+        import math
+        pt1, pt2, pt3, pt4 = points
+        dx = pt2[0] - pt1[0]
+        dy = pt2[1] - pt1[1]
+        if abs(dx) < 1 and abs(dy) < 1:
+            return False  # 无效边
+        angle = abs(math.degrees(math.atan2(dy, dx)))
+        # 对90°取模，靠近0°或90°的视为非旋转
+        angle_mod = angle % 90
+        if angle_mod > 45:
+            angle_mod = 90 - angle_mod
+        return angle_mod > 0
 
     def predict_shapes_detect_only(self, image, image_path=None):
         """仅检测文字区域，不 OCR 识别"""
@@ -310,16 +349,32 @@ class PPOCRv6(PPOCRv4):
         shapes = []
         for i, box in enumerate(dt_boxes):
             pts = np.array(box).astype(np.int32).tolist()
+            # 旋转关：自动过滤旋转框，只留水平框
+            if not self.use_rotation and self._is_rotated_box(pts):
+                continue
+            # 旋转开+过滤开：只留旋转框，过滤水平框
+            if self.use_rotation and self.filter_non_rotated and not self._is_rotated_box(pts):
+                continue
+            is_rotated = self.use_rotation and self._is_rotated_box(pts)
+            direction = 0.0
+            if is_rotated:
+                import math
+                dx = pts[1][0] - pts[0][0]
+                dy = pts[1][1] - pts[0][1]
+                direction = math.atan2(dy, dx)  # 弧度
+                if direction < 0:
+                    direction += 2 * math.pi
             shape = Shape(
-                label="balloon",
+                label="OCRZX" if is_rotated else "OCR",
                 score=0.0,
-                shape_type="rectangle",
-                group_id=int(i),
+                shape_type="rotation" if is_rotated else "rectangle",
+                direction=direction,
                 description="",
             )
             pt1, pt2, pt3, pt4 = pts
-            pt2 = [pt3[0], pt1[1]]
-            pt4 = [pt1[0], pt3[1]]
+            if not is_rotated:
+                pt2 = [pt3[0], pt1[1]]
+                pt4 = [pt1[0], pt3[1]]
             shape.add_point(QtCore.QPointF(*pt1))
             shape.add_point(QtCore.QPointF(*pt2))
             shape.add_point(QtCore.QPointF(*pt3))
@@ -372,16 +427,27 @@ class PPOCRv6(PPOCRv4):
         for i, idx in enumerate(valid_indices):
             text = rec_res[i][0]
             score = float(rec_res[i][1])
+            pts = boxes[idx]
+            is_rotated = self.use_rotation and self._is_rotated_box(pts)
+            direction = 0.0
+            if is_rotated:
+                import math
+                dx = pts[1][0] - pts[0][0]
+                dy = pts[1][1] - pts[0][1]
+                direction = math.atan2(dy, dx)  # 弧度
+                if direction < 0:
+                    direction += 2 * math.pi
             shape = Shape(
-                label="balloon",
+                label="OCRZX" if is_rotated else "OCR",
                 score=score,
-                shape_type="rectangle",
-                group_id=int(idx),
+                shape_type="rotation" if is_rotated else "rectangle",
+                direction=direction,
                 description=text,
             )
-            pt1, pt2, pt3, pt4 = boxes[idx]
-            pt2 = [pt3[0], pt1[1]]
-            pt4 = [pt1[0], pt3[1]]
+            pt1, pt2, pt3, pt4 = pts
+            if not is_rotated:
+                pt2 = [pt3[0], pt1[1]]
+                pt4 = [pt1[0], pt3[1]]
             shape.add_point(QtCore.QPointF(*pt1))
             shape.add_point(QtCore.QPointF(*pt2))
             shape.add_point(QtCore.QPointF(*pt3))

@@ -411,6 +411,38 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="toggle_rotation">
+       <property name="text">
+        <string>旋转</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
+       </property>
+       <property name="checked">
+        <bool>false</bool>
+       </property>
+       <property name="toolTip">
+        <string>开启：保留旋转矩形；关闭：使用水平矩形</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="toggle_filter_non_rotated">
+       <property name="text">
+        <string>过滤水平框</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
+       </property>
+       <property name="checked">
+        <bool>false</bool>
+       </property>
+       <property name="toolTip">
+        <string>开启：只保留有旋转角度的检测框；关闭：显示所有检测框</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <spacer name="horizontalSpacer">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>

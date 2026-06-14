@@ -275,6 +275,18 @@ _AUTO_LABELING_PRESERVE_EXISTING_ANNOTATIONS_STATE_MODELS = [
 ]
 
 
+# --- set_auto_labeling_rotation_state ---
+_AUTO_LABELING_ROTATION_MODELS = [
+    "ppocr_v6",
+]
+
+
+# --- set_auto_labeling_filter_non_rotated ---
+_AUTO_LABELING_FILTER_NON_ROTATED_MODELS = [
+    "ppocr_v6",
+]
+
+
 # --- set_auto_labeling_prompt ---
 _AUTO_LABELING_PROMPT_MODELS = [
     "segment_anything_2_video",

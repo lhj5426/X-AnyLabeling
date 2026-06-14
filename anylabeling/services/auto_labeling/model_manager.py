@@ -21,6 +21,8 @@ from anylabeling.services.auto_labeling import (
     _AUTO_LABELING_CONF_MODELS,
     _AUTO_LABELING_IOU_MODELS,
     _AUTO_LABELING_PRESERVE_EXISTING_ANNOTATIONS_STATE_MODELS,
+    _AUTO_LABELING_ROTATION_MODELS,
+    _AUTO_LABELING_FILTER_NON_ROTATED_MODELS,
     _AUTO_LABELING_PROMPT_MODELS,
     _ON_NEXT_FILES_CHANGED_MODELS,
 )
@@ -2038,6 +2040,26 @@ class ModelManager(QObject):
             self.loaded_model_config[
                 "model"
             ].set_auto_labeling_preserve_existing_annotations_state(state)
+
+    def set_auto_labeling_rotation_state(self, state):
+        if (
+            self.loaded_model_config is not None
+            and self.loaded_model_config["type"]
+            in _AUTO_LABELING_ROTATION_MODELS
+        ):
+            self.loaded_model_config[
+                "model"
+            ].set_auto_labeling_rotation_state(state)
+
+    def set_auto_labeling_filter_non_rotated(self, state):
+        if (
+            self.loaded_model_config is not None
+            and self.loaded_model_config["type"]
+            in _AUTO_LABELING_FILTER_NON_ROTATED_MODELS
+        ):
+            self.loaded_model_config[
+                "model"
+            ].set_auto_labeling_filter_non_rotated(state)
 
     def set_auto_labeling_end2end_state(self, state):
         """Set end2end mode state for YOLO26/YOLOv10 models"""
