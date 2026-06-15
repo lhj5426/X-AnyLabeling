@@ -1,6 +1,7 @@
 """This module defines Canvas widget - the core component for drawing image labels"""
 
 import math
+import html
 from copy import deepcopy
 from pathlib import Path
 from typing import List, Optional, Union, Any
@@ -4266,49 +4267,131 @@ class Canvas(
 
         # Draw texts
         if self.show_texts:
-            text_color = "#FFFFFF"
-            background_color = "#007BFF"
-            p.setFont(
-                QtGui.QFont(
-                    "Arial", int(max(6.0, int(round(8.0 / Shape.scale))))
-                )
-            )
-            pen = QtGui.QPen(QtGui.QColor(background_color), 8, Qt.SolidLine)
-            p.setPen(pen)
-            for shape in self.shapes:
-                if not shape.visible:
-                    continue
-                description = shape.description
-                if description:
-                    bbox = shape.bounding_rect()
-                    fm = QtGui.QFontMetrics(p.font())
-                    rect = fm.boundingRect(description)
-                    p.fillRect(
-                        int(rect.x() + bbox.x()),
-                        int(rect.y() + bbox.y()),
-                        int(rect.width()),
-                        int(rect.height()),
-                        QtGui.QColor(background_color),
-                    )
-                    p.drawText(
-                        int(bbox.x()),
-                        int(bbox.y()),
-                        description,
-                    )
-            pen = QtGui.QPen(QtGui.QColor(text_color), 8, Qt.SolidLine)
-            p.setPen(pen)
-            for shape in self.shapes:
-                if not shape.visible:
-                    continue
-                description = shape.description
-                if description:
-                    bbox = shape.bounding_rect()
-                    p.drawText(
-                        int(bbox.x()),
-                        int(bbox.y()),
-                        description,
-                    )
+            text_color = QtGui.QColor("#FFFFFF")
+            background_color = QtGui.QColor("#6FB6FF")
+            background_color.setAlpha(235)
+            padding = 0.0
 
+            def make_font(pixel_size):
+                font = QtGui.QFont("Microsoft YaHei")
+                font.setPixelSize(max(1, int(round(pixel_size))))
+                font.setStyleStrategy(QtGui.QFont.PreferAntialias)
+                return font
+
+            def fit_line_font(line, row_h, max_width):
+                low = 1
+                high = max(low, int(round(row_h * 0.96)))
+                best_font = make_font(low)
+                while low <= high:
+                    mid = (low + high) // 2
+                    font = make_font(mid)
+                    metrics = QtGui.QFontMetricsF(font)
+                    if metrics.height() <= row_h + 0.5 and metrics.horizontalAdvance(line) <= max_width + 0.5:
+                        best_font = font
+                        low = mid + 1
+                    else:
+                        high = mid - 1
+                return best_font
+
+            def draw_text_in_rect(text, text_rect):
+                text_rect = QtCore.QRectF(text_rect).normalized()
+                if text_rect.width() <= 1 or text_rect.height() <= 1:
+                    return
+
+                display_text = str(text).strip()
+                if not display_text:
+                    return
+
+                p.save()
+                p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+                p.setRenderHint(QtGui.QPainter.TextAntialiasing, True)
+
+                inner_rect = QtCore.QRectF(text_rect)
+                inner_rect.adjust(padding, padding, -padding, -padding)
+                if inner_rect.width() <= 1 or inner_rect.height() <= 1:
+                    p.restore()
+                    return
+
+                p.setPen(QtCore.Qt.NoPen)
+                p.setBrush(background_color)
+                p.drawRect(QtCore.QRectF(text_rect))
+
+                p.setPen(QtGui.QPen(text_color))
+
+                is_vertical = inner_rect.height() > inner_rect.width() * 1.35 and len(display_text.replace(" ", "")) > 1
+                if is_vertical:
+                    chars = [ch for ch in display_text if not ch.isspace()]
+                    if not chars:
+                        p.restore()
+                        return
+                    cell_h = inner_rect.height() / max(len(chars), 1)
+                    font = make_font(min(inner_rect.width() * 0.92, cell_h * 0.92))
+                    metrics = QtGui.QFontMetricsF(font)
+                    p.setFont(font)
+                    for idx, ch in enumerate(chars):
+                        char_w = max(1.0, metrics.horizontalAdvance(ch))
+                        x = inner_rect.x() + (inner_rect.width() - char_w) / 2.0
+                        y = inner_rect.y() + idx * cell_h + (cell_h - metrics.height()) / 2.0 + metrics.ascent()
+                        p.drawText(QtCore.QPointF(x, y), ch)
+                else:
+                    lines = [line.strip() for line in str(display_text).splitlines() if line.strip()]
+                    if not lines:
+                        lines = [" ".join(str(display_text).split())]
+                    if not lines or not lines[0]:
+                        p.restore()
+                        return
+                    row_h = inner_rect.height() / max(len(lines), 1)
+                    for line in lines:
+                        font = fit_line_font(line, row_h, inner_rect.width())
+                        metrics = QtGui.QFontMetricsF(font)
+                        line_w = metrics.horizontalAdvance(line)
+                        if len(line) > 1 and line_w < inner_rect.width():
+                            spacing = (inner_rect.width() - line_w) / (len(line) - 1)
+                            font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, spacing)
+                            metrics = QtGui.QFontMetricsF(font)
+                            line_w = metrics.horizontalAdvance(line)
+                        p.setFont(font)
+                        y = inner_rect.y() + (row_h - metrics.height()) / 2.0 + metrics.ascent()
+                        x = inner_rect.x() + max(0.0, (inner_rect.width() - line_w) / 2.0)
+                        p.drawText(QtCore.QPointF(x, y), line)
+                        inner_rect.translate(0, row_h)
+                p.restore()
+
+            p.save()
+            for shape in self.shapes:
+                if not shape.visible:
+                    continue
+                description = shape.description
+                if not description:
+                    continue
+
+                if shape.shape_type in ["rotation", "rotation3"] and len(shape.points) == 4:
+                    p0, p1, _, p3 = shape.points
+                    width = math.hypot(p1.x() - p0.x(), p1.y() - p0.y())
+                    height = math.hypot(p3.x() - p0.x(), p3.y() - p0.y())
+                    if width <= 1 or height <= 1:
+                        continue
+                    x_axis = QtCore.QPointF((p1.x() - p0.x()) / width, (p1.y() - p0.y()) / width)
+                    y_axis = QtCore.QPointF((p3.x() - p0.x()) / height, (p3.y() - p0.y()) / height)
+                    transform = QtGui.QTransform(
+                        x_axis.x(), x_axis.y(), 0.0,
+                        y_axis.x(), y_axis.y(), 0.0,
+                        p0.x(), p0.y(), 1.0,
+                    )
+                    p.save()
+                    p.setWorldTransform(transform, True)
+                    text_rect = QtCore.QRectF(0, 0, width, height)
+                    draw_text_in_rect(description, text_rect)
+                    p.restore()
+                    continue
+
+                try:
+                    bbox = shape.bounding_rect()
+                except IndexError:
+                    continue
+                text_rect = bbox.adjusted(padding, padding, -padding, -padding)
+                draw_text_in_rect(description, text_rect)
+            p.restore()
         # Draw labels
         if self.show_labels:
             p.setFont(
