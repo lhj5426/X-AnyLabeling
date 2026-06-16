@@ -180,6 +180,69 @@ class AnimatedWebPPreloadThread(QtCore.QThread):
             )
 
 
+class ImagePreloadThread(QtCore.QThread):
+    image_ready = QtCore.pyqtSignal(str, object, object)  # filename, image_data, qimage
+
+    def __init__(self, files, output_dir=None, parent=None):
+        super().__init__(parent)
+        self.files = list(files)
+        self.output_dir = output_dir
+
+    def run(self):
+        for filename in self.files:
+            if self.isInterruptionRequested():
+                break
+            if osp.splitext(filename)[1].lower() == ".webp":
+                continue
+            try:
+                image_data = self._load_image_data(filename)
+                if not image_data:
+                    continue
+                qimage = QtGui.QImage.fromData(image_data)
+                if qimage.isNull():
+                    img_pil = utils.img_data_to_pil(image_data)
+                    qimage = utils.pil_to_qimage(img_pil)
+                if not qimage.isNull() and not self.isInterruptionRequested():
+                    self.image_ready.emit(filename, image_data, qimage)
+            except Exception as exc:
+                logger.debug(f"Image preload skipped for {filename}: {exc}")
+
+    def _load_image_data(self, filename):
+        label_file = osp.splitext(filename)[0] + ".json"
+        image_dir = None
+        if self.output_dir:
+            image_dir = osp.dirname(filename)
+            label_file = osp.join(self.output_dir, osp.basename(label_file))
+
+        if osp.exists(label_file) and LabelFile.is_label_file(label_file):
+            try:
+                with utils.io_open(label_file, "r") as f:
+                    data = json.load(f)
+                image_data = data.get("imageData")
+                if image_data is not None:
+                    import base64
+                    return base64.b64decode(image_data)
+                image_path = osp.basename(data.get("imagePath", ""))
+                if image_path:
+                    if image_dir:
+                        image_path = osp.join(image_dir, image_path)
+                    else:
+                        image_path = osp.join(osp.dirname(label_file), image_path)
+                    return LabelFile.load_image_file(image_path)
+            except Exception:
+                pass
+
+        return LabelFile.load_image_file(filename)
+
+
+class PageSwitchState:
+    def __init__(self):
+        self.image_data = None
+        self.image = None
+        self.from_cache = False
+        self.cache_hit = False
+
+
 class TagSortThread(QtCore.QThread):
     progress = QtCore.pyqtSignal(int, int, object)
     finished = QtCore.pyqtSignal(list, bool)
@@ -450,6 +513,9 @@ class LabelingWidget(QtWidgets.QWidget):
         self.animated_webp_reader = None
         self.animated_webp_preload_thread = None
         self.animated_webp_preload_source = None
+        self.image_preload_thread = None
+        self.image_preload_cache = {}
+        self.image_preload_radius = 3
         self.animated_webp_frame_count = 0
         self.animated_webp_current_frame = 0
         self.animated_webp_is_playing = False
@@ -570,6 +636,10 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self._no_selection_slot = False
         self._programmatic_selection_change = False
+        self._pending_last_page_state = None
+        self._last_page_save_timer = QTimer(self)
+        self._last_page_save_timer.setSingleShot(True)
+        self._last_page_save_timer.timeout.connect(self._flush_folder_last_page)
         self._copied_shapes = None
 
         self.brightness_contrast_dialog = BrightnessContrastDialog(
@@ -4204,6 +4274,43 @@ class LabelingWidget(QtWidgets.QWidget):
     def _on_animated_webp_preload_finished(self):
         if self.sender() is self.animated_webp_preload_thread:
             self.animated_webp_preload_thread = None
+
+    def _schedule_image_preload(self):
+        if not self.image_list or self.filename not in self.fn_to_index:
+            return
+
+        current_index = self.fn_to_index.get(str(self.filename))
+        if current_index is None:
+            return
+
+        filenames = []
+        for offset in range(1, self.image_preload_radius + 1):
+            prev_index = current_index - offset
+            next_index = current_index + offset
+            if prev_index >= 0:
+                filenames.append(self._filename_at_index(prev_index))
+            if next_index < len(self.image_list):
+                filenames.append(self._filename_at_index(next_index))
+
+        filenames = [f for f in filenames if f and f not in self.image_preload_cache]
+        if not filenames:
+            return
+
+        if self.image_preload_thread is not None:
+            self.image_preload_thread.requestInterruption()
+            self.image_preload_thread.wait(10)
+
+        self.image_preload_thread = ImagePreloadThread(filenames, self.output_dir, self)
+        self.image_preload_thread.image_ready.connect(self._on_image_preload_ready)
+        self.image_preload_thread.finished.connect(self._on_image_preload_finished)
+        self.image_preload_thread.start()
+
+    def _on_image_preload_ready(self, filename, image_data, qimage):
+        self.image_preload_cache[filename] = (image_data, qimage)
+
+    def _on_image_preload_finished(self):
+        if self.sender() is self.image_preload_thread:
+            self.image_preload_thread = None
 
     def _update_animated_webp_scaled_playback(self):
         if (
@@ -10072,7 +10179,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # 保存当前页码到持久化文件
         current_index = self.file_list_widget.currentRow()
         if current_index >= 0 and self.last_open_dir:
-            self._save_folder_last_page(self.last_open_dir, current_index)
+            self._schedule_folder_last_page_save(current_index)
         
         # Update expand margins dialog if it is visible
         if self.expand_margins_dialog and self.expand_margins_dialog.isVisible():
@@ -10427,7 +10534,14 @@ class LabelingWidget(QtWidgets.QWidget):
             mouse_pos = self.canvas.prev_move_point
         self._update_canvas_overlay_info(mouse_pos)
 
-    def add_label(self, shape, update_last_label=True, is_new_shape=False):
+    def add_label(
+        self,
+        shape,
+        update_last_label=True,
+        is_new_shape=False,
+        defer_updates=False,
+        known_unique_labels=None,
+    ):
         global_order = len(self.label_list) + 1
 
         # Text will be set in _update_all_item_orders
@@ -10470,19 +10584,33 @@ class LabelingWidget(QtWidgets.QWidget):
         else:
             self.label_list.addItem(label_list_item)
         
-        if not self.unique_label_list.find_items_by_label(shape.label):
-            item = self.unique_label_list.create_item_from_label(shape.label)
-            self.unique_label_list.addItem(item)
+        unique_label_item = None
+        label_known = (
+            known_unique_labels is not None
+            and shape.label in known_unique_labels
+        )
+        if defer_updates:
+            if not label_known:
+                found = self.unique_label_list.find_items_by_label(shape.label)
+                if not found:
+                    unique_label_item = self.unique_label_list.create_item_from_label(shape.label)
+                    self.unique_label_list.addItem(unique_label_item)
+                    if known_unique_labels is not None:
+                        known_unique_labels.add(shape.label)
+                else:
+                    unique_label_item = found[0]
+        elif not self.unique_label_list.find_items_by_label(shape.label):
+            unique_label_item = self.unique_label_list.create_item_from_label(shape.label)
+            self.unique_label_list.addItem(unique_label_item)
             rgb = self._get_rgb_by_label(shape.label)
-            # Correctly set initial text. `update_label_counts` will handle subsequent updates.
             count = sum(1 for s in self.canvas.shapes if s.label == shape.label)
             display_text = f"{shape.label} ({count})"
             self.unique_label_list.set_item_label(
-                item, display_text, rgb, LABEL_OPACITY
+                unique_label_item, display_text, rgb, LABEL_OPACITY
             )
 
         # Add label to history if it is not a special label
-        if shape.label not in [
+        if not defer_updates and shape.label not in [
             AutoLabelingMode.OBJECT,
             AutoLabelingMode.ADD,
             AutoLabelingMode.REMOVE,
@@ -10491,20 +10619,22 @@ class LabelingWidget(QtWidgets.QWidget):
                 shape.label, update_last_label=update_last_label
             )
 
-        for action in self.actions.on_shapes_present:
-            action.setEnabled(True)
+        if not defer_updates:
+            for action in self.actions.on_shapes_present:
+                action.setEnabled(True)
 
         self._update_shape_color(shape)
-        self._update_all_item_orders()
         color = shape.fill_color.getRgb()[:3]
         # label_list_item.setText is now handled by _update_all_item_orders
         label_list_item.setBackground(QtGui.QColor(*color, LABEL_OPACITY))
-        self.update_combo_box()
-        self.update_gid_box()
-        self.update_label_counts()
-        self.shape_list_changed.emit()
-        # Update expand margins dialog colors after adding new label
-        self._update_expand_margins_colors()
+        if not defer_updates:
+            self._update_all_item_orders()
+            self.update_combo_box()
+            self.update_gid_box()
+            self.update_label_counts()
+            self.shape_list_changed.emit()
+            # Update expand margins dialog colors after adding new label
+            self._update_expand_margins_colors()
 
     def create_label_control_buttons(self):
         """创建标签控制按钮"""
@@ -10657,6 +10787,14 @@ class LabelingWidget(QtWidgets.QWidget):
                 item, display_text, rgb, LABEL_OPACITY
             )
 
+    def _refresh_label_side_panels(self):
+        self._update_all_item_orders()
+        self.update_combo_box()
+        self.update_gid_box()
+        self.update_label_counts()
+        self.shape_list_changed.emit()
+        self._update_expand_margins_colors()
+
     def _update_shape_color(self, shape):
         r, g, b = self._get_rgb_by_label(shape.label)
         shape.line_color = QtGui.QColor(r, g, b)
@@ -10698,14 +10836,18 @@ class LabelingWidget(QtWidgets.QWidget):
         # 更新独立安全边界设置
         shape._safety_border_settings = self._get_safety_border_settings_by_label(shape.label)
 
-    def _get_rgb_by_label(self, label, skip_label_info=False):
+    def _get_rgb_by_label(self, label, skip_label_info=False, unique_item=None):
         if label in self.label_info and not skip_label_info:
             return tuple(self.label_info[label]["color"])
         if self._config["shape_color"] == "auto":
-            if not self.unique_label_list.find_items_by_label(label):
-                item = self.unique_label_list.create_item_from_label(label)
-                self.unique_label_list.addItem(item)
-            item = self.unique_label_list.find_items_by_label(label)[0]
+            item = unique_item
+            if item is None:
+                found_items = self.unique_label_list.find_items_by_label(label)
+                if not found_items:
+                    item = self.unique_label_list.create_item_from_label(label)
+                    self.unique_label_list.addItem(item)
+                else:
+                    item = found_items[0]
             label_id = self.unique_label_list.indexFromItem(item).row() + 1
             label_id += self._config["shift_auto_shape_color"]
             return LABEL_COLORMAP[label_id % len(LABEL_COLORMAP)]
@@ -10855,27 +10997,50 @@ class LabelingWidget(QtWidgets.QWidget):
                 text = f"{order} {label}({label_specific_order}) ({shape.group_id})"
             item.setText("{}".format(html.escape(text)))
 
-    def load_shapes(self, shapes, replace=True, update_last_label=True):
+    def load_shapes(
+        self,
+        shapes,
+        replace=True,
+        update_last_label=True,
+        defer_widget_updates=False,
+    ):
         self._no_selection_slot = True
-        if replace:
-            self.label_list.clear()
-        for shape in shapes:
-            self.add_label(shape, update_last_label=update_last_label)
-        self.label_list.clearSelection()
-        self._no_selection_slot = False
-        
-        # 获取锁定标签配置
-        from ...config import get_config
-        current_config = get_config()
-        locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
+        self.label_list.setUpdatesEnabled(False)
+        self.label_list.model().blockSignals(True)
+        known_unique_labels = {
+            self.unique_label_list.item(i).data(Qt.UserRole)
+            for i in range(self.unique_label_list.count())
+        }
+        try:
+            if replace:
+                self.label_list.clear()
+            for shape in shapes:
+                self.add_label(
+                    shape,
+                    update_last_label=update_last_label,
+                    defer_updates=True,
+                    known_unique_labels=known_unique_labels,
+                )
+            self.label_list.clearSelection()
+        finally:
+            self.label_list.model().blockSignals(False)
+            self.label_list.setUpdatesEnabled(True)
+            self._no_selection_slot = False
+
+        current_config = self._config
+        locked_labels = {
+            label.strip()
+            for label in current_config.get("locked_labels", "").split(",")
+            if label.strip()
+        }
         locked_can_highlight = current_config.get("locked_can_highlight", False)
-        
-        # 全局高亮同步
+
         if hasattr(self, "_highlight_on") and self._highlight_on:
             for shape in shapes:
-                # 检查是否是锁定的标签
-                is_locked = shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False)
-                # 如果是锁定的标签且没有勾选"锁定后仍可高亮"，则不高亮
+                is_locked = (
+                    shape.label in locked_labels
+                    and not getattr(shape, "is_session_unlocked", False)
+                )
                 if is_locked and not locked_can_highlight:
                     shape.selected = False
                 else:
@@ -10884,12 +11049,14 @@ class LabelingWidget(QtWidgets.QWidget):
         elif hasattr(self, "_highlight_on") and not self._highlight_on:
             for shape in shapes:
                 shape.selected = False
-        
-        # 将形状添加到画布
+
         self.canvas.load_shapes(shapes, replace=replace)
         self.canvas.update()
-        # 形状添加到canvas后再次更新标签计数，确保计数准确
-        self.update_label_counts()
+
+        if defer_widget_updates:
+            QtCore.QTimer.singleShot(0, self._refresh_label_side_panels)
+        else:
+            self._refresh_label_side_panels()
 
     def load_shapes_at_position(self, shapes, target_pos, replace=True, update_last_label=True):
         """
@@ -14255,16 +14422,20 @@ class LabelingWidget(QtWidgets.QWidget):
         # self.clear_auto_labeling_marks()
         # self.inform_next_files(filename)
 
-        # Changing file_list_widget loads file
-        if filename in self.image_list and (
+        target_filename = str(filename) if filename is not None else None
+
+        # Keep the file list selection in sync without triggering a second load.
+        if target_filename in self.fn_to_index and (
             self.file_list_widget.currentRow()
-            != self.fn_to_index[str(filename)]
+            != self.fn_to_index[target_filename]
         ):
-            self.file_list_widget.setCurrentRow(
-                self.fn_to_index[str(filename)]
-            )
-            self.file_list_widget.repaint()
-            return False
+            target_row = self.fn_to_index[target_filename]
+            self._programmatic_selection_change = True
+            try:
+                self.file_list_widget.setCurrentRow(target_row)
+            finally:
+                self._programmatic_selection_change = False
+            self._schedule_folder_last_page_save(target_row)
 
         self.reset_state()
         self.canvas.setEnabled(False)
@@ -14292,6 +14463,9 @@ class LabelingWidget(QtWidgets.QWidget):
             image_dir = osp.dirname(filename)
             label_file_without_path = osp.basename(label_file)
             label_file = self.output_dir + "/" + label_file_without_path
+        cached_image = self.image_preload_cache.pop(filename, None)
+
+        cached_qimage = None
         if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(
             label_file
         ):
@@ -14309,6 +14483,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.status(self.tr("Error reading %s") % label_file)
                 return False
             self.image_data = self.label_file.image_data
+            if self.image_data is None and cached_image is not None:
+                self.image_data, cached_qimage = cached_image
             self.image_path = osp.join(
                 osp.dirname(label_file),
                 self.label_file.image_path,
@@ -14328,7 +14504,10 @@ class LabelingWidget(QtWidgets.QWidget):
             manually_edited = self.label_file.manually_edited if hasattr(self.label_file, 'manually_edited') else self.other_data.get("manually_edited", False)
             self._update_file_list_item_color(filename, manually_edited)
         else:
-            self.image_data = LabelFile.load_image_file(filename)
+            if cached_image is not None:
+                self.image_data, cached_qimage = cached_image
+            else:
+                self.image_data = LabelFile.load_image_file(filename)
             if self.image_data:
                 self.image_path = filename
             self.label_file = None
@@ -14343,7 +14522,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # - qt.gui.icc: fromIccProfile: failed minimal tag size sanity
         # - qt.gui.icc: fromIccProfile: invalid tag offset alignment
         is_animated_webp = False
-        image = QtGui.QImage.fromData(self.image_data)
+        image = cached_qimage if cached_qimage is not None else QtGui.QImage.fromData(self.image_data)
 
         if image.isNull():
             # Fallback for AVIF/HEIC/JXL using Pillow
@@ -14417,10 +14596,11 @@ class LabelingWidget(QtWidgets.QWidget):
                         **default_flags,
                         **shape.flags,
                     }
-            self.update_combo_box()
-            self.update_gid_box()
-            self.load_shapes(self.label_file.shapes, update_last_label=False)
-            self.update_label_counts()
+            self.load_shapes(
+                self.label_file.shapes,
+                update_last_label=False,
+                defer_widget_updates=True,
+            )
             if self.label_file.flags is not None:
                 flags.update(self.label_file.flags)
         self.load_flags(flags)
@@ -14432,7 +14612,10 @@ class LabelingWidget(QtWidgets.QWidget):
             and self.no_shape()
         ):
             self.load_shapes(
-                prev_shapes, replace=False, update_last_label=False
+                prev_shapes,
+                replace=False,
+                update_last_label=False,
+                defer_widget_updates=True,
             )
             self.set_dirty()
         else:
@@ -14441,9 +14624,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Apply highlight rules after loading shapes
         try:
-            # Reload config to get latest settings
-            from ...config import get_config
-            current_config = get_config()
+            current_config = self._config
             
             # 获取锁定标签配置
             locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
@@ -14536,10 +14717,6 @@ class LabelingWidget(QtWidgets.QWidget):
                         orientation, self.scroll_values[orientation][self.filename]
                     )
         # set brightness contrast values
-        self.brightness_contrast_dialog.update_image(
-            utils.img_data_to_pil(self.image_data)
-        )
-
         brightness, contrast = self.brightness_contrast_values.get(
             self.filename, (None, None)
         )
@@ -14551,14 +14728,21 @@ class LabelingWidget(QtWidgets.QWidget):
             _, contrast = self.brightness_contrast_values.get(
                 self.recent_files[0], (None, None)
             )
-        if brightness is not None:
-            self.brightness_contrast_dialog.slider_brightness.setValue(
-                brightness
-            )
-        if contrast is not None:
-            self.brightness_contrast_dialog.slider_contrast.setValue(contrast)
         self.brightness_contrast_values[self.filename] = (brightness, contrast)
         if brightness is not None or contrast is not None:
+            self.brightness_contrast_dialog.update_image(
+                utils.img_data_to_pil(self.image_data)
+            )
+            self.brightness_contrast_dialog.slider_brightness.blockSignals(True)
+            self.brightness_contrast_dialog.slider_contrast.blockSignals(True)
+            if brightness is not None:
+                self.brightness_contrast_dialog.slider_brightness.setValue(
+                    brightness
+                )
+            if contrast is not None:
+                self.brightness_contrast_dialog.slider_contrast.setValue(contrast)
+            self.brightness_contrast_dialog.slider_brightness.blockSignals(False)
+            self.brightness_contrast_dialog.slider_contrast.blockSignals(False)
             self.brightness_contrast_dialog.on_new_value()
 
         self.paint_canvas()
@@ -14597,6 +14781,8 @@ class LabelingWidget(QtWidgets.QWidget):
         if hasattr(self, 'horizontal_viewer_dialog') and self.horizontal_viewer_dialog and self.horizontal_viewer_dialog.isVisible():
             if self.horizontal_viewer_dialog.sync_scroll_enabled:
                 self.horizontal_viewer_dialog.jump_to_image(self.filename)
+
+        self._schedule_image_preload()
 
         return True
 
@@ -14874,7 +15060,7 @@ class LabelingWidget(QtWidgets.QWidget):
         current_index = self.fn_to_index[str(self.filename)]
         for i in range(current_index + step, end_index, step):
             if self.file_list_widget.item(i).checkState() == Qt.Checked:
-                self.filename = self.image_list[i]
+                self.filename = self._filename_at_index(i)
                 if self.filename and load:
                     self.load_file(self.filename)
                 break
@@ -14886,7 +15072,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         if (
             not self.may_continue()
-            or len(self.image_list) <= 0
+            or self.file_list_widget.count() <= 0
             or self.filename is None
         ):
             return
@@ -14894,7 +15080,7 @@ class LabelingWidget(QtWidgets.QWidget):
         current_index = self.fn_to_index[str(self.filename)]
         for i in range(current_index - 1, -1, -1):
             if self.file_list_widget.item(i).checkState() == Qt.Unchecked:
-                filename = self.image_list[i]
+                filename = self._filename_at_index(i)
                 if filename:
                     self.load_file(filename)
                 break
@@ -14906,15 +15092,15 @@ class LabelingWidget(QtWidgets.QWidget):
 
         if (
             not self.may_continue()
-            or len(self.image_list) <= 0
+            or self.file_list_widget.count() <= 0
             or self.filename is None
         ):
             return
 
         current_index = self.fn_to_index[str(self.filename)]
-        for i in range(current_index + 1, len(self.image_list)):
+        for i in range(current_index + 1, self.file_list_widget.count()):
             if self.file_list_widget.item(i).checkState() == Qt.Unchecked:
-                filename = self.image_list[i]
+                filename = self._filename_at_index(i)
                 if filename:
                     self.load_file(filename)
                 break
@@ -14923,7 +15109,7 @@ class LabelingWidget(QtWidgets.QWidget):
         if not self.may_continue():
             return
 
-        if len(self.image_list) <= 0:
+        if self.file_list_widget.count() <= 0:
             return
 
         if self.filename is None:
@@ -14931,7 +15117,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         current_index = self.fn_to_index[str(self.filename)]
         if current_index - 1 >= 0:
-            filename = self.image_list[current_index - 1]
+            filename = self._filename_at_index(current_index - 1)
             if filename:
                 self.load_file(filename)
 
@@ -14939,18 +15125,19 @@ class LabelingWidget(QtWidgets.QWidget):
         if not self.may_continue():
             return
 
-        if len(self.image_list) <= 0:
+        image_count = self.file_list_widget.count()
+        if image_count <= 0:
             return
 
         filename = None
         if self.filename is None:
-            filename = self.image_list[0]
+            filename = self._filename_at_index(0)
         else:
             current_index = self.fn_to_index[str(self.filename)]
-            if current_index + 1 < len(self.image_list):
-                filename = self.image_list[current_index + 1]
+            if current_index + 1 < image_count:
+                filename = self._filename_at_index(current_index + 1)
             else:
-                filename = self.image_list[-1]
+                filename = self._filename_at_index(image_count - 1)
         self.filename = filename
 
         if self.filename and load:
@@ -15342,13 +15529,17 @@ class LabelingWidget(QtWidgets.QWidget):
     def image_list(self):
         lst = []
         for i in range(self.file_list_widget.count()):
-            item = self.file_list_widget.item(i)
-            # Use UserRole data if available (to handle potential display modifications)
-            filename = item.data(Qt.UserRole)
-            if not filename:
-                filename = item.text()
-            lst.append(filename)
+            lst.append(self._filename_at_index(i))
         return lst
+
+    def _filename_at_index(self, index):
+        item = self.file_list_widget.item(index)
+        if item is None:
+            return None
+        filename = item.data(Qt.UserRole)
+        if not filename:
+            filename = item.text()
+        return filename
 
     def import_dropped_image_files(self, image_files):
         extensions = [
@@ -15580,6 +15771,19 @@ class LabelingWidget(QtWidgets.QWidget):
                 f.write(f"{page_index}\n{filename}")
         except Exception:
             pass
+
+    def _schedule_folder_last_page_save(self, page_index):
+        if page_index < 0 or not self.last_open_dir:
+            return
+        self._pending_last_page_state = (self.last_open_dir, page_index)
+        self._last_page_save_timer.start(800)
+
+    def _flush_folder_last_page(self):
+        if not self._pending_last_page_state:
+            return
+        folder_path, page_index = self._pending_last_page_state
+        self._pending_last_page_state = None
+        self._save_folder_last_page(folder_path, page_index)
     
     def _should_apply_filter(self, filter_config):
         """检查是否需要应用过滤"""
@@ -15957,7 +16161,9 @@ class LabelingWidget(QtWidgets.QWidget):
                         )
                     )
                     self.unique_label_list.addItem(unique_label_item)
-                    rgb = self._get_rgb_by_label(shape.label)
+                    rgb = self._get_rgb_by_label(
+                        shape.label, unique_item=unique_label_item
+                    )
                     self.unique_label_list.set_item_label(
                         unique_label_item, shape.label, rgb, LABEL_OPACITY
                     )

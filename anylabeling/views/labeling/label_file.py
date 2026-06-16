@@ -101,7 +101,7 @@ class LabelFile:
             image_path = data["imagePath"]
 
             self._check_image_height_and_width(
-                base64.b64encode(image_data).decode("utf-8"),
+                image_data,
                 data.get("imageHeight"),
                 data.get("imageWidth"),
             )
@@ -134,19 +134,28 @@ class LabelFile:
 
     @staticmethod
     def _check_image_height_and_width(image_data, image_height, image_width):
-        img_arr = utils.img_b64_to_arr(image_data)
-        if image_height is not None and img_arr.shape[0] != image_height:
+        if image_data is None:
+            return image_height, image_width
+
+        if isinstance(image_data, bytes):
+            actual_width, actual_height = utils.get_pil_img_dim(image_data)
+        else:
+            # Save-time validation still receives base64 text.
+            img_arr = utils.img_b64_to_arr(image_data)
+            actual_height, actual_width = img_arr.shape[:2]
+
+        if image_height is not None and actual_height != image_height:
             logger.error(
                 "image_height does not match with image_data or image_path, "
                 "so getting image_height from actual image."
             )
-            image_height = img_arr.shape[0]
-        if image_width is not None and img_arr.shape[1] != image_width:
+            image_height = actual_height
+        if image_width is not None and actual_width != image_width:
             logger.error(
                 "image_width does not match with image_data or image_path, "
                 "so getting image_width from actual image."
             )
-            image_width = img_arr.shape[1]
+            image_width = actual_width
         return image_height, image_width
 
     def save(
