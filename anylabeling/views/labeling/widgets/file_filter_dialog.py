@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QRadioButton,
     QButtonGroup,
+    QSpinBox,
 )
 
 
@@ -121,6 +122,43 @@ class FileFilterDialog(QDialog):
         difficult_layout.addWidget(self.difficult_not_only)
         difficult_group.setLayout(difficult_layout)
         layout.addWidget(difficult_group)
+
+        # 重叠检测过滤
+        overlap_group = QGroupBox("过滤重叠")
+        overlap_layout = QVBoxLayout()
+
+        self.overlap_only = QRadioButton("仅过滤有重叠的文件")
+        self.filter_group.addButton(self.overlap_only)
+        overlap_layout.addWidget(self.overlap_only)
+
+        self.overlap_exclude_locked = QCheckBox("排除锁定的标签")
+        self.overlap_exclude_locked.setChecked(
+            self.label_widget._config.get("overlap_exclude_locked", True)
+            if self.label_widget and hasattr(self.label_widget, "_config")
+            else True
+        )
+        overlap_layout.addWidget(self.overlap_exclude_locked)
+
+        threshold_layout = QHBoxLayout()
+        threshold_label = QLabel("重叠率阈值：")
+        self.overlap_threshold_spin = QSpinBox()
+        self.overlap_threshold_spin.setRange(1, 100)
+        self.overlap_threshold_spin.setValue(
+            self.label_widget._config.get("overlap_detect_threshold", 50)
+            if self.label_widget and hasattr(self.label_widget, "_config")
+            else 50
+        )
+        self.overlap_threshold_spin.setSuffix("%")
+        self.overlap_threshold_spin.setToolTip(
+            "两个矩形的交集面积占较小矩形面积的百分比达到此值时，视为重叠"
+        )
+        threshold_layout.addWidget(threshold_label)
+        threshold_layout.addWidget(self.overlap_threshold_spin)
+        threshold_layout.addStretch()
+        overlap_layout.addLayout(threshold_layout)
+
+        overlap_group.setLayout(overlap_layout)
+        layout.addWidget(overlap_group)
         
         # 标签过滤
         label_group = QGroupBox("标签过滤")
@@ -164,7 +202,7 @@ class FileFilterDialog(QDialog):
         label_group.setLayout(label_layout)
         layout.addWidget(label_group)
         
-        # 连接信号：当勾选标签时，自动选中"按标签过滤"
+        # 连接信号：当勾选标签时，自动选中"按标签过滤"；重叠检测时保留为联动标签
         self.label_list.itemChanged.connect(self.on_label_selection_changed)
         
         # 底部按钮
@@ -193,7 +231,7 @@ class FileFilterDialog(QDialog):
                 has_checked = True
                 break
         
-        if has_checked:
+        if has_checked and not self.overlap_only.isChecked():
             self.filter_by_label.setChecked(True)
     
     def update_label_list(self, labels):
@@ -279,6 +317,19 @@ class FileFilterDialog(QDialog):
                     checked_labels.append(item.text())
             if checked_labels:
                 config['filter_labels'] = checked_labels
+        elif self.overlap_only.isChecked():
+            checked_labels = []
+            for i in range(self.label_list.count()):
+                item = self.label_list.item(i)
+                if item.checkState() == Qt.Checked:
+                    checked_labels.append(item.text())
+
+            config['mode'] = 'overlap'
+            config['value'] = {
+                'threshold': self.overlap_threshold_spin.value(),
+                'exclude_locked': self.overlap_exclude_locked.isChecked(),
+                'filter_labels': checked_labels,
+            }
         elif self.filter_by_label.isChecked():
             config['mode'] = 'labels'
             # 获取所有勾选的标签

@@ -15919,6 +15919,10 @@ class LabelingWidget(QtWidgets.QWidget):
             elif value == 'not_difficult':
                 # 仅非困难标记：至少有一个目标shape的difficult为false
                 return any(not s.get("difficult", False) for s in target_shapes)
+
+        # 重叠检测过滤
+        if mode == 'overlap':
+            return self._file_has_overlapping_shapes(data, value)
         
         # 标签过滤
         if mode == 'labels':
@@ -15945,6 +15949,171 @@ class LabelingWidget(QtWidgets.QWidget):
                 return bool(file_labels.intersection(selected_labels_set))
         
         return True
+
+    def _file_has_overlapping_shapes(self, label_data, overlap_config):
+        """检查标注文件中是否存在达到阈值的矩形重叠。"""
+        if isinstance(overlap_config, dict):
+            threshold = overlap_config.get("threshold", 50) / 100.0
+            exclude_locked = overlap_config.get(
+                "exclude_locked",
+                self._config.get("overlap_exclude_locked", True),
+            )
+            filter_labels = set(overlap_config.get("filter_labels") or [])
+        else:
+            threshold = self._config.get("overlap_detect_threshold", 50) / 100.0
+            exclude_locked = self._config.get("overlap_exclude_locked", True)
+            filter_labels = set()
+
+        locked_labels = set()
+        if exclude_locked:
+            locked_labels_str = self._config.get("locked_labels", "")
+            locked_labels = {
+                label.strip()
+                for label in locked_labels_str.split(",")
+                if label.strip()
+            }
+
+        exclude_labels_str = self._config.get("overlap_exclude_labels", "")
+        exclude_labels = {
+            label.strip()
+            for label in exclude_labels_str.split(",")
+            if label.strip()
+        }
+
+        rect_shapes = []
+        for shape in label_data.get("shapes", []):
+            label = shape.get("label", "")
+            if shape.get("shape_type") not in ["rectangle", "rotation"]:
+                continue
+            if filter_labels and label not in filter_labels:
+                continue
+            if label in ["AUTOLABEL_OBJECT", "AUTOLABEL_ADD", "AUTOLABEL_REMOVE"]:
+                continue
+            if exclude_locked and label in locked_labels:
+                continue
+            if label in exclude_labels:
+                continue
+
+            points = self._points_from_shape_dict(shape)
+            if len(points) < 4:
+                continue
+            rect_shapes.append({"label": label, "points": points})
+
+        for i, shape1 in enumerate(rect_shapes):
+            for shape2 in rect_shapes[i + 1:]:
+                if self._calc_overlap_ratio(shape1["points"], shape2["points"]) >= threshold:
+                    return True
+        return False
+
+    @staticmethod
+    def _points_from_shape_dict(shape):
+        points = shape.get("points") or []
+        if shape.get("shape_type") == "rectangle" and len(points) == 2:
+            (x1, y1), (x2, y2) = points
+            points = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+
+        result = []
+        for point in points:
+            if len(point) >= 2:
+                result.append(QtCore.QPointF(float(point[0]), float(point[1])))
+        return result
+
+    @staticmethod
+    def _calc_overlap_ratio(points1, points2):
+        def get_bbox(points):
+            xs = [pt.x() for pt in points]
+            ys = [pt.y() for pt in points]
+            return (min(xs), min(ys), max(xs), max(ys))
+
+        def polygon_area(points):
+            area = 0.0
+            for i in range(len(points)):
+                j = (i + 1) % len(points)
+                area += points[i].x() * points[j].y()
+                area -= points[j].x() * points[i].y()
+            return abs(area) / 2.0
+
+        def is_clockwise(points):
+            total = 0.0
+            for i in range(len(points)):
+                j = (i + 1) % len(points)
+                total += (points[j].x() - points[i].x()) * (points[j].y() + points[i].y())
+            return total > 0
+
+        def inside_edge(point, edge_start, edge_end):
+            return (
+                (edge_end.x() - edge_start.x()) * (point.y() - edge_start.y())
+                - (edge_end.y() - edge_start.y()) * (point.x() - edge_start.x())
+            ) >= 0
+
+        def line_intersection(p1, p2, p3, p4):
+            x1, y1 = p1.x(), p1.y()
+            x2, y2 = p2.x(), p2.y()
+            x3, y3 = p3.x(), p3.y()
+            x4, y4 = p4.x(), p4.y()
+            denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+            if abs(denom) < 1e-10:
+                return None
+            px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / denom
+            py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / denom
+            return QtCore.QPointF(px, py)
+
+        def clip_polygon(subject_points, clip_points):
+            output = subject_points
+            for i in range(len(clip_points)):
+                input_list = output
+                output = []
+                if not input_list:
+                    break
+                edge_start = clip_points[i]
+                edge_end = clip_points[(i + 1) % len(clip_points)]
+                for j, current in enumerate(input_list):
+                    previous = input_list[j - 1]
+                    current_inside = inside_edge(current, edge_start, edge_end)
+                    previous_inside = inside_edge(previous, edge_start, edge_end)
+                    if current_inside:
+                        if not previous_inside:
+                            intersection = line_intersection(previous, current, edge_start, edge_end)
+                            if intersection:
+                                output.append(intersection)
+                        output.append(current)
+                    elif previous_inside:
+                        intersection = line_intersection(previous, current, edge_start, edge_end)
+                        if intersection:
+                            output.append(intersection)
+            return output
+
+        if len(points1) < 4 or len(points2) < 4:
+            return 0.0
+
+        bbox1 = get_bbox(points1)
+        bbox2 = get_bbox(points2)
+        if (
+            bbox1[2] <= bbox2[0]
+            or bbox2[2] <= bbox1[0]
+            or bbox1[3] <= bbox2[1]
+            or bbox2[3] <= bbox1[1]
+        ):
+            return 0.0
+
+        area1 = polygon_area(points1)
+        area2 = polygon_area(points2)
+        min_area = min(area1, area2)
+        if min_area <= 0:
+            return 0.0
+
+        clip_points1 = list(points1)
+        clip_points2 = list(points2)
+        if is_clockwise(clip_points1):
+            clip_points1 = clip_points1[::-1]
+        if is_clockwise(clip_points2):
+            clip_points2 = clip_points2[::-1]
+
+        intersection_points = clip_polygon(clip_points1, clip_points2)
+        if len(intersection_points) >= 3:
+            return polygon_area(intersection_points) / min_area
+
+        return 0.0
 
     def toggle_auto_labeling_widget(self):
         """Toggle auto labeling widget visibility."""
