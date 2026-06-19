@@ -53,6 +53,7 @@ from .widgets import (
     CrosshairSettingsDialog,
     FileDialogPreview,
     FileFilterDialog,
+    ImageCategoryManagerDialog,
     GroupIDFilterComboBox,
     LabelDialog,
     LabelFilterComboBox,
@@ -96,6 +97,7 @@ from .widgets.horizontal_viewer_dialog import HorizontalViewerDialog
 from .widgets.vertical_viewer_dialog import VerticalViewerDialog
 from .widgets.thumbnail_viewer_dialog import MasonryThumbnailDialog
 from .widgets.containment_detection_dialog import ContainmentDetectionDialog
+from .utils.image_category import read_image_category
 from ..mainwindow_widgets.traffic_light_dialog import TrafficLightDialog
 from ...services import merger, tag_sorting
 
@@ -662,6 +664,7 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # 文件过滤相关
         self.file_filter_dialog = None
+        self.image_category_manager_dialog = None
         self.current_filter_config = {
             'mode': 'none',
             'value': None
@@ -1946,6 +1949,12 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("在新窗口中以瀑布流方式预览所有图片缩略图"),
         )
         # 右键菜单专用：打开瀑布流并定位到当前图片
+        image_category_manager_tool = action(
+            self.tr("图片分类管理"),
+            self.show_image_category_manager_dialog,
+            icon="format_classify",
+            tip=self.tr("查看图片分类数量，并按分类快速过滤图片"),
+        )
         thumbnail_viewer_tool_with_target = action(
             self.tr("瀑布流缩略图"),
             lambda: self.open_thumbnail_viewer(self.filename),
@@ -2720,6 +2729,13 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="format_coco",
             tip=self.tr("导出 MTU JSON（manga_translator_work/json）"),
         )
+        export_image_category = action(
+            self.tr("导出图片分类"),
+            lambda: utils.export_image_category(self),
+            None,
+            icon="format_classify",
+            tip=self.tr("按图片分类字段导出图片到不同文件夹"),
+        )
         export_description_txt = action(
             self.tr("导出文本到TXT"),
             lambda: utils.export_description_txt(self),
@@ -2943,6 +2959,8 @@ class LabelingWidget(QtWidgets.QWidget):
             export_imagetrans_annotation=export_imagetrans_annotation,
             export_labelplus_annotation=export_labelplus_annotation,
             export_mtu_json_annotation=export_mtu_json_annotation,
+            export_image_category=export_image_category,
+            image_category_manager=image_category_manager_tool,
             export_description_txt=export_description_txt,
             zoom=zoom,
             zoom_in=zoom_in,
@@ -3147,6 +3165,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 object_manager,
                 gid_manager,
                 digit_shortcut_manager,
+                image_category_manager_tool,
                 label_toggle_shortcut_manager,
                 keymap_tool,
                 color_manager_tool,
@@ -3242,6 +3261,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 export_imagetrans_annotation,
                 export_labelplus_annotation,
                 export_mtu_json_annotation,
+                None,
+                export_image_category,
                 None,
                 export_description_txt,
                 None,
@@ -3342,6 +3363,7 @@ class LabelingWidget(QtWidgets.QWidget):
             open_vqa,
             toggle_auto_labeling_widget,
             run_all_images,
+            image_category_manager_tool,
         )
 
         layout = QHBoxLayout()
@@ -4003,8 +4025,9 @@ class LabelingWidget(QtWidgets.QWidget):
         basename = osp.basename(str(self.filename))
         image_suffix = ""
         if self.image_list and self.filename in self.image_list:
-            current_index = self.fn_to_index[str(self.filename)] + 1
-            image_suffix = f": {current_index}/{len(self.image_list)}"
+            current_index = (self._get_file_index(self.filename) or -1) + 1
+            if current_index > 0:
+                image_suffix = f": {current_index}/{len(self.image_list)}"
 
         if self.is_animated_webp_mode and self.animated_webp_frame_count > 1:
             return (
@@ -4279,7 +4302,7 @@ class LabelingWidget(QtWidgets.QWidget):
         if not self.image_list or self.filename not in self.fn_to_index:
             return
 
-        current_index = self.fn_to_index.get(str(self.filename))
+        current_index = self._get_file_index(self.filename)
         if current_index is None:
             return
 
@@ -4391,7 +4414,7 @@ class LabelingWidget(QtWidgets.QWidget):
     def _has_next_image_available(self):
         if not self.filename or not self.image_list:
             return False
-        current_index = self.fn_to_index.get(str(self.filename), -1)
+        current_index = self._get_file_index(self.filename) or -1
         return current_index >= 0 and current_index + 1 < len(self.image_list)
 
     def _advance_to_next_image_after_animation(self):
@@ -10135,6 +10158,80 @@ class LabelingWidget(QtWidgets.QWidget):
             self.file_filter_dialog.update_label_list(available_labels)
 
         self.file_filter_dialog.show()
+
+    def _get_image_category_source_files(self):
+        if self.last_open_dir and osp.exists(self.last_open_dir):
+            recursive = self._config.get("load_subfolders", False)
+            return list(utils.scan_all_images(self.last_open_dir, recursive=recursive))
+        return list(self.image_list)
+
+    def _get_image_category_summary(self):
+        files = self._get_image_category_source_files()
+        counts = {}
+        uncategorized_count = 0
+
+        for image_path in files:
+            category = read_image_category(image_path)
+            if category:
+                counts[category] = counts.get(category, 0) + 1
+            else:
+                uncategorized_count += 1
+
+        rows = []
+        used = set()
+        for label in self._get_all_labels():
+            if label in counts:
+                rows.append((label, counts[label]))
+                used.add(label)
+
+        for category in sorted(counts.keys()):
+            if category not in used:
+                rows.append((category, counts[category]))
+
+        total = len(files)
+        classified = total - uncategorized_count
+        return total, classified, rows, uncategorized_count
+
+    def refresh_image_category_manager(self):
+        dialog = getattr(self, "image_category_manager_dialog", None)
+        if not dialog:
+            return
+        total, classified, rows, uncategorized_count = self._get_image_category_summary()
+        dialog.update_categories(total, classified, rows, uncategorized_count)
+
+    def show_image_category_manager_dialog(self):
+        if not self.image_category_manager_dialog:
+            self.image_category_manager_dialog = ImageCategoryManagerDialog(
+                self,
+                color_getter=self._get_rgb_by_label,
+            )
+            self.image_category_manager_dialog.setModal(False)
+            self.image_category_manager_dialog.category_selected.connect(
+                self.apply_image_category_manager_filter
+            )
+            self.image_category_manager_dialog.reset_requested.connect(
+                self.reset_image_category_manager_filter
+            )
+
+        self.refresh_image_category_manager()
+        if self.image_category_manager_dialog.isMinimized():
+            self.image_category_manager_dialog.showNormal()
+        else:
+            self.image_category_manager_dialog.show()
+        self.image_category_manager_dialog.raise_()
+        self.image_category_manager_dialog.activateWindow()
+
+    def apply_image_category_manager_filter(self, category, uncategorized=False):
+        if uncategorized:
+            value = {"labels": [], "uncategorized_only": True}
+        else:
+            value = {"labels": [category], "uncategorized_only": False}
+        self.apply_file_filter({"mode": "category", "value": value})
+        self.refresh_image_category_manager()
+
+    def reset_image_category_manager_filter(self):
+        self.apply_file_filter({"mode": "none", "value": None})
+        self.refresh_image_category_manager()
     
     def apply_file_filter(self, filter_config):
         """应用文件过滤"""
@@ -10197,7 +10294,9 @@ class LabelingWidget(QtWidgets.QWidget):
         if not filename:
             filename = item.text()
 
-        current_index = self.fn_to_index[str(filename)]
+        current_index = self._get_file_index(filename)
+        if current_index is None:
+            return
         if current_index < len(self.image_list):
             filename = self.image_list[current_index]
             if filename:
@@ -13292,7 +13391,9 @@ class LabelingWidget(QtWidgets.QWidget):
         basename = osp.basename(str(self.filename))
         if shape_height > 0 and shape_width > 0:
             if num_images and self.filename in self.image_list:
-                current_index = self.fn_to_index[str(self.filename)] + 1
+                current_index = (self._get_file_index(self.filename) or -1) + 1
+                if current_index <= 0:
+                    current_index = 1
                 self.status(
                     str(self.tr("X: %d, Y: %d | H: %d, W: %d [%s: %d/%d]"))
                     % (
@@ -13312,7 +13413,9 @@ class LabelingWidget(QtWidgets.QWidget):
                 )
         elif self.image_path:
             if num_images and self.filename in self.image_list:
-                current_index = self.fn_to_index[str(self.filename)] + 1
+                current_index = (self._get_file_index(self.filename) or -1) + 1
+                if current_index <= 0:
+                    current_index = 1
                 self.status(
                     str(self.tr("X: %d, Y: %d [%s: %d/%d]"))
                     % (
@@ -14296,7 +14399,9 @@ class LabelingWidget(QtWidgets.QWidget):
         current_index = 0
         if filename is not None:
             try:
-                current_index = self.fn_to_index[str(filename)]
+                current_index = self._get_file_index(filename) or -1
+                if current_index < 0:
+                    return []
             except ValueError:
                 return []
             filenames.append(filename)
@@ -14349,7 +14454,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         if hasattr(self, "image_list") and self.filename:
             try:
-                current_index = self.fn_to_index.get(str(self.filename), 0) + 1
+                current_index = (self._get_file_index(self.filename) or 0) + 1
                 total_files = len(self.image_list)
                 self.navigator_dialog.set_file_info(
                     self.filename, current_index, total_files
@@ -14572,7 +14677,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # Update file info in navigator
         if hasattr(self, 'image_list') and self.filename:
             try:
-                current_index = self.fn_to_index.get(str(self.filename), 0) + 1
+                current_index = (self._get_file_index(self.filename) or 0) + 1
                 total_files = len(self.image_list)
                 self.navigator_dialog.set_file_info(self.filename, current_index, total_files)
             except:
@@ -15057,7 +15162,9 @@ class LabelingWidget(QtWidgets.QWidget):
     def open_checked_image(self, end_index, step, load=True):
         if not self.may_continue():
             return
-        current_index = self.fn_to_index[str(self.filename)]
+        current_index = self._get_file_index(self.filename)
+        if current_index is None:
+            return
         for i in range(current_index + step, end_index, step):
             if self.file_list_widget.item(i).checkState() == Qt.Checked:
                 self.filename = self._filename_at_index(i)
@@ -15077,7 +15184,9 @@ class LabelingWidget(QtWidgets.QWidget):
         ):
             return
 
-        current_index = self.fn_to_index[str(self.filename)]
+        current_index = self._get_file_index(self.filename)
+        if current_index is None:
+            return
         for i in range(current_index - 1, -1, -1):
             if self.file_list_widget.item(i).checkState() == Qt.Unchecked:
                 filename = self._filename_at_index(i)
@@ -15097,13 +15206,34 @@ class LabelingWidget(QtWidgets.QWidget):
         ):
             return
 
-        current_index = self.fn_to_index[str(self.filename)]
+        current_index = self._get_file_index(self.filename)
+        if current_index is None:
+            return
         for i in range(current_index + 1, self.file_list_widget.count()):
             if self.file_list_widget.item(i).checkState() == Qt.Unchecked:
                 filename = self._filename_at_index(i)
                 if filename:
                     self.load_file(filename)
                 break
+
+    def _get_file_index(self, filename):
+        """获取文件索引，fn_to_index 查不到时遍历 file_list_widget 查找"""
+        idx = self.fn_to_index.get(str(filename))
+        if idx is not None:
+            return idx
+        # 回退：遍历文件列表逐个比对
+        s = str(filename)
+        for i in range(self.file_list_widget.count()):
+            item = self.file_list_widget.item(i)
+            if item is None:
+                continue
+            item_filename = item.data(Qt.UserRole)
+            if not item_filename:
+                item_filename = item.text()
+            if str(item_filename) == s:
+                self.fn_to_index[s] = i  # 补入字典，后续直接命中
+                return i
+        return None
 
     def open_prev_image(self, _value=False):
         if not self.may_continue():
@@ -15115,7 +15245,9 @@ class LabelingWidget(QtWidgets.QWidget):
         if self.filename is None:
             return
 
-        current_index = self.fn_to_index[str(self.filename)]
+        current_index = self._get_file_index(self.filename)
+        if current_index is None:
+            return
         if current_index - 1 >= 0:
             filename = self._filename_at_index(current_index - 1)
             if filename:
@@ -15133,8 +15265,10 @@ class LabelingWidget(QtWidgets.QWidget):
         if self.filename is None:
             filename = self._filename_at_index(0)
         else:
-            current_index = self.fn_to_index[str(self.filename)]
-            if current_index + 1 < image_count:
+            current_index = self._get_file_index(self.filename)
+            if current_index is None:
+                filename = self._filename_at_index(0)
+            elif current_index + 1 < image_count:
                 filename = self._filename_at_index(current_index + 1)
             else:
                 filename = self._filename_at_index(image_count - 1)
@@ -15329,7 +15463,7 @@ class LabelingWidget(QtWidgets.QWidget):
             return
 
         # 保存当前索引，用于删除后定位
-        current_index = self.fn_to_index.get(str(self.filename), 0)
+        current_index = self._get_file_index(self.filename) or 0
         
         image_file = self.get_image_file()
         if osp.exists(image_file):
@@ -15731,6 +15865,7 @@ class LabelingWidget(QtWidgets.QWidget):
         
         if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog and self.thumbnail_viewer_dialog.isVisible():
             self.thumbnail_viewer_dialog.update_image_list(self.image_list, current_file)
+        self.refresh_image_category_manager()
     
     def _load_folder_last_page(self, folder_path):
         """从文件夹读取上次浏览的页码和文件名"""
@@ -15863,6 +15998,26 @@ class LabelingWidget(QtWidgets.QWidget):
                     return False
                 elif value == 'not_manually':
                     return True
+
+        if mode == 'category':
+            image_category = read_image_category(filename)
+            selected_labels = []
+            uncategorized_only = False
+            include_uncategorized = False
+            if isinstance(value, dict):
+                selected_labels = value.get('labels', [])
+                uncategorized_only = bool(value.get('uncategorized_only', False))
+                include_uncategorized = bool(value.get('include_uncategorized', False))
+            elif isinstance(value, list):
+                selected_labels = value
+
+            if not image_category:
+                return uncategorized_only or include_uncategorized
+            if uncategorized_only:
+                return False
+            if not selected_labels:
+                return True
+            return image_category in set(selected_labels)
         
         # 如果没有标注文件，其他过滤条件无法检查，直接返回False
         if not has_label:
@@ -15923,7 +16078,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # 重叠检测过滤
         if mode == 'overlap':
             return self._file_has_overlapping_shapes(data, value)
-        
+
         # 标签过滤
         if mode == 'labels':
             # 兼容旧格式（直接是标签列表）和新格式（包含match_mode的字典）

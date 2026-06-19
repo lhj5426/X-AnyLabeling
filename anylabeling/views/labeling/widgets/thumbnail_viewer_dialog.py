@@ -18,6 +18,11 @@ import time
 from pathlib import Path
 
 from anylabeling.config import save_config
+from anylabeling.views.labeling.utils.image_category import (
+    apply_digit_category,
+    category_badge_text,
+    category_badge_colors,
+)
 
 from .animated_webp_support import (
     AnimatedWebPPlayer,
@@ -383,6 +388,7 @@ class ThumbnailItem(QtWidgets.QWidget):
         self.label_color_getter = label_color_getter  # 获取标签颜色的回调函数
         self.pixmap = None
         self.is_manually_edited = False
+        self.image_category = ""
         self.image_width = 0
         self.image_height = 0
         self.file_size = 0
@@ -449,6 +455,10 @@ class ThumbnailItem(QtWidgets.QWidget):
         
         self._check_manually_edited()
         self._get_file_info()
+
+    def set_image_category(self, category):
+        self.image_category = category or ""
+        self.update()
     
     def set_edited_color(self, color):
         """设置手动编辑颜色"""
@@ -511,6 +521,7 @@ class ThumbnailItem(QtWidgets.QWidget):
                 with open(json_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     self.is_manually_edited = data.get("manually_edited", False)
+                    self.image_category = data.get("image_category", "")
                     # 统计标签和困难标记
                     shapes = data.get("shapes", [])
                     for shape in shapes:
@@ -918,6 +929,22 @@ class ThumbnailItem(QtWidgets.QWidget):
                 painter.drawText(margin, y_offset + line_height * 3, filename)
                 
                 current_line = 4
+                if self.image_category:
+                    category_pen = QtGui.QColor(255, 220, 120)
+                    if self.label_color_getter:
+                        try:
+                            rgb = self.label_color_getter(self.image_category)
+                        except Exception:
+                            rgb = None
+                        if rgb and len(rgb) >= 3:
+                            category_pen = QtGui.QColor(
+                                int(rgb[0]),
+                                int(rgb[1]),
+                                int(rgb[2]),
+                            )
+                    painter.setPen(category_pen)
+                    painter.drawText(margin, y_offset + line_height * current_line, f"[分类: {self.image_category}]")
+                    current_line += 1
                 if self.is_manually_edited:
                     painter.setPen(QtGui.QColor(self.edited_color))
                     painter.drawText(margin, y_offset + line_height * current_line, "[已编辑]")
@@ -990,6 +1017,41 @@ class ThumbnailItem(QtWidgets.QWidget):
                     visible=True,
                 )
                 painter.restore()
+
+            if self.image_category:
+                font = painter.font()
+                font.setPointSize(9)
+                font.setBold(True)
+                painter.setFont(font)
+                fm = QtGui.QFontMetrics(font)
+                max_width = max(40, self.width() - 12)
+                text = fm.elidedText(self.image_category, Qt.ElideRight, max_width - 12)
+                badge_width = min(max_width, fm.horizontalAdvance(text) + 12)
+                badge_height = fm.height() + 6
+                badge_rect = QtCore.QRectF(
+                    6,
+                    self.height() - badge_height - 6,
+                    badge_width,
+                    badge_height,
+                )
+                bg_color, fg_color = category_badge_colors(
+                    self.labeling_widget if hasattr(self, "labeling_widget") else None,
+                    self.image_category,
+                )
+                if self.label_color_getter:
+                    try:
+                        rgb = self.label_color_getter(self.image_category)
+                    except Exception:
+                        rgb = None
+                    if rgb and len(rgb) >= 3:
+                        bg_color = QtGui.QColor(int(rgb[0]), int(rgb[1]), int(rgb[2]), 230)
+                        luminance = 0.299 * int(rgb[0]) + 0.587 * int(rgb[1]) + 0.114 * int(rgb[2])
+                        fg_color = QtGui.QColor(0, 0, 0) if luminance > 150 else QtGui.QColor(255, 255, 255)
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(bg_color)
+                painter.drawRoundedRect(badge_rect, 4, 4)
+                painter.setPen(fg_color)
+                painter.drawText(badge_rect, Qt.AlignCenter, text)
         else:
             painter.setClipPath(path)
             painter.fillRect(rect, QtGui.QColor(50, 50, 50))
@@ -1109,6 +1171,12 @@ class ThumbnailItem(QtWidgets.QWidget):
                         parent._last_multi_selected_index = self.index - 1
                 else:
                     # 普通左键:切换点击状态(显示/隐藏彩虹边框)
+                    parent = self.parent()
+                    while parent and not isinstance(parent, QtWidgets.QDialog):
+                        parent = parent.parent()
+                    if parent and hasattr(parent, 'clear_multi_selection'):
+                        parent.clear_multi_selection()
+
                     if self.is_clicked:
                         # 如果已经是点击状态,再次点击则取消
                         self.is_clicked = False
@@ -1116,9 +1184,6 @@ class ThumbnailItem(QtWidgets.QWidget):
                         self.update()
                     else:
                         # 清除其他图片的点击状态
-                        parent = self.parent()
-                        while parent and not isinstance(parent, QtWidgets.QDialog):
-                            parent = parent.parent()
                         if parent and hasattr(parent, 'clear_all_clicked_states'):
                             parent.clear_all_clicked_states()
                         # 设置当前图片为点击状态并启动彩虹动画
@@ -2343,6 +2408,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 edited_color, self.border_width, self._get_label_color,
                 difficult_color, index=idx
             )
+            item.set_image_category(category_badge_text(path))
             item.clicked.connect(self.on_thumbnail_clicked)
             item.request_horizontal_viewer.connect(self.open_horizontal_viewer.emit)
             item.request_vertical_viewer.connect(self.open_vertical_viewer.emit)
@@ -2671,6 +2737,57 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             QtCore.QTimer.singleShot(150, lambda: self.labeling_widget.setFocus())
             # 再次确保快捷键已恢复（延迟执行，确保窗口状态已更新）
             QtCore.QTimer.singleShot(200, self._restore_main_window_shortcuts)
+
+    def _get_current_category_paths(self):
+        if self.multi_selected_items:
+            return [item.image_path for item in self.multi_selected_items]
+
+        clicked_items = [
+            item.image_path
+            for item in self.masonry_widget.items
+            if getattr(item, "is_clicked", False)
+        ]
+        if clicked_items:
+            return clicked_items
+
+        if self.current_filename:
+            return [self.current_filename]
+
+        viewport = self.scroll_area.viewport()
+        viewport_rect = QtCore.QRect(
+            viewport.mapToGlobal(QtCore.QPoint(0, 0)),
+            viewport.size(),
+        )
+        best_item = None
+        best_visible = 0
+        for item in self.masonry_widget.items:
+            item_rect = QtCore.QRect(item.mapToGlobal(QtCore.QPoint(0, 0)), item.size())
+            visible = viewport_rect.intersected(item_rect)
+            area = visible.width() * visible.height()
+            if area > best_visible:
+                best_visible = area
+                best_item = item
+        if best_item:
+            return [best_item.image_path]
+        return []
+
+    def apply_digit_image_category(self, digit):
+        paths = self._get_current_category_paths()
+        if not paths:
+            return False
+        applied = False
+        category = ""
+        for path in paths:
+            ok, category = apply_digit_category(self.labeling_widget, path, digit)
+            if not ok:
+                continue
+            applied = True
+            item = self.items_map.get(path)
+            if item:
+                item.set_image_category(category)
+        if applied and self.labeling_widget and hasattr(self.labeling_widget, "refresh_image_category_manager"):
+            self.labeling_widget.refresh_image_category_manager()
+        return applied
     
     def on_toggle_edited(self, item):
         """切换图片的已编辑状态"""
@@ -3440,6 +3557,25 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         # 更新已编辑统计
         self.update_edited_count()
+
+    def clear_multi_selection(self):
+        """清除普通模式的Ctrl/Shift多选状态"""
+        changed = bool(self.multi_selected_items)
+        for item in self.masonry_widget.items:
+            if item.is_multi_selected:
+                changed = True
+                item.is_multi_selected = False
+                item.status_icon.hide()
+                item.update()
+
+        if not changed and self._last_multi_selected_index is None:
+            return
+
+        self.multi_selected_items.clear()
+        self._last_multi_selected_index = None
+        self.multi_select_label.setText("已选中: 0")
+        self.multi_select_label.setStyleSheet("color: #666; font-size: 12px; padding-left: 15px;")
+        self.update_edited_count()
     
     def clear_all_clicked_states(self):
         """清除所有图片的单击状态"""
@@ -3595,7 +3731,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         QtCore.QTimer.singleShot(350, self.update_title_with_position)
 
     def _remove_main_window_shortcuts(self):
-        """移除主窗口的W/A/D快捷键"""
+        """移除主窗口的W/A/D和数字快捷键"""
         if self.labeling_widget and hasattr(self.labeling_widget, 'actions'):
             # 保存并移除W键快捷键
             if hasattr(self.labeling_widget.actions, 'show_hidden_polygons'):
@@ -3617,9 +3753,19 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 if not hasattr(self, '_original_d_shortcuts'):
                     self._original_d_shortcuts = action.shortcuts()
                 action.setShortcuts([])
+
+            if not hasattr(self, '_original_digit_shortcuts'):
+                self._original_digit_shortcuts = {}
+            for digit in range(10):
+                action_name = f"digit_shortcut_{digit}"
+                if hasattr(self.labeling_widget.actions, action_name):
+                    action = getattr(self.labeling_widget.actions, action_name)
+                    if digit not in self._original_digit_shortcuts:
+                        self._original_digit_shortcuts[digit] = action.shortcuts()
+                    action.setShortcuts([])
     
     def _restore_main_window_shortcuts(self):
-        """恢复主窗口的W/A/D快捷键"""
+        """恢复主窗口的W/A/D和数字快捷键"""
         if self.labeling_widget and hasattr(self.labeling_widget, 'actions'):
             # 恢复W键快捷键
             if hasattr(self.labeling_widget.actions, 'show_hidden_polygons'):
@@ -3635,6 +3781,16 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             if hasattr(self.labeling_widget.actions, 'open_next_image'):
                 shortcuts = getattr(self, '_original_d_shortcuts', [QtGui.QKeySequence('D')])
                 self.labeling_widget.actions.open_next_image.setShortcuts(shortcuts)
+
+            original_digit_shortcuts = getattr(self, '_original_digit_shortcuts', {})
+            for digit in range(10):
+                action_name = f"digit_shortcut_{digit}"
+                if hasattr(self.labeling_widget.actions, action_name):
+                    shortcuts = original_digit_shortcuts.get(
+                        digit,
+                        [QtGui.QKeySequence(str(digit))],
+                    )
+                    getattr(self.labeling_widget.actions, action_name).setShortcuts(shortcuts)
     
     def load_settings(self):
         """从配置加载设置"""
@@ -4084,6 +4240,25 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
             # 检查图片是否在文件列表中
             if hasattr(self.labeling_widget, 'fn_to_index') and image_path in self.labeling_widget.fn_to_index:
                 self.labeling_widget.load_file(image_path)
+
+    def event(self, event):
+        """拦截数字键，避免主画布的全局数字快捷键抢先触发。"""
+        if event.type() == QtCore.QEvent.ShortcutOverride:
+            if event.key() in (
+                Qt.Key_0,
+                Qt.Key_1,
+                Qt.Key_2,
+                Qt.Key_3,
+                Qt.Key_4,
+                Qt.Key_5,
+                Qt.Key_6,
+                Qt.Key_7,
+                Qt.Key_8,
+                Qt.Key_9,
+            ):
+                event.accept()
+                return True
+        return super().event(event)
     
     def keyPressEvent(self, event):
         """处理键盘事件"""
@@ -4103,6 +4278,10 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         
         if not self.merge_mode:
             # 非删合模式下的快捷键处理
+            if Qt.Key_0 <= key <= Qt.Key_9:
+                if self.apply_digit_image_category(key - Qt.Key_0):
+                    event.accept()
+                    return
             
             # W键：清除所有多选
             if key == Qt.Key_W:

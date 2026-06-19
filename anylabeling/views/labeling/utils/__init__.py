@@ -20,6 +20,7 @@ from .export import (
     export_mtu_json_annotation,
     export_description_txt,
     export_ocr_subtitle,
+    export_image_category,
 )
 from .general import (
     gradient_text,

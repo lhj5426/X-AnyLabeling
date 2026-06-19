@@ -66,7 +66,7 @@ class FileFilterDialog(QDialog):
         
         # 创建一个按钮组，使所有过滤选项互斥
         self.filter_group = QButtonGroup(self)
-        
+
         # 标注状态过滤
         status_group = QGroupBox("标注状态")
         status_layout = QVBoxLayout()
@@ -231,16 +231,24 @@ class FileFilterDialog(QDialog):
                 has_checked = True
                 break
         
-        if has_checked and not self.overlap_only.isChecked():
+        if (
+            has_checked
+            and not self.overlap_only.isChecked()
+        ):
             self.filter_by_label.setChecked(True)
-    
+
     def update_label_list(self, labels):
         """更新可用标签列表（带颜色和复选框）"""
-        self.label_list.clear()
         self.available_labels = labels or []
+        self._populate_label_list(self.available_labels)
+
+    def _populate_label_list(self, labels):
+        """填充下方复选列表。"""
+        self.label_list.blockSignals(True)
+        self.label_list.clear()
         
         # 从父窗口获取标签颜色
-        for label in self.available_labels:
+        for label in labels or []:
             item = QListWidgetItem()
             item.setText(label)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
@@ -257,12 +265,16 @@ class FileFilterDialog(QDialog):
                     print(f"[DEBUG] 获取标签 '{label}' 颜色失败: {e}")
             
             self.label_list.addItem(item)
+        self.label_list.blockSignals(False)
     
     def select_all_labels(self):
         """全选标签"""
         for i in range(self.label_list.count()):
             self.label_list.item(i).setCheckState(Qt.Checked)
-        self.filter_by_label.setChecked(True)
+        if (
+            not self.overlap_only.isChecked()
+        ):
+            self.filter_by_label.setChecked(True)
     
     def select_no_labels(self):
         """取消全选标签"""

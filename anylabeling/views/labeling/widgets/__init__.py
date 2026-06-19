@@ -10,6 +10,7 @@ from .vqa_dialog import VQADialog
 from .color_dialog import ColorDialog
 from .file_dialog_preview import FileDialogPreview
 from .file_filter_dialog import FileFilterDialog
+from .image_category_manager_dialog import ImageCategoryManagerDialog
 from .filter_label_widget import GroupIDFilterComboBox, LabelFilterComboBox
 from .crosshair_settings_dialog import CrosshairSettingsDialog
 from .label_dialog import (
@@ -61,6 +62,7 @@ __all__ = [
     "ColorDialog",
     "FileDialogPreview",
     "FileFilterDialog",
+    "ImageCategoryManagerDialog",
     "GroupIDFilterComboBox",
     "LabelFilterComboBox",
     "CrosshairSettingsDialog",

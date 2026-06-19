@@ -21,9 +21,75 @@ from PyQt5.QtWidgets import (
 
 from anylabeling.views.labeling.label_converter import LabelConverter
 from anylabeling.views.labeling.logger import logger
+from anylabeling.views.labeling.utils.image_category import (
+    export_images_by_category,
+)
 from anylabeling.views.labeling.widgets import Popup
 from anylabeling.views.labeling.utils.qt import new_icon_path
 from anylabeling.views.labeling.utils.style import *
+
+
+def export_image_category(self):
+    if not getattr(self, "image_list", None):
+        QtWidgets.QMessageBox.warning(
+            self,
+            self.tr("No images loaded"),
+            self.tr("Please load an image folder before exporting image categories."),
+        )
+        return
+
+    current_image = getattr(self, "filename", None) or self.image_list[0]
+    save_path = osp.join(osp.dirname(current_image), "图片分类")
+
+    if osp.exists(save_path) and os.listdir(save_path):
+        msg = QtWidgets.QMessageBox(self)
+        msg.setWindowTitle(self.tr("Confirm Export"))
+        msg.setText(self.tr("图片分类文件夹已存在且不为空。\n请选择操作方式："))
+        msg.setIcon(QtWidgets.QMessageBox.Question)
+        merge_btn = msg.addButton(self.tr("合并"), QtWidgets.QMessageBox.AcceptRole)
+        overwrite_btn = msg.addButton(self.tr("清空并覆盖"), QtWidgets.QMessageBox.DestructiveRole)
+        cancel_btn = msg.addButton(self.tr("取消"), QtWidgets.QMessageBox.RejectRole)
+        msg.setDefaultButton(cancel_btn)
+        msg.exec_()
+        clicked = msg.clickedButton()
+        if clicked == cancel_btn:
+            return
+        elif clicked == overwrite_btn:
+            shutil.rmtree(save_path)
+            os.makedirs(save_path)
+    else:
+        os.makedirs(save_path, exist_ok=True)
+
+    copied, failed, category_counts = export_images_by_category(
+        self,
+        self.image_list,
+        save_path,
+    )
+    count_lines = []
+    for category, count in sorted(
+        category_counts.items(),
+        key=lambda item: (item[0] == "未分类", item[0].lower()),
+    ):
+        count_lines.append(f"{category}: {count}")
+    category_summary = "\n".join(count_lines) if count_lines else self.tr("无")
+    message = (
+        self.tr("导出图片分类完成！")
+        + "\n"
+        + self.tr("导出路径：%s") % save_path
+        + "\n\n"
+        + self.tr("分类统计：")
+        + "\n"
+        + category_summary
+        + "\n\n"
+        + self.tr("总计：%d") % copied
+        + "\n"
+        + self.tr("失败：%d") % failed
+    )
+    QtWidgets.QMessageBox.information(
+        self,
+        self.tr("Export Complete"),
+        message,
+    )
 
 
 class ExportThread(QThread):

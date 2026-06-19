@@ -3,6 +3,11 @@ import os
 
 from ..label_file import LabelFile
 from ..shape import Shape
+from ..utils.image_category import (
+    apply_digit_category,
+    category_badge_text,
+    category_badge_colors,
+)
 
 # Register JXL plugin if available (just import it, it auto-registers)
 try:
@@ -149,7 +154,12 @@ class HorizontalThumbnailItem(QtWidgets.QGraphicsPixmapItem):
         self.scale_factor = 1.0
         self.show_annotations = False
         self.fill_annotations = False
+        self.image_category = category_badge_text(path)
         self.update_placeholder()
+
+    def set_image_category(self, category):
+        self.image_category = category or ""
+        self.update()
         
     def update_placeholder(self):
         w = int(self.base_height * self.aspect_ratio)
@@ -266,6 +276,36 @@ class HorizontalThumbnailItem(QtWidgets.QGraphicsPixmapItem):
             painter.setBrush(QtCore.Qt.NoBrush)
             rect = self.boundingRect()
             painter.drawRect(rect.adjusted(2, 2, -2, -2))
+
+        if self.image_category:
+            painter.save()
+            scale = painter.transform().m11()
+            if scale == 0:
+                scale = 1.0
+            inv_scale = 1.0 / scale
+            painter.scale(inv_scale, inv_scale)
+            font = QtGui.QFont("Arial", 10)
+            font.setBold(True)
+            painter.setFont(font)
+            fm = QtGui.QFontMetrics(font)
+            text = self.image_category
+            text_width = fm.horizontalAdvance(text)
+            badge_rect = QtCore.QRectF(
+                10,
+                self.boundingRect().height() * scale - fm.height() - 16,
+                text_width + 14,
+                fm.height() + 8,
+            )
+            bg_color, fg_color = category_badge_colors(
+                self.labeling_widget,
+                self.image_category,
+            )
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(bg_color)
+            painter.drawRoundedRect(badge_rect, 4, 4)
+            painter.setPen(fg_color)
+            painter.drawText(badge_rect, QtCore.Qt.AlignCenter, text)
+            painter.restore()
 
 class HorizontalViewerDialog(QtWidgets.QDialog):
     image_switched = QtCore.pyqtSignal(str)
@@ -512,6 +552,9 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         # Populate thumbnails
         for i, path in enumerate(self.image_list):
             filename = os.path.basename(path)
+            category = category_badge_text(path)
+            if category:
+                filename = f"{filename} [{category}]"
             # For horizontal list, text is below icon
             item = QtWidgets.QListWidgetItem(f"{i+1} {filename}")
             item.setData(QtCore.Qt.UserRole, path)
@@ -1041,8 +1084,10 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
                             edited_str = "[已编辑]"
                 except Exception:
                     pass
+            category = category_badge_text(current_item.path)
+            category_str = f"[分类:{category}]" if category else ""
             
-            self.setWindowTitle(f"横向滚动看图 - [{closest_idx + 1}/{len(self.image_list)}]{resolution_str}{edited_str}")
+            self.setWindowTitle(f"横向滚动看图 - [{closest_idx + 1}/{len(self.image_list)}]{resolution_str}{edited_str}{category_str}")
             
             new_item = self.items_list[closest_idx]
             if self.current_selected_item != new_item:
@@ -1242,13 +1287,47 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
     def event(self, event):
         """重写event方法，拦截ShortcutOverride事件以阻止主窗口快捷键"""
         if event.type() == QtCore.QEvent.ShortcutOverride:
-            if event.key() in (QtCore.Qt.Key_A, QtCore.Qt.Key_D):
+            if event.key() in (
+                QtCore.Qt.Key_A,
+                QtCore.Qt.Key_D,
+                QtCore.Qt.Key_0,
+                QtCore.Qt.Key_1,
+                QtCore.Qt.Key_2,
+                QtCore.Qt.Key_3,
+                QtCore.Qt.Key_4,
+                QtCore.Qt.Key_5,
+                QtCore.Qt.Key_6,
+                QtCore.Qt.Key_7,
+                QtCore.Qt.Key_8,
+                QtCore.Qt.Key_9,
+            ):
                 event.accept()
                 return True
         return super().event(event)
 
+    def apply_digit_image_category(self, digit):
+        center_item = self.get_center_item()
+        if not center_item:
+            return False
+        ok, category = apply_digit_category(
+            self.labeling_widget,
+            center_item.path,
+            digit,
+        )
+        if not ok:
+            return False
+        center_item.set_image_category(category)
+        if self.labeling_widget and hasattr(self.labeling_widget, "refresh_image_category_manager"):
+            self.labeling_widget.refresh_image_category_manager()
+        self.update_title_progress()
+        return True
+
     def keyPressEvent(self, event):
         """处理键盘事件，支持 A/D 翻页和 F11 全屏"""
+        if QtCore.Qt.Key_0 <= event.key() <= QtCore.Qt.Key_9:
+            if self.apply_digit_image_category(event.key() - QtCore.Qt.Key_0):
+                event.accept()
+                return
         if event.key() == QtCore.Qt.Key_D:
             if self.reverse_mode:
                 self.go_to_prev_image()
