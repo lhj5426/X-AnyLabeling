@@ -43,7 +43,7 @@ class ColoredFormatter(logging.Formatter):
             return termcolor.colored(text, color=color, attrs={"bold": True})
 
         record.levelname2 = colored(
-            f"{record.levelname:<7}", COLORS[record.levelname]
+            record.levelname, COLORS[record.levelname]
         )
         record.message2 = colored(record.msg, COLORS[record.levelname])
         record.asctime2 = termcolor.colored(

@@ -3634,7 +3634,7 @@ class LabelingWidget(QtWidgets.QWidget):
         }  # key=filename, value=scroll_value
 
         if filename is not None and osp.isdir(filename):
-            self.import_image_folder(filename, load=False)
+            self.import_image_folder(filename, load=True)
         else:
             self.filename = filename
 

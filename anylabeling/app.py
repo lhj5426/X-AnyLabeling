@@ -230,6 +230,14 @@ def main():
             f"Failed to load translation for {language}. "
             "Using default language.",
         )
+
+    if filename:
+        try:
+            path_to_log = os.path.realpath(filename)
+        except Exception:
+            path_to_log = filename
+        logger.info(path_to_log)
+
     win = MainWindow(
         app,
         config=config,
@@ -252,6 +260,13 @@ def main():
 
     win.showMaximized()
     win.raise_()
+
+    # Force fit-window after layout settles (first image may have loaded
+    # during __init__ before the window was properly sized).
+    if filename and win.labeling_widget.view.image_list:
+        QtCore.QTimer.singleShot(100,
+            lambda: win.labeling_widget.view.adjust_scale(initial=True))
+
     sys.exit(app.exec())
 
 
