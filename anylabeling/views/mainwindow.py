@@ -4,6 +4,7 @@ import ctypes
 import os.path as osp
 import struct
 
+from PyQt5 import QtCore
 from PyQt5.QtWidgets import QMainWindow, QStatusBar, QVBoxLayout, QWidget
 
 from ..app_info import __appdescription__, __appname__
@@ -64,7 +65,6 @@ class MainWindow(QMainWindow):
     def nativeEvent(self, event_type, message):
         if event_type != b"windows_generic_MSG":
             return False, 0
-        # Manually parse MSG struct to avoid ctypes.wintypes.MSG dependency
         raw = ctypes.string_at(int(message), 48)
         msg_code = struct.unpack_from("I", raw, 8)[0]
         if msg_code == WM_COPYDATA:
@@ -72,11 +72,15 @@ class MainWindow(QMainWindow):
             cds = COPYDATASTRUCT.from_address(lparam_val)
             data = ctypes.string_at(cds.lpData, cds.cbData).decode("utf-8")
             if data:
-                self._open_external_path(data)
+                # 延迟处理：将 import_image_folder 从 nativeEvent
+                # 中移出，避免在 Windows 消息处理上下文中执行重量级 IO
+                # 当 viewer dialog 打开时，同步更新其图片列表会导致
+                # 消息泵中产生重入问题
+                QtCore.QTimer.singleShot(0, lambda: self._do_open_external_path(data))
             return True, 0
         return False, 0
 
-    def _open_external_path(self, path):
+    def _do_open_external_path(self, path):
         path = path.strip('"')
         if not path:
             return
