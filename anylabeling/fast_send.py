@@ -5,8 +5,10 @@
 import sys
 import ctypes
 
+from app_info import __appname__
+
 WM_COPYDATA = 0x004A
-APP_TITLE = "Hmogai_260619_X-AnyLabeling"
+APP_TITLE = __appname__
 
 
 class COPYDATASTRUCT(ctypes.Structure):
