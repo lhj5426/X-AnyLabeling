@@ -37,6 +37,8 @@ label_colors: null
 label_border_colors: null  # 标签独立边框颜色设置，格式: {label: [r, g, b]}
 label_border_widths: null  # 标签独立边框粗细设置，格式: {label: width}
 label_alphas: null  # 标签独立透明度设置，格式: {label: [alpha_idle, alpha_highlight]}
+label_default_border_colors: null  # 标签状态1(默认态:无点击/无高亮)独立边框颜色，格式: {label: [r, g, b]}，未设置时等于填充色
+label_default_border_widths: null  # 标签状态1(默认态)独立边框宽度，格式: {label: width}，未设置时用 shape.line_width
 
 manually_edited_color: '#0000FF'  # Blue - 手动编辑颜色
 

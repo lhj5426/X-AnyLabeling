@@ -4499,6 +4499,11 @@ class Canvas(
         if self.show_order:
             self.draw_order_circles(p)
 
+        # Draw alignment badges (reference "参" + target "对") at top layer
+        # Only when reference is selected (alignment mode active)
+        if self.reference_shape:
+            self.draw_alignment_badges(p)
+
         # Draw overlap indicators (重叠检测显示)
         if self._config.get("overlap_detect_enabled", False):
             self.draw_overlap_indicators(p)
@@ -5342,6 +5347,93 @@ class Canvas(
             text_x = center_screen.x() - text_width / 2
             text_y = center_screen.y() + (ascent - descent) / 2
             p.drawText(QtCore.QPointF(text_x, text_y), text)
+
+        p.restore()
+
+    def draw_alignment_badges(self, p):
+        """Draw alignment badges: "参" for reference shape, "对" for target shapes.
+
+        Only active when self.reference_shape is set (alignment mode with a chosen reference).
+        Drawn in screen coordinates at shape centers, at the very end of paint.
+        """
+        if not self.reference_shape:
+            return
+        offset = self.offset_to_center()
+
+        def to_screen(pt):
+            return QtCore.QPointF(
+                (pt.x() + offset.x()) * self.scale,
+                (pt.y() + offset.y()) * self.scale,
+            )
+
+        def badge_position(shape):
+            """Return screen position for badge: top-left for flat rects, center for tilted."""
+            # Rectangle (non-rotation) → top-left
+            if shape.shape_type == "rectangle":
+                bbox = shape.bounding_rect()
+                return to_screen(QtCore.QPointF(bbox.left(), bbox.top()))
+            # Rotation rect → check angle
+            if shape.shape_type == "rotation" and len(shape.points) == 4:
+                deg = math.degrees(shape.direction) % 180
+                # 0/90 → treat as flat, use top-left. other → center.
+                if deg == 0 or deg == 90:
+                    bbox = shape.bounding_rect()
+                    return to_screen(QtCore.QPointF(bbox.left(), bbox.top()))
+                # Tilted → center
+                sum_x = sum(pt.x() for pt in shape.points)
+                sum_y = sum(pt.y() for pt in shape.points)
+                return to_screen(QtCore.QPointF(sum_x / 4, sum_y / 4))
+            # Fallback → top-left
+            bbox = shape.bounding_rect()
+            return to_screen(QtCore.QPointF(bbox.left(), bbox.top()))
+
+        p.save()
+        p.resetTransform()
+
+        badge_radius = 12
+        font = QtGui.QFont()
+        font.setPointSize(10)
+        font.setBold(True)
+
+        # Draw reference badge
+        if self.reference_shape and self.is_visible(self.reference_shape):
+            shape = self.reference_shape
+            if shape.points:
+                pos = badge_position(shape)
+                p.setBrush(QtGui.QBrush(self.alignment_reference_color))
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
+                p.drawEllipse(pos, badge_radius, badge_radius)
+                p.setFont(font)
+                p.setPen(QtGui.QColor(255, 255, 255))
+                text_rect = QtCore.QRectF(
+                    pos.x() - badge_radius,
+                    pos.y() - badge_radius,
+                    badge_radius * 2,
+                    badge_radius * 2,
+                )
+                p.drawText(text_rect, QtCore.Qt.AlignCenter, "参")
+
+        # Draw target badges
+        for shape in self.selected_shapes:
+            if shape is self.reference_shape:
+                continue
+            if not self.is_visible(shape):
+                continue
+            if not shape.points:
+                continue
+            pos = badge_position(shape)
+            p.setBrush(QtGui.QBrush(self.alignment_target_color))
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 2))
+            p.drawEllipse(pos, badge_radius, badge_radius)
+            p.setFont(font)
+            p.setPen(QtGui.QColor(255, 255, 255))
+            text_rect = QtCore.QRectF(
+                pos.x() - badge_radius,
+                pos.y() - badge_radius,
+                badge_radius * 2,
+                badge_radius * 2,
+            )
+            p.drawText(text_rect, QtCore.Qt.AlignCenter, "对")
 
         p.restore()
 

@@ -42,6 +42,7 @@ from .color_manager_dialog import ColorManagerDialog
 from .smart_guides_dialog import SmartGuidesDialog
 from .shortcut_manager_dialog import ShortcutManagerDialog
 from .segmentation_dialog import SegmentationDialog
+from .text_split_dialog import TextSplitDialog
 from .wheel_settings_dialog import WheelSettingsDialog
 from .rectangle3_width_dialog import Rectangle3WidthDialog
 from .rectangle_scale_dialog import RectangleScaleDialog
@@ -96,6 +97,7 @@ __all__ = [
     "SmartGuidesDialog",
     "ShortcutManagerDialog",
     "SegmentationDialog",
+    "TextSplitDialog",
     "Rectangle3WidthDialog",
     "RectangleScaleDialog",
     "PageTextDialog",

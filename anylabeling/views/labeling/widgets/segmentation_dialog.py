@@ -2,6 +2,36 @@
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 from datetime import datetime
+import os.path as osp
+import yaml
+
+
+def _load_split_settings():
+    """从用户配置文件加载分割工具设置"""
+    config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
+    try:
+        if osp.exists(config_file):
+            with open(config_file, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+                return config.get("text_split_settings", {})
+    except Exception:
+        pass
+    return {}
+
+
+def _save_split_settings(settings):
+    """保存分割工具设置到用户配置文件"""
+    config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
+    try:
+        existing = {}
+        if osp.exists(config_file):
+            with open(config_file, "r", encoding="utf-8") as f:
+                existing = yaml.safe_load(f) or {}
+        existing["text_split_settings"] = settings
+        with open(config_file, "w", encoding="utf-8") as f:
+            yaml.safe_dump(existing, f, allow_unicode=True)
+    except Exception:
+        pass
 
 
 class SegmentationDialog(QtWidgets.QDialog):
@@ -21,6 +51,11 @@ class SegmentationDialog(QtWidgets.QDialog):
 
     closing = QtCore.pyqtSignal()
 
+    # Auto-split signals
+    auto_split_selected = QtCore.pyqtSignal(dict)
+    auto_split_page = QtCore.pyqtSignal(dict)
+    auto_split_range = QtCore.pyqtSignal(int, int, dict)
+
     def __init__(self, parent=None, shortcut_key=None):
         super(SegmentationDialog, self).__init__(parent)
         self.setWindowTitle(self.tr("矩形分割工具"))
@@ -36,6 +71,7 @@ class SegmentationDialog(QtWidgets.QDialog):
         self.current_mode = None  # 'vertical', 'horizontal', or None
 
         self.init_ui()
+        self._load_split_settings()
 
         # 注意：不再在对话框内部创建快捷键，由主窗口的 ApplicationShortcut 统一处理
         # 这样无论焦点在哪里，快捷键都能正常触发 toggle 逻辑
@@ -175,6 +211,88 @@ class SegmentationDialog(QtWidgets.QDialog):
         )
         main_layout.addWidget(self.mode_label)
 
+        # Auto-split section
+        auto_group = QtWidgets.QGroupBox(self.tr("智能行分割（无需手动划线）"))
+        auto_layout = QtWidgets.QVBoxLayout()
+
+        # Row 1: checkbox + range spinboxes
+        row1 = QtWidgets.QHBoxLayout()
+        self.cb_keep_original = QtWidgets.QCheckBox(self.tr("保留原始框"))
+        self.cb_keep_original.setChecked(True)
+        row1.addWidget(self.cb_keep_original)
+        row1.addSpacing(10)
+        row1.addWidget(QtWidgets.QLabel(self.tr("从")))
+        self.spin_start = QtWidgets.QSpinBox()
+        self.spin_start.setRange(1, 9999)
+        self.spin_start.setValue(1)
+        self.spin_start.setFixedWidth(55)
+        row1.addWidget(self.spin_start)
+        row1.addWidget(QtWidgets.QLabel(self.tr("到")))
+        self.spin_end = QtWidgets.QSpinBox()
+        self.spin_end.setRange(1, 9999)
+        self.spin_end.setValue(1)
+        self.spin_end.setFixedWidth(55)
+        row1.addWidget(self.spin_end)
+        row1.addStretch()
+        auto_layout.addLayout(row1)
+
+        # Label filter row (指定标签，仅对匹配标签的矩形做行分割)
+        label_row = QtWidgets.QHBoxLayout()
+        label_row.addWidget(QtWidgets.QLabel(self.tr("指定标签:")))
+        self.split_label_filter = QtWidgets.QLineEdit()
+        self.split_label_filter.setPlaceholderText(self.tr("逗号分隔, 留空=全部分割"))
+        label_row.addWidget(self.split_label_filter)
+        auto_layout.addLayout(label_row)
+
+        # Row 2: action buttons
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        btn_style_green = """
+            QPushButton {
+                background-color: #5cb85c;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 0px;
+            }
+            QPushButton:hover {
+                background-color: #4cae4c;
+            }
+        """
+        btn_style_blue = """
+            QPushButton {
+                background-color: #5bc0de;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 0px;
+            }
+            QPushButton:hover {
+                background-color: #46b8da;
+            }
+        """
+
+        self.btn_auto_selected = QtWidgets.QPushButton(self.tr("分割选中"))
+        self.btn_auto_selected.setStyleSheet(btn_style_green)
+        self.btn_auto_selected.clicked.connect(self._on_auto_selected)
+        btn_row.addWidget(self.btn_auto_selected, 1)
+
+        self.btn_auto_page = QtWidgets.QPushButton(self.tr("分割本页"))
+        self.btn_auto_page.setStyleSheet(btn_style_green)
+        self.btn_auto_page.clicked.connect(self._on_auto_page)
+        btn_row.addWidget(self.btn_auto_page, 1)
+
+        self.btn_auto_range = QtWidgets.QPushButton(self.tr("分割范围"))
+        self.btn_auto_range.setStyleSheet(btn_style_blue)
+        self.btn_auto_range.clicked.connect(self._on_auto_range)
+        btn_row.addWidget(self.btn_auto_range, 1)
+
+        auto_layout.addLayout(btn_row)
+
+        auto_group.setLayout(auto_layout)
+        main_layout.addWidget(auto_group)
+
         # Log area
         log_group = QtWidgets.QGroupBox(self.tr("操作日志"))
         log_layout = QtWidgets.QVBoxLayout()
@@ -311,6 +429,7 @@ class SegmentationDialog(QtWidgets.QDialog):
         """Handle dialog close event."""
         # Save window position before closing
         self.save_window_position()
+        self._save_split_settings()
         # Exit mode when closing
         if self.current_mode:
             self.on_exit_mode()
@@ -320,6 +439,7 @@ class SegmentationDialog(QtWidgets.QDialog):
     def hideEvent(self, event):
         """Handle the window hide event."""
         self.save_window_position()
+        self._save_split_settings()
         super(SegmentationDialog, self).hideEvent(event)
 
 
@@ -343,3 +463,48 @@ class SegmentationDialog(QtWidgets.QDialog):
             event.accept()
             return
         super(SegmentationDialog, self).keyPressEvent(event)
+
+    def _options(self):
+        return {
+            "keep_original": self.cb_keep_original.isChecked(),
+            "target_labels": self.split_label_filter.text(),
+        }
+
+    def _on_auto_selected(self):
+        self.auto_split_selected.emit(self._options())
+
+    def _on_auto_page(self):
+        self.auto_split_page.emit(self._options())
+
+    def _on_auto_range(self):
+        start = self.spin_start.value()
+        end = self.spin_end.value()
+        if start > end:
+            start, end = end, start
+        self.auto_split_range.emit(start, end, self._options())
+
+    def update_page_range(self, current_page, total_pages):
+        """更新范围选择的页码"""
+        if total_pages > 0:
+            self.spin_start.setRange(1, total_pages)
+            self.spin_end.setRange(1, total_pages)
+            self.spin_start.setValue(current_page)
+            self.spin_end.setValue(total_pages)
+
+    def log(self, msg):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.append(f"[{timestamp}] {msg}")
+
+    def _load_split_settings(self):
+        """从配置文件加载分割工具设置"""
+        settings = _load_split_settings()
+        if settings:
+            if "target_labels" in settings:
+                self.split_label_filter.setText(settings["target_labels"])
+
+    def _save_split_settings(self):
+        """保存分割工具设置到配置文件"""
+        settings = {
+            "target_labels": self.split_label_filter.text(),
+        }
+        _save_split_settings(settings)

@@ -86,6 +86,7 @@ from .widgets import (
     SmartGuidesDialog,
     ShortcutManagerDialog,
     SegmentationDialog,
+    TextSplitDialog,
     Rectangle3WidthDialog,
     PageTextDialog,
     HighlightSettingsDialog,
@@ -153,6 +154,136 @@ class MergeThread(QtCore.QThread):
                 )
 
         self.finished.emit(final_message)
+
+
+class TextSplitThread(QtCore.QThread):
+    """后台线程执行范围文本分割"""
+    progress = QtCore.pyqtSignal(int, str)   # current, message
+    log_message = QtCore.pyqtSignal(str)
+    finished = QtCore.pyqtSignal(int)        # grand_total
+    file_done = QtCore.pyqtSignal(str)       # file_path that was just saved
+
+    def __init__(self, files, options, output_dir=None, parent=None):
+        super().__init__(parent)
+        self.files = files
+        self.options = options
+        self.output_dir = output_dir
+
+    def run(self):
+        import os, json, base64, cv2, numpy as np
+        grand_total = 0
+
+        for index, file_path in enumerate(self.files):
+            if self.isInterruptionRequested():
+                break
+
+            base = os.path.splitext(file_path)[0]
+            json_path = base + ".json"
+            # 如果有 output_dir，JSON 在 output_dir 下
+            if self.output_dir:
+                json_path = os.path.join(self.output_dir, os.path.basename(json_path))
+            page_name = os.path.basename(file_path)
+
+            self.progress.emit(index, f"{page_name}")
+
+            if not os.path.exists(json_path):
+                self.log_message.emit(f"[{index+1}/{len(self.files)}] {page_name}: 无JSON")
+                continue
+
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            # 从 JSON imageData 读图
+            img_np = None
+            image_data_b64 = data.get("imageData")
+            if image_data_b64:
+                raw = base64.b64decode(image_data_b64)
+                img = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+                if img is not None:
+                    img_np = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            if img_np is None:
+                raw = np.fromfile(file_path, dtype=np.uint8)
+                img = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+                if img is None:
+                    self.log_message.emit(f"[{index+1}/{len(self.files)}] {page_name}: 图片读取失败")
+                    continue
+                img_np = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+            # Load shapes
+            from .shape import Shape
+            from .widgets.text_split_dialog import TextSplitDialog
+
+            shapes = []
+            for s_data in data.get("shapes", []):
+                if s_data.get("shape_type") != "rectangle":
+                    continue
+                shape = Shape(label=s_data["label"], shape_type="rectangle")
+                for pt in s_data["points"]:
+                    shape.add_point(QtCore.QPointF(pt[0], pt[1]))
+                shapes.append(shape)
+
+            if not shapes:
+                self.log_message.emit(f"[{index+1}/{len(self.files)}] {page_name}: 无矩形")
+                continue
+
+            class FakeCanvas:
+                def __init__(self, shps):
+                    self.shapes = shps
+                def update(self):
+                    pass
+
+            fake_canvas = FakeCanvas(shapes)
+            total = TextSplitDialog.split_canvas_shapes(fake_canvas, img_np, self.options)
+
+            # 写回 JSON
+            keep = self.options.get("keep_original", True)
+            new_shapes = []
+            for s_data in data.get("shapes", []):
+                if s_data.get("shape_type") != "rectangle":
+                    new_shapes.append(s_data)
+            for s in fake_canvas.shapes:
+                pts = s.points
+                if s.label == "line":
+                    new_shapes.append({
+                        "label": "line", "score": None,
+                        "points": [[pts[0].x(), pts[0].y()], [pts[1].x(), pts[1].y()],
+                                   [pts[2].x(), pts[2].y()], [pts[3].x(), pts[3].y()]],
+                        "group_id": None, "description": None, "difficult": False,
+                        "shape_type": "rectangle", "flags": None, "attributes": {},
+                        "kie_linking": [], "is_edited": False, "is_manually_locked": False,
+                    })
+                elif s.label == "mask":
+                    new_shapes.append({
+                        "label": "mask", "score": None,
+                        "points": [[p.x(), p.y()] for p in pts],
+                        "group_id": None, "description": None, "difficult": False,
+                        "shape_type": "polygon", "flags": None, "attributes": {},
+                        "kie_linking": [], "is_edited": False, "is_manually_locked": False,
+                    })
+                elif keep:
+                    # 保留原始矩形框
+                    new_shapes.append({
+                        "label": s.label, "score": None,
+                        "points": [[pts[0].x(), pts[0].y()], [pts[1].x(), pts[1].y()],
+                                   [pts[2].x(), pts[2].y()], [pts[3].x(), pts[3].y()]],
+                        "group_id": None, "description": None, "difficult": False,
+                        "shape_type": "rectangle", "flags": None, "attributes": {},
+                        "kie_linking": [], "is_edited": False, "is_manually_locked": False,
+                    })
+            data["shapes"] = new_shapes
+            data.setdefault("manually_edited", True)
+            try:
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                self.log_message.emit(f"[{index+1}/{len(self.files)}] {page_name}: 写入失败 {e}")
+                continue
+
+            grand_total += total
+            self.log_message.emit(f"[{index+1}/{len(self.files)}] {page_name}: {total} 行")
+            self.file_done.emit(file_path)
+
+        self.finished.emit(grand_total)
 
 
 class AnimatedWebPPreloadThread(QtCore.QThread):
@@ -4935,6 +5066,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self._update_expand_margins_colors()
         self._update_alignment_dialog_page_range()
         self._update_tag_sort_dialog_page_range()
+        self._update_segmentation_dialog_page_range()
 
         # Update UI state
         if self.no_shape():
@@ -7813,18 +7945,162 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.split_requested.connect(self.on_split_requested)
             # Connect canvas signal for middle-click exit
             self.canvas.segmentation_mode_exit_requested.connect(self.on_segmentation_mode_exit_requested)
+            # Connect auto-split signals
+            self.segmentation_dialog.auto_split_selected.connect(
+                lambda opts: self._on_text_split_selected("selected", opts))
+            self.segmentation_dialog.auto_split_page.connect(
+                lambda opts: self._on_text_split_page("page", opts))
+            self.segmentation_dialog.auto_split_range.connect(
+                lambda s, e, opts: self._on_text_split_range(s, e, "range", opts))
 
         if self.segmentation_dialog.isVisible():
             self.segmentation_dialog.raise_()
             self.segmentation_dialog.activateWindow()
         else:
             self.segmentation_dialog.show()
-            # 自动进入垂直分割模式
-            if self.segmentation_dialog.current_mode is None:
-                self.segmentation_dialog.vertical_button.setChecked(True)
-                self.segmentation_dialog.on_vertical_mode()
             # 焦点切回画布，这样数字键快捷键可以正常工作
             self.canvas.setFocus()
+
+        # 更新页面范围
+        current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
+        total_pages = len(self.image_list) if self.image_list else 1
+        self.segmentation_dialog.update_page_range(current_page, total_pages)
+
+    def _text_split_current_image(self, options):
+        """对当前图片执行文本分割"""
+        import cv2
+        import numpy as np
+        canvas = self.canvas
+        pixmap = canvas.pixmap
+        if pixmap is None:
+            self.segmentation_dialog.log(self.tr("画布无图片"))
+            return 0
+        image = pixmap.toImage()
+        ptr = image.bits()
+        ptr.setsize(image.byteCount())
+        arr = np.array(ptr).reshape(image.height(), image.width(), 4)
+        img_np = cv2.cvtColor(arr, cv2.COLOR_BGRA2RGB)
+        total = TextSplitDialog.split_canvas_shapes(canvas, img_np, options)
+        if total > 0:
+            self.load_shapes(self.canvas.shapes, replace=True)
+            self.save_file()
+        self.segmentation_dialog.log(self.tr(f"完成: {total} 行"))
+        return total
+
+    def _on_text_split_selected(self, mode, options):
+        """分割选中框"""
+        import cv2
+        import numpy as np
+        from anylabeling.services.text_splitter.geometry import _is_polygon_line
+        canvas = self.canvas
+        selected = [s for s in canvas.shapes if s.selected and s.shape_type in ("rectangle", "rotation")]
+        if not selected:
+            self.segmentation_dialog.log(self.tr("没有选中的矩形框"))
+            return
+
+        pixmap = canvas.pixmap
+        if pixmap is None:
+            self.segmentation_dialog.log(self.tr("画布无图片"))
+            return
+        image = pixmap.toImage()
+        ptr = image.bits()
+        ptr.setsize(image.byteCount())
+        arr = np.array(ptr).reshape(image.height(), image.width(), 4)
+        img_np = cv2.cvtColor(arr, cv2.COLOR_BGRA2RGB)
+
+        # 解析指定标签
+        target_labels_raw = options.get("target_labels", "")
+        target_labels = None
+        if target_labels_raw.strip():
+            target_labels = {lbl.strip() for lbl in target_labels_raw.split(",") if lbl.strip()}
+
+        keep = options.get("keep_original", True)
+        total = 0
+        for shape in selected:
+            # 如果指定了标签，只处理匹配的标签
+            if target_labels and shape.label not in target_labels:
+                continue
+            x1, y1, x2, y2 = TextSplitDialog._shape_to_rect(shape)
+            # 先删除此矩形范围内的旧 line 形状，避免重复生成
+            TextSplitDialog._remove_lines_in_rect(canvas.shapes, x1-4, y1-4, x2+4, y2+4)
+            lines = TextSplitDialog._split_rect_static(img_np, x1, y1, x2, y2)
+            for line in lines:
+                if _is_polygon_line(line):
+                    new_shape = TextSplitDialog._make_rotation_shape("line", line)
+                else:
+                    lx1, ly1, lx2, ly2 = map(int, line)
+                    new_shape = Shape(label="line", shape_type="rectangle")
+                    new_shape.add_point(QtCore.QPointF(lx1, ly1))
+                    new_shape.add_point(QtCore.QPointF(lx2, ly1))
+                    new_shape.add_point(QtCore.QPointF(lx2, ly2))
+                    new_shape.add_point(QtCore.QPointF(lx1, ly2))
+                canvas.shapes.append(new_shape)
+                total += 1
+            if not keep and shape in canvas.shapes:
+                canvas.shapes.remove(shape)
+        canvas.update()
+        if total > 0:
+            self.load_shapes(self.canvas.shapes, replace=True)
+            self.save_file()
+        self.segmentation_dialog.log(self.tr(f"分割选中: {len(selected)} 框 → {total} 行"))
+
+    def _on_text_split_page(self, mode, options):
+        """分割本页所有矩形"""
+        total = self._text_split_current_image(options)
+        self.segmentation_dialog.log(self.tr(f"分割本页: {total} 行"))
+
+    def _on_text_split_range(self, start, end, mode, options):
+        """批量分割范围页 — 后台线程 + 进度条"""
+        file_list = self.image_list if hasattr(self, 'image_list') and self.image_list else []
+        if not file_list:
+            self.segmentation_dialog.log(self.tr("没有文件列表"))
+            return
+
+        total_files = min(end, len(file_list))
+        files = file_list[start - 1 : total_files]
+
+        if not files:
+            self.segmentation_dialog.log(self.tr("范围无文件"))
+            return
+
+        self.segmentation_dialog.log(
+            self.tr(f"开始范围分割: 第{start}到{total_files}页, 共{len(files)}个文件")
+        )
+
+        # 进度对话框
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在文本分割..."), self.tr("取消"), 0, len(files), self
+        )
+        progress.setWindowTitle(self.tr("文本分割"))
+        progress.setWindowModality(QtCore.Qt.NonModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+
+        # 线程
+        self.text_split_thread = TextSplitThread(files, options, self.output_dir, self)
+        self.text_split_thread.log_message.connect(self.segmentation_dialog.log)
+        self.text_split_thread.progress.connect(
+            lambda i, msg: (progress.setValue(i + 1), progress.setLabelText(msg))
+        )
+        self.text_split_thread.file_done.connect(self._on_text_split_file_done)
+        self.text_split_thread.finished.connect(
+            lambda total: self._on_text_split_finished(total, start, total_files, progress)
+        )
+        progress.canceled.connect(self.text_split_thread.requestInterruption)
+        self.text_split_thread.start()
+
+    def _on_text_split_file_done(self, file_path):
+        """单个文件分割完成，刷新画布"""
+        if self.filename and os.path.normpath(file_path) == os.path.normpath(self.filename):
+            self.load_file(self.filename)
+
+    def _on_text_split_finished(self, grand_total, start, total_files, progress):
+        progress.close()
+        self.segmentation_dialog.log(
+            self.tr(f"范围分割完成: {grand_total} 行 ({start}-{total_files} 页)")
+        )
+        if self.filename:
+            self.load_file(self.filename)
 
     def toggle_segmentation_dialog(self):
         """Toggle segmentation tool dialog (for shortcut).
@@ -7843,10 +8119,6 @@ class LabelingWidget(QtWidgets.QWidget):
             # Hidden: show it
             self.segmentation_dialog.show()
             self.segmentation_dialog.raise_()
-            # 自动进入垂直分割模式
-            if self.segmentation_dialog.current_mode is None:
-                self.segmentation_dialog.vertical_button.setChecked(True)
-                self.segmentation_dialog.on_vertical_mode()
             # 焦点切回画布，这样数字键快捷键可以正常工作
             self.canvas.setFocus()
         elif self.segmentation_dialog.isMinimized():
@@ -10920,7 +11192,11 @@ class LabelingWidget(QtWidgets.QWidget):
         # 更新独立边框宽度（点击后）
         border_width_selected = self._get_border_width_selected_by_label(shape.label)
         shape._border_width_selected = border_width_selected
-        
+
+        # 更新状态1（默认态）独立边框颜色和宽度（None 表示边框=填充色，向后兼容）
+        shape._default_border_color = self._get_default_border_color_by_label(shape.label)
+        shape._default_border_width = self._get_default_border_width_by_label(shape.label)
+
         # 更新独立控制柄颜色
         shape._handle_vertex_color = self._get_handle_vertex_color_by_label(shape.label)
         shape._handle_hvertex_color = self._get_handle_hvertex_color_by_label(shape.label)
@@ -10985,6 +11261,24 @@ class LabelingWidget(QtWidgets.QWidget):
             and label in self._config["label_border_widths_selected"]
         ):
             return self._config["label_border_widths_selected"][label]
+        return None
+
+    def _get_default_border_color_by_label(self, label):
+        """获取标签的状态1（默认态：无点击/无高亮）独立边框颜色，如果没有设置则返回None（表示等于填充色）"""
+        if (
+            self._config.get("label_default_border_colors")
+            and label in self._config["label_default_border_colors"]
+        ):
+            return self._config["label_default_border_colors"][label]
+        return None
+
+    def _get_default_border_width_by_label(self, label):
+        """获取标签的状态1（默认态）独立边框宽度，如果没有设置则返回None（表示用 line_width）"""
+        if (
+            self._config.get("label_default_border_widths")
+            and label in self._config["label_default_border_widths"]
+        ):
+            return self._config["label_default_border_widths"][label]
         return None
 
     def _get_handle_vertex_color_by_label(self, label):
@@ -12157,7 +12451,7 @@ class LabelingWidget(QtWidgets.QWidget):
         """修改标签边框颜色和宽度的内部实现（支持实时预览）"""
         from PyQt5.QtWidgets import (
             QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-            QPushButton, QDoubleSpinBox, QGroupBox
+            QPushButton, QDoubleSpinBox, QGroupBox, QCheckBox
         )
         from PyQt5.QtGui import QColor
 
@@ -12171,7 +12465,9 @@ class LabelingWidget(QtWidgets.QWidget):
                 'color': self._get_border_rgb_by_label(label),
                 'width': self._get_border_width_by_label(label),
                 'width_selected': self._get_border_width_selected_by_label(label),
-                'select_line_color': self._get_rgb_by_label(label)  # 保存原始select_line_color
+                'select_line_color': self._get_rgb_by_label(label),  # 保存原始select_line_color
+                'default_color': self._get_default_border_color_by_label(label),  # 状态1 默认态独立边框颜色
+                'default_width': self._get_default_border_width_by_label(label),  # 状态1 默认态独立边框宽度
             }
 
         # 获取第一个标签的当前设置作为默认值
@@ -12189,6 +12485,20 @@ class LabelingWidget(QtWidgets.QWidget):
         current_width_selected = self._get_border_width_selected_by_label(labels[0])
         if current_width_selected is None:
             current_width_selected = self._config.get("shape", {}).get("line_width", 4.0)
+
+        # 状态1 默认态独立边框设置（None 表示边框=填充色，向后兼容）
+        current_default_color_rgb = self._get_default_border_color_by_label(labels[0])
+        # "跟随填充色"复选框：未设置独立颜色时勾选（恢复默认行为）
+        follow_fill_init = current_default_color_rgb is None
+        if current_default_color_rgb:
+            current_default_color = QColor(*current_default_color_rgb)
+        else:
+            # 未设置时初始预览用填充色（但可被取消勾选后自定义）
+            current_default_color = QColor(*self._get_rgb_by_label(labels[0]))
+
+        current_default_width = self._get_default_border_width_by_label(labels[0])
+        if current_default_width is None:
+            current_default_width = self._config.get("shape", {}).get("line_width", 4.0)
 
         # 创建非模态对话框
         dialog = QDialog(self)
@@ -12222,11 +12532,18 @@ class LabelingWidget(QtWidgets.QWidget):
 
         def update_preview():
             """实时更新画布预览"""
-            # 临时开启高亮模式以便预览
+            # 临时开启高亮模式以便预览高亮态边框
             Shape.highlighting_enabled = True
             color = selected_color[0]
             width = width_spin.value()
             width_selected = width_selected_spin.value()
+            # 状态1 默认态：勾选"跟随填充色"时颜色和宽度都置 None（恢复现状），否则用所选值
+            if follow_fill_check.isChecked():
+                default_color = None
+                default_width = None
+            else:
+                default_color = selected_default_color[0]
+                default_width = default_width_spin.value()
             for shape in self.canvas.shapes:
                 if shape.label in labels:
                     shape._border_color = color
@@ -12234,6 +12551,9 @@ class LabelingWidget(QtWidgets.QWidget):
                     shape._border_width_selected = width_selected
                     # 同时更新select_line_color，避免两层颜色
                     shape.select_line_color = color
+                    # 状态1 默认态独立边框
+                    shape._default_border_color = default_color
+                    shape._default_border_width = default_width
             self.canvas.update()
 
         def on_color_click():
@@ -12277,6 +12597,66 @@ class LabelingWidget(QtWidgets.QWidget):
         width_selected_layout.addStretch()
         layout.addWidget(width_selected_group)
 
+        # ===== 状态1（默认态：无点击/无高亮）独立边框设置 =====
+        # 默认情况下边框颜色 = 填充色；取消勾选"跟随填充色"后可设置独立颜色
+        default_color_group = QGroupBox(self.tr("默认边框颜色 (状态1：无点击/无高亮)"))
+        default_color_layout = QVBoxLayout(default_color_group)
+
+        # "跟随填充色"复选框
+        follow_fill_check = QCheckBox(self.tr("跟随填充色（边框与填充同色，默认）"))
+        follow_fill_check.setChecked(follow_fill_init)
+        follow_fill_check.stateChanged.connect(update_preview)
+        default_color_layout.addWidget(follow_fill_check)
+
+        # 颜色预览 + 选择按钮（勾选"跟随填充色"时禁用）
+        default_color_row = QHBoxLayout()
+        default_color_preview = QLabel()
+        default_color_preview.setFixedSize(60, 30)
+        default_color_preview.setStyleSheet(f"background-color: {current_default_color.name()}; border: 1px solid black;")
+        default_color_row.addWidget(default_color_preview)
+
+        default_color_btn = QPushButton(self.tr("选择颜色"))
+        selected_default_color = [current_default_color]  # 闭包可变存储
+
+        def on_default_color_click():
+            from PyQt5.QtWidgets import QColorDialog
+            color = QColorDialog.getColor(selected_default_color[0], dialog, self.tr("选择默认边框颜色"))
+            if color.isValid():
+                selected_default_color[0] = color
+                default_color_preview.setStyleSheet(f"background-color: {color.name()}; border: 1px solid black;")
+                update_preview()
+
+        default_color_btn.clicked.connect(on_default_color_click)
+        default_color_row.addWidget(default_color_btn)
+        default_color_row.addStretch()
+        default_color_layout.addLayout(default_color_row)
+
+        layout.addWidget(default_color_group)
+
+        # 默认态边框宽度设置组
+        default_width_group = QGroupBox(self.tr("默认边框宽度 (状态1)"))
+        default_width_layout = QHBoxLayout(default_width_group)
+
+        default_width_spin = QDoubleSpinBox()
+        default_width_spin.setRange(0, 20.0)  # 允许0，表示不显示边框
+        default_width_spin.setSingleStep(1)
+        default_width_spin.setValue(current_default_width)
+        default_width_spin.setSuffix(" px")
+        default_width_spin.valueChanged.connect(update_preview)  # 实时预览
+        default_width_layout.addWidget(default_width_spin)
+        default_width_layout.addStretch()
+        layout.addWidget(default_width_group)
+
+        def update_default_controls_state():
+            """根据"跟随填充色"复选框状态启用/禁用颜色与宽度控件"""
+            enabled = not follow_fill_check.isChecked()
+            default_color_preview.setEnabled(enabled)
+            default_color_btn.setEnabled(enabled)
+            default_width_spin.setEnabled(enabled)
+
+        follow_fill_check.stateChanged.connect(lambda _: update_default_controls_state())
+        update_default_controls_state()  # 初始化控件启用状态
+
         # 按钮
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton(self.tr("确定"))
@@ -12297,6 +12677,18 @@ class LabelingWidget(QtWidgets.QWidget):
             new_width_selected = width_selected_spin.value()
             new_rgb = (new_color.red(), new_color.green(), new_color.blue())
 
+            # 状态1 默认态独立边框
+            follow_fill = follow_fill_check.isChecked()
+            new_default_width = default_width_spin.value()
+            if follow_fill:
+                new_default_rgb = None  # 跟随填充色
+            else:
+                new_default_rgb = (
+                    selected_default_color[0].red(),
+                    selected_default_color[0].green(),
+                    selected_default_color[0].blue(),
+                )
+
             # 更新边框颜色配置
             if "label_border_colors" not in self._config or self._config["label_border_colors"] is None:
                 self._config["label_border_colors"] = {}
@@ -12309,10 +12701,24 @@ class LabelingWidget(QtWidgets.QWidget):
             if "label_border_widths_selected" not in self._config or self._config["label_border_widths_selected"] is None:
                 self._config["label_border_widths_selected"] = {}
 
+            # 更新状态1 默认态独立边框颜色/宽度配置
+            if "label_default_border_colors" not in self._config or self._config["label_default_border_colors"] is None:
+                self._config["label_default_border_colors"] = {}
+            if "label_default_border_widths" not in self._config or self._config["label_default_border_widths"] is None:
+                self._config["label_default_border_widths"] = {}
+
             for label in labels:
                 self._config["label_border_colors"][label] = new_rgb
                 self._config["label_border_widths"][label] = new_width
                 self._config["label_border_widths_selected"][label] = new_width_selected
+
+                # 状态1 默认态：跟随填充色时删除该 label 的独立配置（恢复默认）
+                if new_default_rgb is None:
+                    self._config["label_default_border_colors"].pop(label, None)
+                    self._config["label_default_border_widths"].pop(label, None)
+                else:
+                    self._config["label_default_border_colors"][label] = new_default_rgb
+                    self._config["label_default_border_widths"][label] = new_default_width
 
             # shapes已经在预览时更新过了，这里确保最终值正确
             for shape in self.canvas.shapes:
@@ -12320,6 +12726,12 @@ class LabelingWidget(QtWidgets.QWidget):
                     shape._border_color = QtGui.QColor(*new_rgb)
                     shape._border_width = new_width
                     shape._border_width_selected = new_width_selected
+                    # 状态1 默认态独立边框
+                    if new_default_rgb is None:
+                        shape._default_border_color = None
+                    else:
+                        shape._default_border_color = QtGui.QColor(*new_default_rgb)
+                    shape._default_border_width = new_default_width if new_default_rgb is not None else None
 
             self.canvas.update()
             self.set_dirty()
@@ -12339,6 +12751,12 @@ class LabelingWidget(QtWidgets.QWidget):
                         shape._border_color = None
                     shape._border_width = orig['width']
                     shape._border_width_selected = orig['width_selected']
+                    # 恢复状态1 默认态独立边框
+                    if orig['default_color']:
+                        shape._default_border_color = QtGui.QColor(*orig['default_color'])
+                    else:
+                        shape._default_border_color = None
+                    shape._default_border_width = orig['default_width']
             self.canvas.update()
 
         def on_finished(result):
@@ -14495,6 +14913,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self._update_alignment_dialog_page_range()
         self._update_tag_sort_dialog_page_range()
         self._update_rectangle_scale_page_range()
+        self._update_segmentation_dialog_page_range()
         self._update_page_text_dialog()
 
         if (
@@ -14874,6 +15293,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Update rectangle scale dialog page range if open
         self._update_rectangle_scale_page_range()
+
+        # Update segmentation dialog page range if open
+        self._update_segmentation_dialog_page_range()
 
         # Update page text dialog if open
         self._update_page_text_dialog()
@@ -17185,6 +17607,15 @@ class LabelingWidget(QtWidgets.QWidget):
             total_pages = len(self.image_list) if self.image_list else 0
             # 更新页面范围
             self.rectangle_scale_dialog.update_page_range(current_page, total_pages)
+
+    def _update_segmentation_dialog_page_range(self):
+        """Update page range in segmentation dialog if it's open and visible."""
+        if (hasattr(self, 'segmentation_dialog') and
+            self.segmentation_dialog is not None and
+            self.segmentation_dialog.isVisible()):
+            current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
+            total_pages = len(self.image_list) if self.image_list else 1
+            self.segmentation_dialog.update_page_range(current_page, total_pages)
 
     def _update_page_text_dialog(self):
         """Update page text dialog if it's open and visible."""

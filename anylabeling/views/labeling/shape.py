@@ -149,6 +149,10 @@ class Shape:
         self._border_color = None
         self._border_width = None  # 高亮时的边框宽度
         self._border_width_selected = None  # 点击后（取消高亮）的边框宽度
+        # 状态1（默认态：无点击、无高亮）独立边框设置
+        # None 表示边框颜色=填充色（向后兼容），宽度用 line_width
+        self._default_border_color = None  # 状态1 默认态独立边框颜色
+        self._default_border_width = None  # 状态1 默认态独立边框宽度
         
         # 标签独立控制柄颜色（None表示使用默认值）
         self._handle_vertex_color = None  # 选中时顶点填充色（点和块统一）
@@ -558,10 +562,14 @@ class Shape:
                     width = self.line_width
             else:
                 # 状态1: 没有点击没有高亮 → 默认颜色
-                # 自定义边框颜色和宽度只在高亮模式下生效
+                # 颜色优先级：高亮态独立边框色(_border_color) > 默认态独立边框色(_default_border_color) > 填充色(line_color)
                 if Shape.highlighting_enabled and self._border_color is not None:
                     color = self._border_color
+                elif self._default_border_color is not None:
+                    # 默认态独立边框颜色（与填充色分离）
+                    color = self._default_border_color
                 else:
+                    # 默认：边框颜色 = 填充色（向后兼容）
                     color = self.line_color
                 # 边框宽度：高亮模式下根据 fill 状态和 highlight_use_border_color 设置选择不同的宽度
                 if Shape.highlighting_enabled:
@@ -581,7 +589,11 @@ class Shape:
                         else:
                             width = self.line_width
                 else:
-                    width = self.line_width
+                    # 非高亮模式：状态1 默认态，优先使用默认态独立边框宽度
+                    if self._default_border_width is not None:
+                        width = self._default_border_width
+                    else:
+                        width = self.line_width
             
             pen = QtGui.QPen(color)
             # Try using integer sizes for smoother drawing(?)

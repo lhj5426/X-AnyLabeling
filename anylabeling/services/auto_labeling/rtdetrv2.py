@@ -31,6 +31,7 @@ class RTDETRv2(Model):
             "input_conf",
             "edit_conf",
             "toggle_preserve_existing_annotations",
+            "button_filter_classes",
         ]
         output_modes = {
             "rectangle": QCoreApplication.translate("Model", "Rectangle"),
@@ -54,6 +55,7 @@ class RTDETRv2(Model):
         self.input_shape = self.net.get_input_shape()[-2:]
         self.conf_thres = self.config["conf_threshold"]
         self.replace = True
+        self.filter_classes = self.config.get("filter_classes", None)
 
     def set_auto_labeling_conf(self, value):
         """set auto labeling confidence threshold"""
@@ -130,6 +132,11 @@ class RTDETRv2(Model):
         shapes = []
 
         for score, index, box in zip(scores, indexs, bboxes):
+            # 标签过滤
+            if self.filter_classes is not None:
+                index_int = int(index)
+                if index_int not in self.filter_classes:
+                    continue
             xmin, ymin, xmax, ymax = box
             label = self.classes[int(index)]
             shape = Shape(

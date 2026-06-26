@@ -1,0 +1,10 @@
+type: rtdetrv2
+name: comic_text_bubble_int8-r20250626
+provider: ogkalu
+display_name: Comic-Text-Bubble-INT8
+model_path: D:/Ddown/comic-text-and-bubble-detector/detector_int8.onnx
+conf_threshold: 0.5
+classes:
+  - bubble
+  - text_bubble
+  - text_free

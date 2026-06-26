@@ -507,6 +507,42 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         direct_box_btn.clicked.connect(self.generate_mask_from_boxes)
         button_layout.addWidget(direct_box_btn)
 
+        otsu_btn = QtWidgets.QPushButton(self.tr("Otsu智能掩膜"))
+        otsu_btn.setMinimumHeight(35)
+        otsu_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #5cb85c;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 0px;
+            }
+            QPushButton:hover {
+                background-color: #4cae4c;
+            }
+        """)
+        otsu_btn.setToolTip(self.tr("用 Otsu 阈值+连通组件生成像素级多边形到画布"))
+        otsu_btn.clicked.connect(self.generate_otsu_mask)
+        button_layout.addWidget(otsu_btn)
+
+        otsu_png_btn = QtWidgets.QPushButton(self.tr("Otsu生成PNG"))
+        otsu_png_btn.setMinimumHeight(35)
+        otsu_png_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f0ad4e;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 5px 0px;
+            }
+            QPushButton:hover {
+                background-color: #ec971f;
+            }
+        """)
+        otsu_png_btn.setToolTip(self.tr("用 Otsu 阈值+连通组件直接生成 PNG 掩膜图（不生成多边形）"))
+        otsu_png_btn.clicked.connect(self.generate_otsu_png)
+        button_layout.addWidget(otsu_png_btn)
+
         ctd_direct_btn = QtWidgets.QPushButton(self.tr("使用CTD生成"))
         ctd_direct_btn.setMinimumHeight(35)
         ctd_direct_btn.setToolTip(self.tr("从JSON标注框使用CTD模型生成PNG掩膜（不生成多边形）"))
@@ -1300,6 +1336,363 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             self.progress_bar.setVisible(False)
             self.generate_btn.setEnabled(True)
             self.status_label.setText(self.tr(f"❌ 批量生成失败"))
+
+    # ── Otsu 智能掩膜 ──────────────────────────────────────
+    def generate_otsu_mask(self):
+        """Otsu+连通组件智能掩膜 — 当前页面或所有页面"""
+        if self.current_page_radio.isChecked():
+            self._otsu_mask_current()
+        else:
+            self._otsu_mask_all()
+
+    def _otsu_mask_current(self):
+        """当前页面 Otsu 掩膜生成"""
+        try:
+            self.log_text.clear()
+            self.append_log("[Otsu] 开始智能掩膜生成...")
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
+            self.generate_btn.setEnabled(False)
+
+            if not self.parent_widget or not hasattr(self.parent_widget, 'filename'):
+                raise Exception("无法获取当前图片信息")
+            image_path = self.parent_widget.filename
+            if not image_path:
+                raise Exception("没有打开图片")
+
+            json_path = os.path.splitext(image_path)[0] + '.json'
+            if not os.path.exists(json_path):
+                raise Exception(f"未找到JSON: {json_path}")
+
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            shapes = data.get('shapes', [])
+
+            from PIL import Image
+            pil_img = Image.open(image_path)
+            img_rgb = np.array(pil_img.convert('RGB'))
+
+            from anylabeling.services.text_splitter.mask_generator import generate_text_mask
+
+            self._process_otsu_shapes(img_rgb, shapes, image_path, data, json_path)
+
+            self.progress_bar.setVisible(False)
+            self.generate_btn.setEnabled(True)
+            self.status_label.setText(self.tr("✅ Otsu掩膜生成完成"))
+
+        except Exception as e:
+            import traceback
+            self.append_log(f"[错误] {e}")
+            self.append_log(traceback.format_exc())
+            self.progress_bar.setVisible(False)
+            self.generate_btn.setEnabled(True)
+            self.status_label.setText(self.tr(f"❌ 失败: {e}"))
+
+    def _otsu_mask_all(self):
+        """所有页面批量 Otsu 掩膜"""
+        try:
+            self.log_text.clear()
+            self.append_log("[Otsu] 开始批量智能掩膜...")
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
+            self.generate_btn.setEnabled(False)
+
+            image_list = self.parent_widget.image_list
+            total = len(image_list)
+            processed = 0
+
+            from PIL import Image
+            from anylabeling.services.text_splitter.mask_generator import generate_text_mask
+
+            for idx, image_path in enumerate(image_list):
+                json_path = os.path.splitext(image_path)[0] + '.json'
+                if not os.path.exists(json_path):
+                    continue
+
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                shapes = data.get('shapes', [])
+                if not shapes:
+                    continue
+
+                pil_img = Image.open(image_path)
+                img_rgb = np.array(pil_img.convert('RGB'))
+
+                self.append_log(f"[{idx+1}/{total}] {os.path.basename(image_path)}")
+                self._process_otsu_shapes(img_rgb, shapes, image_path, data, json_path)
+
+                processed += 1
+                self.progress_bar.setValue(int(processed / total * 100))
+                QtCore.QCoreApplication.processEvents()
+
+            self.progress_bar.setVisible(False)
+            self.generate_btn.setEnabled(True)
+            self.append_log(f"[Otsu] ✅ 批量完成！处理了 {processed}/{total} 个文件")
+            self.status_label.setText(self.tr(f"✅ Otsu批量完成 ({processed}文件)"))
+
+            # 刷新画布
+            if self.parent_widget and hasattr(self.parent_widget, 'load_file'):
+                self.parent_widget.load_file(self.parent_widget.filename)
+
+        except Exception as e:
+            import traceback
+            self.append_log(f"[错误] {e}")
+            self.append_log(traceback.format_exc())
+            self.progress_bar.setVisible(False)
+            self.generate_btn.setEnabled(True)
+
+    def _process_otsu_shapes(self, img_rgb, shapes, image_path, data, json_path):
+        """每个标注框 crop（带4px扩展）单独 Otsu → 文字轮廓 mask → polygon + PNG（照搬 detect_and_split.py）"""
+        from anylabeling.services.text_splitter.mask_generator import generate_text_mask
+
+        h, w = img_rgb.shape[:2]
+        mask_full = np.zeros((h, w), dtype=np.uint8)
+        modified = False
+        box_count = 0
+
+        for shape_data in shapes:
+            if shape_data.get('shape_type') not in ('rectangle', 'rotation'):
+                continue
+            points = shape_data.get('points', [])
+            if len(points) < 4:
+                continue
+
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            x1, y1 = int(min(xs)), int(min(ys))
+            x2, y2 = int(max(xs)), int(max(ys))
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            # 照搬 detect_and_split.py：crop 外扩 4px（关键！）
+            # 让白色背景连通到 crop 边缘 → 被 border_mask 过滤掉 → 只剩文字笔画
+            expand_px = 4
+            ex1, ey1 = max(0, x1 - expand_px), max(0, y1 - expand_px)
+            ex2, ey2 = min(w, x2 + expand_px), min(h, y2 + expand_px)
+            crop = img_rgb[ey1:ey2, ex1:ex2]
+            crop_mask = generate_text_mask(crop)
+            if crop_mask is None or crop_mask.size == 0 or not np.any(crop_mask):
+                continue
+
+            # 贴回全图 mask（用扩展坐标，mask 会自然包含原图框边缘的文字笔画）
+            region = mask_full[ey1:ey2, ex1:ex2]
+            use_h, use_w = min(crop_mask.shape[0], region.shape[0]), min(crop_mask.shape[1], region.shape[1])
+            region[:use_h, :use_w] = np.bitwise_or(region[:use_h, :use_w], crop_mask[:use_h, :use_w])
+
+            crop_area = (ey2 - ey1) * (ex2 - ex1)
+            mask_area = np.count_nonzero(crop_mask)
+            self.append_log(f"  [{x1},{y1},{x2},{y2}] {mask_area}/{crop_area}={100*mask_area//crop_area}%")
+
+            # polygon（用 crop_mask 在扩展坐标下提取轮廓，偏移到全图坐标）
+            contours, _ = cv2.findContours(crop_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cnt in contours:
+                if len(cnt) < 3:
+                    continue
+                peri = cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, 0.005 * peri, True)
+                abs_pts = [[int(pt[0][0]) + ex1, int(pt[0][1]) + ey1] for pt in approx]
+                if len(abs_pts) >= 3:
+                    data['shapes'].append({
+                        "label": "mask", "score": None,
+                        "points": abs_pts,
+                        "group_id": None, "description": None, "difficult": False,
+                        "shape_type": "polygon", "flags": None, "attributes": {},
+                        "kie_linking": [], "is_edited": False, "is_manually_locked": False,
+                    })
+                    modified = True
+                    box_count += 1
+
+        # 保存 JSON polygon
+        if modified:
+            data.setdefault("manually_edited", True)
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+        # 保存 PNG 掩膜图（两张：纯掩膜 + 叠加高亮，跟 detect_and_split.py 一样）
+        if np.any(mask_full):
+            mask_dir = os.path.join(os.path.dirname(image_path), "mask")
+            os.makedirs(mask_dir, exist_ok=True)
+            base = os.path.splitext(os.path.basename(image_path))[0]
+
+            is_imagetrans = self.imagetrans_format_radio.isChecked()
+            if is_imagetrans:
+                text_color = [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()]
+                text_alpha = int(self.opacity_slider.value() * 2.55)
+                mask_rgba = np.zeros((h, w, 4), dtype=np.uint8)
+                mask_indices = mask_full > 127
+                mask_rgba[mask_indices] = [text_color[2], text_color[1], text_color[0], text_alpha]
+                _, buf = cv2.imencode('.png', mask_rgba)
+                buf.tofile(os.path.join(mask_dir, f"{base}.png"))
+            else:
+                # BallonsTranslator: 纯掩膜
+                _, buf = cv2.imencode('.png', mask_full)
+                buf.tofile(os.path.join(mask_dir, f"{base}.png"))
+
+        return box_count
+
+    # ── Otsu 纯 PNG（不生成多边形） ─────────────────────────
+    def generate_otsu_png(self):
+        """Otsu 纯 PNG 掩膜 — 不生成多边形"""
+        if self.current_page_radio.isChecked():
+            self._otsu_png_current()
+        else:
+            self._otsu_png_all()
+
+    def _otsu_png_current(self):
+        try:
+            self.log_text.clear()
+            self.append_log("[Otsu PNG] 开始生成掩膜图...")
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
+            self.generate_btn.setEnabled(False)
+
+            if not self.parent_widget or not hasattr(self.parent_widget, 'filename'):
+                raise Exception("无法获取当前图片")
+            image_path = self.parent_widget.filename
+            if not image_path:
+                raise Exception("没有打开图片")
+
+            json_path = os.path.splitext(image_path)[0] + '.json'
+            if not os.path.exists(json_path):
+                raise Exception(f"未找到JSON: {json_path}")
+
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            from PIL import Image
+            pil_img = Image.open(image_path)
+            img_rgb = np.array(pil_img.convert('RGB'))
+
+            self._process_otsu_png(img_rgb, data['shapes'], image_path)
+
+            self.progress_bar.setVisible(False)
+            self.generate_btn.setEnabled(True)
+            self.status_label.setText(self.tr("✅ Otsu PNG 完成"))
+
+        except Exception as e:
+            import traceback
+            self.append_log(f"[错误] {e}")
+            self.append_log(traceback.format_exc())
+            self.progress_bar.setVisible(False)
+            self.generate_btn.setEnabled(True)
+
+    def _otsu_png_all(self):
+        try:
+            self.log_text.clear()
+            self.append_log("[Otsu PNG] 批量生成...")
+            self.progress_bar.setVisible(True)
+            self.generate_btn.setEnabled(False)
+
+            image_list = self.parent_widget.image_list
+            total = len(image_list)
+            processed = 0
+
+            from PIL import Image
+
+            for idx, image_path in enumerate(image_list):
+                json_path = os.path.splitext(image_path)[0] + '.json'
+                if not os.path.exists(json_path):
+                    continue
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                shapes = data.get('shapes', [])
+                if not shapes:
+                    continue
+
+                pil_img = Image.open(image_path)
+                img_rgb = np.array(pil_img.convert('RGB'))
+
+                self.append_log(f"[{idx+1}/{total}] {os.path.basename(image_path)}")
+                self._process_otsu_png(img_rgb, shapes, image_path)
+
+                processed += 1
+                self.progress_bar.setValue(int(processed / total * 100))
+                QtCore.QCoreApplication.processEvents()
+
+            self.progress_bar.setVisible(False)
+            self.generate_btn.setEnabled(True)
+            self.append_log(f"[Otsu PNG] ✅ 完成 {processed}/{total} 文件")
+            self.status_label.setText(self.tr(f"✅ Otsu PNG ({processed}文件)"))
+
+        except Exception as e:
+            import traceback
+            self.append_log(f"[错误] {e}")
+            self.append_log(traceback.format_exc())
+            self.progress_bar.setVisible(False)
+            self.generate_btn.setEnabled(True)
+
+    def _process_otsu_png(self, img_rgb, shapes, image_path):
+        """每个标注框 crop（带4px扩展）单独 Otsu → 文字轮廓 mask → 纯 PNG（照搬 detect_and_split.py）"""
+        from anylabeling.services.text_splitter.mask_generator import generate_text_mask
+
+        h, w = img_rgb.shape[:2]
+        mask_full = np.zeros((h, w), dtype=np.uint8)
+
+        for shape_data in shapes:
+            if shape_data.get('shape_type') not in ('rectangle', 'rotation'):
+                continue
+            points = shape_data.get('points', [])
+            if len(points) < 4:
+                continue
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            x1, y1 = int(min(xs)), int(min(ys))
+            x2, y2 = int(max(xs)), int(max(ys))
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(w, x2), min(h, y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            # 照搬 detect_and_split.py：crop 外扩 4px（关键！）
+            # 让白色背景连通到 crop 边缘 → 被 border_mask 过滤掉 → 只剩文字笔画
+            expand_px = 4
+            ex1, ey1 = max(0, x1 - expand_px), max(0, y1 - expand_px)
+            ex2, ey2 = min(w, x2 + expand_px), min(h, y2 + expand_px)
+            crop = img_rgb[ey1:ey2, ex1:ex2]
+            mask = generate_text_mask(crop)
+            if mask is None or mask.size == 0 or not np.any(mask):
+                continue
+
+            # 贴回全图 mask（用扩展坐标）
+            region = mask_full[ey1:ey2, ex1:ex2]
+            use_h = min(mask.shape[0], region.shape[0])
+            use_w = min(mask.shape[1], region.shape[1])
+            region[:use_h, :use_w] = np.bitwise_or(
+                region[:use_h, :use_w], mask[:use_h, :use_w]
+            )
+
+        if not np.any(mask_full):
+            self.append_log("  (无有效掩膜)")
+            return
+
+        mask_dir = os.path.join(os.path.dirname(image_path), "mask")
+        os.makedirs(mask_dir, exist_ok=True)
+        base = os.path.splitext(os.path.basename(image_path))[0]
+        if not np.any(mask_full):
+            self.append_log("  (无有效掩膜)")
+            return
+
+        mask_dir = os.path.join(os.path.dirname(image_path), "mask")
+        os.makedirs(mask_dir, exist_ok=True)
+        base = os.path.splitext(os.path.basename(image_path))[0]
+
+        is_imagetrans = self.imagetrans_format_radio.isChecked()
+        if is_imagetrans:
+            text_color = [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()]
+            text_alpha = int(self.opacity_slider.value() * 2.55)
+            mask_rgba = np.zeros((h, w, 4), dtype=np.uint8)
+            mask_indices = mask_full > 127
+            mask_rgba[mask_indices] = [text_color[2], text_color[1], text_color[0], text_alpha]
+            _, buf = cv2.imencode('.png', mask_rgba)
+            buf.tofile(os.path.join(mask_dir, f"{base}.png"))
+            self.append_log(f"  → {mask_dir}/{base}.png")
+        else:
+            # BallonsTranslator: 黑底白字纯掩膜
+            _, buf = cv2.imencode('.png', mask_full)
+            buf.tofile(os.path.join(mask_dir, f"{base}.png"))
+            self.append_log(f"  → {mask_dir}/{base}.png")
 
     def generate_current_mask(self):
         """生成当前页面的掩膜（异步执行）"""
