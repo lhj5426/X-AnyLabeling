@@ -595,6 +595,9 @@ class Shape:
                     else:
                         width = self.line_width
             
+            # 防御：如果color是list，自动转为QColor
+            if isinstance(color, list):
+                color = QtGui.QColor(*color)
             pen = QtGui.QPen(color)
             # Try using integer sizes for smoother drawing(?)
             # 当 width 为 0 时，设置 pen 宽度为 0（不绘制边框）

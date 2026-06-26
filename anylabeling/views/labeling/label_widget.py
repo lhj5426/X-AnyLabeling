@@ -11194,7 +11194,8 @@ class LabelingWidget(QtWidgets.QWidget):
         shape._border_width_selected = border_width_selected
 
         # 更新状态1（默认态）独立边框颜色和宽度（None 表示边框=填充色，向后兼容）
-        shape._default_border_color = self._get_default_border_color_by_label(shape.label)
+        default_border_rgb = self._get_default_border_color_by_label(shape.label)
+        shape._default_border_color = QtGui.QColor(*default_border_rgb) if default_border_rgb else None
         shape._default_border_width = self._get_default_border_width_by_label(shape.label)
 
         # 更新独立控制柄颜色
