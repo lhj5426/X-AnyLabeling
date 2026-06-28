@@ -352,3 +352,6 @@
   config_file: "D:/Ddown/X-AnyLabeling-Hmogai260621_02/anylabeling/configs/auto_labeling/comic_text_bubble_int8.yaml"
 - model_name: "comic_text_bubble_v4s-r20250626"
   config_file: "D:/Ddown/X-AnyLabeling-Hmogai260621_02/anylabeling/configs/auto_labeling/comic_text_bubble_v4s.yaml"
+
+- model_name: "manga_ocr-r20260627"
+  config_file: ":/manga_ocr.yaml"

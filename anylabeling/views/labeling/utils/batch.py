@@ -191,6 +191,81 @@ def cancel_operation(self):
     self.cancel_processing = True
 
 
+def _predict_color_mode(self, image_file):
+    """颜色模式批量：读取已有检测框 JSON，对框提取文字颜色，写入 attributes"""
+    import json, os, cv2, numpy as np
+
+    label_file = os.path.splitext(image_file)[0] + ".json"
+    if not os.path.exists(label_file):
+        return False
+
+    try:
+        with open(label_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+
+    shapes = data.get("shapes", [])
+    if not shapes:
+        return False
+
+    filter_classes = self.auto_labeling_widget.model_manager.loaded_model_config.get(
+        "filter_classes", None
+    )
+
+    boxes = []
+    box_indices = []
+    for i, s in enumerate(shapes):
+        if filter_classes is not None and s.get("label") not in filter_classes:
+            continue
+        pts = s.get("points", [])
+        if len(pts) == 4:
+            boxes.append([[int(p[0]), int(p[1])] for p in pts])
+            box_indices.append(i)
+
+    if not boxes:
+        return False
+
+    img = cv2.imdecode(np.fromfile(image_file, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return False
+
+    model = self.auto_labeling_widget.model_manager.loaded_model_config.get("model")
+    if not model or not hasattr(model, "predict_shapes_color_only_from_boxes"):
+        return False
+
+    import time, sys
+    t0 = time.time()
+    result = model.predict_shapes_color_only_from_boxes(img, boxes, image_file)
+    if result is None or not result.shapes:
+        return False
+
+    for j, idx in enumerate(box_indices):
+        if j < len(result.shapes):
+            attrs = getattr(result.shapes[j], 'attributes', {}) or {}
+            if attrs:
+                shapes[idx]["attributes"] = dict(attrs)
+
+    fname = os.path.basename(image_file)
+    timing_str = f"耗时={time.time()-t0:.3f}s"
+    print(f"\n[批量颜色] {fname}  共{len(box_indices)}个框 → {timing_str}")
+    for j, idx in enumerate(box_indices):
+        pts = boxes[j]
+        attrs = shapes[idx].get("attributes", {})
+        label = shapes[idx].get("label", "")
+        print(f"[{j+1:02d}] 标签:{label} [{pts}, {attrs}]")
+    sys.stdout.flush()
+
+    # 保存更新后的 JSON
+    try:
+        with open(label_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        return False
+
+    return True
+
+
 def _predict_with_existing_boxes(self, image_file):
     """使用已有检测框进行 OCR（不运行检测器），直接修改 JSON 文件，不改框只加文字"""
     import json, os, cv2, numpy as np
@@ -240,11 +315,14 @@ def _predict_with_existing_boxes(self, image_file):
     if result is None or not result.shapes:
         return False
 
-    # 直接把 OCR 文字写回对应原框
+    # 直接把 OCR文字 + 颜色 写回对应原框
     for j, idx in enumerate(box_indices):
         if j < len(result.shapes):
             shapes[idx]["description"] = result.shapes[j].description or ""
             shapes[idx]["score"] = float(result.shapes[j].score)
+            attrs = getattr(result.shapes[j], 'attributes', {}) or {}
+            if attrs:
+                shapes[idx]["attributes"] = dict(attrs)
 
     # 打印日志（按标签分组，带序号和耗时）
     import time, sys
@@ -387,40 +465,50 @@ def process_next_image(self, progress_dialog):
                     )
                 )
             else:
-                # 检查是否启用"使用已有框"模式
+                # 批量仅检测（最高优先，覆盖颜色模式）
+                detect_only = (
+                    hasattr(self.auto_labeling_widget, 'toggle_batch_detect_only')
+                    and self.auto_labeling_widget.toggle_batch_detect_only.isChecked()
+                )
+
+                # OCR/颜色切换（仅在非仅检测模式下生效）
+                has_color_toggle = hasattr(self.auto_labeling_widget, 'toggle_color_mode')
+                in_color_mode = has_color_toggle and self.auto_labeling_widget.toggle_color_mode.isChecked()
+
+                # 使用已有框
                 use_existing = (
                     hasattr(self.auto_labeling_widget, 'toggle_use_existing_boxes')
                     and self.auto_labeling_widget.toggle_use_existing_boxes.isChecked()
                 )
-                if use_existing:
-                    _predict_with_existing_boxes(
-                        self, image_file
-                    )
-                    auto_labeling_result = None  # 跳过 save_auto_labeling_result
-                else:
-                    # 检查是否启用"批量仅检测"
-                    detect_only = (
-                        hasattr(self.auto_labeling_widget, 'toggle_batch_detect_only')
-                        and self.auto_labeling_widget.toggle_batch_detect_only.isChecked()
-                    )
-                    if detect_only:
-                        model = self.auto_labeling_widget.model_manager.loaded_model_config["model"]
-                        if hasattr(model, "predict_shapes_detect_only"):
-                            auto_labeling_result = model.predict_shapes_detect_only(
-                                self.image, image_file
-                            )
-                        else:
-                            auto_labeling_result = (
-                                self.auto_labeling_widget.model_manager.predict_shapes(
-                                    self.image, image_file, batch=batch
-                                )
-                            )
+
+                if detect_only:
+                    # 仅检测：只跑检测器画框（覆盖一切）
+                    model = self.auto_labeling_widget.model_manager.loaded_model_config["model"]
+                    if hasattr(model, "predict_shapes_detect_only"):
+                        auto_labeling_result = model.predict_shapes_detect_only(
+                            self.image, image_file
+                        )
                     else:
                         auto_labeling_result = (
                             self.auto_labeling_widget.model_manager.predict_shapes(
                                 self.image, image_file, batch=batch
                             )
                         )
+                elif in_color_mode:
+                    # 颜色模式：仅提取颜色（已有框，不检测不OCR）
+                    _predict_color_mode(self, image_file)
+                    auto_labeling_result = None
+                elif use_existing:
+                    # 已有框：OCR + 颜色（不检测）
+                    _predict_with_existing_boxes(self, image_file)
+                    auto_labeling_result = None
+                else:
+                    # 默认：检测 + OCR + 颜色
+                    auto_labeling_result = (
+                        self.auto_labeling_widget.model_manager.predict_shapes(
+                            self.image, image_file, batch=batch
+                        )
+                    )
 
             if batch and auto_labeling_result is not None:
                 save_auto_labeling_result(

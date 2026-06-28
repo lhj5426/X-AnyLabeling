@@ -1,0 +1,12 @@
+type: manga_ocr
+name: manga_ocr-r20260627
+provider: zyddnys/manga-image-translator
+display_name: Manga-OCR (DBNet+48px)
+det_model_path: models/manga_ocr/detect-20241225.ckpt
+ocr_model_path: models/manga_ocr/ocr_ar_48px.ckpt
+ocr_char_dict_path: models/manga_ocr/alphabet-all-v7.txt
+detect_size: 2048
+text_threshold: 0.5
+box_threshold: 0.7
+unclip_ratio: 2.3
+ocr_threshold: 0.2

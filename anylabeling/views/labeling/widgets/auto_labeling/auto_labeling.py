@@ -180,6 +180,18 @@ class AutoLabelingWidget(QWidget):
         )
         self.button_detect_only.clicked.connect(self.run_detect_only)
 
+        # --- Configuration for: button_color_only ---
+        self.button_color_only.setStyleSheet(
+            self._get_replace_button_style("#f0ad4e", "#ec971f")
+        )
+        self.button_color_only.clicked.connect(self.run_color_only)
+
+        # --- Configuration for: button_recog_color ---
+        self.button_recog_color.setStyleSheet(
+            self._get_replace_button_style("#5bc0de", "#46b8da")
+        )
+        self.button_recog_color.clicked.connect(self.run_recog_color)
+
         # --- Configuration for: button_reset_tracker ---
         self.button_reset_tracker.setStyleSheet(get_normal_button_style())
         self.button_reset_tracker.clicked.connect(self.on_reset_tracker)
@@ -343,6 +355,16 @@ class AutoLabelingWidget(QWidget):
         self.toggle_batch_detect_only.setText(self.tr("批量仅检测关"))
         self.toggle_batch_detect_only.clicked.connect(
             self._update_batch_detect_only_state
+        )
+
+        # --- Configuration for: toggle_color_mode ---
+        self.toggle_color_mode.setChecked(False)
+        self.toggle_color_mode.setCheckable(True)
+        self.toggle_color_mode.setStyleSheet(
+            self._get_replace_button_style("#d9534f", "#c9302c")
+        )
+        self.toggle_color_mode.clicked.connect(
+            self._update_color_mode_state
         )
 
         # ===================================
@@ -672,11 +694,14 @@ class AutoLabelingWidget(QWidget):
         self.auto_labeling_mode_changed.emit(self.auto_labeling_mode)
 
     def run_prediction(self):
-        """Run prediction"""
-        if self.parent.filename is not None:
-            self.model_manager.predict_shapes_threading(
-                self.parent.image, self.parent.filename
-            )
+        """Run prediction — always full pipeline: detection + OCR + color extraction."""
+        if self.parent.filename is None:
+            return
+
+        # "运行"按钮不受颜色模式切换影响，始终走全流程
+        self.model_manager.predict_shapes_threading(
+            self.parent.image, self.parent.filename
+        )
 
     def run_vl_prediction(self):
         """Run visual-language prediction"""
@@ -738,15 +763,20 @@ class AutoLabelingWidget(QWidget):
                 if i < len(result.shapes):
                     text = result.shapes[i].description
                     score = result.shapes[i].score
-                    out.append([boxes[i], (text, score)])
+                    attrs = getattr(result.shapes[i], 'attributes', {}) or {}
+                    out.append([boxes[i], (text, score), attrs])
                     shape.description = text
                     shape.score = score
+                    if attrs:
+                        shape.attributes = attrs
             print(f"\n[选中OCR] 标签:{label}  {fname} → {timing_str}")
             print(out)
             sys.stdout.flush()
             # 触发画布和标签列表重绘
             self.parent.canvas.update()
             self.parent.label_list.viewport().update()
+            # Mark file as dirty so OCR results get saved
+            self.parent.set_dirty(mark_as_manually_edited=False)
             # 通过信号把描述文本传回主线程更新 UI
             desc = ""
             if box_infos and len(result.shapes) > 0:
@@ -817,9 +847,12 @@ class AutoLabelingWidget(QWidget):
                 if i < len(result.shapes):
                     text = result.shapes[i].description
                     score = result.shapes[i].score
+                    attrs = getattr(result.shapes[i], 'attributes', {}) or {}
                     shape.description = text
                     shape.score = score
-                    grouped[shape.label].append([boxes[i], (text, score)])
+                    if attrs:
+                        shape.attributes = attrs
+                    grouped[shape.label].append([boxes[i], (text, score), attrs])
 
             fname = os.path.basename(self.parent.filename) if self.parent.filename else "image"
             print(f"\n[全图框OCR] {fname}  共{len(box_infos)}个框 → {timing_str}")
@@ -832,6 +865,8 @@ class AutoLabelingWidget(QWidget):
 
             self.parent.canvas.update()
             self.parent.label_list.viewport().update()
+            # Mark file as dirty so OCR results get saved
+            self.parent.set_dirty(mark_as_manually_edited=False)
             self.model_manager.new_model_status.emit(
                 self.tr(f"全图框识别完成。共处理 {len(box_infos)} 个框。")
             )
@@ -1006,9 +1041,12 @@ class AutoLabelingWidget(QWidget):
             "button_filter_classes",
             "toggle_use_existing_boxes",
             "button_detect_only",
+            "button_color_only",
+            "button_recog_color",
             "toggle_rotation",
             "toggle_filter_non_rotated",
             "toggle_batch_detect_only",
+            "toggle_color_mode",
             "upn_select_combobox",
             "gd_select_combobox",
             "florence2_select_combobox",
@@ -1083,6 +1121,124 @@ class AutoLabelingWidget(QWidget):
                 self.parent.image, self.parent.filename
             )
             self.model_manager.new_auto_labeling_result.emit(result)
+
+        QTimer.singleShot(0, _do)
+
+    def run_color_only(self):
+        """仅颜色按钮：对画布已有框执行颜色提取（不检测、不OCR）"""
+        if self.parent.filename is None:
+            return
+
+        model = self.model_manager.loaded_model_config.get("model")
+        if not model or not hasattr(model, "predict_shapes_color_only_from_boxes"):
+            self.model_manager.new_model_status.emit(
+                self.tr("当前模型不支持仅颜色")
+            )
+            return
+
+        all_shapes = list(self.parent.canvas.shapes)
+        if not all_shapes:
+            self.model_manager.new_model_status.emit(
+                self.tr("画布上没有检测框，请先运行检测")
+            )
+            return
+
+        filter_classes = self.model_manager.loaded_model_config.get(
+            "filter_classes", None
+        )
+
+        box_infos = []
+        for shape in all_shapes:
+            if filter_classes is not None and shape.label not in filter_classes:
+                continue
+            pts = [[int(p.x()), int(p.y())] for p in shape.points]
+            box_infos.append((shape, pts))
+
+        if not box_infos:
+            self.model_manager.new_model_status.emit(
+                self.tr("没有符合条件的框（已被标签过滤）")
+            )
+            return
+
+        self.model_manager.new_model_status.emit(
+            self.tr(f"正在提取 {len(box_infos)} 个框的颜色...")
+        )
+
+        def _do():
+            import time, os, sys
+            t0 = time.time()
+            boxes = [bi[1] for bi in box_infos]
+            result = model.predict_shapes_color_only_from_boxes(
+                self.parent.image, boxes, self.parent.filename
+            )
+            t1 = time.time()
+
+            fname = os.path.basename(self.parent.filename) if self.parent.filename else "image"
+            print(f"\n[仅颜色] {fname}  共{len(box_infos)}个框 → 耗时={t1-t0:.3f}s")
+            for i, (shape, pts) in enumerate(box_infos):
+                if i < len(result.shapes):
+                    attrs = getattr(result.shapes[i], 'attributes', {}) or {}
+                    if attrs:
+                        shape.attributes = attrs
+                    print(f"[{i+1:02d}] [{pts}, {attrs}]")
+            sys.stdout.flush()
+
+            self.parent.canvas.update()
+            self.parent.set_dirty(mark_as_manually_edited=False)
+            self.model_manager.new_model_status.emit(
+                self.tr(f"颜色提取完成。共处理 {len(box_infos)} 个框。")
+            )
+
+        QTimer.singleShot(0, _do)
+
+    def run_recog_color(self):
+        """识别选中颜色：对选中的框执行颜色提取（不检测、不OCR）"""
+        if self.parent.filename is None:
+            return
+
+        model = self.model_manager.loaded_model_config.get("model")
+        if not model or not hasattr(model, "predict_shapes_color_only_from_boxes"):
+            self.model_manager.new_model_status.emit(
+                self.tr("当前模型不支持识别选中颜色")
+            )
+            return
+
+        selected = self.parent.canvas.selected_shapes
+        if not selected:
+            self.model_manager.new_model_status.emit(
+                self.tr("请先选中要提取颜色的检测框")
+            )
+            return
+
+        boxes = [[[int(p.x()), int(p.y())] for p in s.points] for s in selected]
+        self.model_manager.new_model_status.emit(
+            self.tr(f"正在提取 {len(boxes)} 个框的颜色...")
+        )
+
+        def _do():
+            import time, os, sys
+            t0 = time.time()
+            result = model.predict_shapes_color_only_from_boxes(
+                self.parent.image, boxes, self.parent.filename
+            )
+            timing_str = f"耗时={time.time()-t0:.3f}s"
+
+            fname = os.path.basename(self.parent.filename) if self.parent.filename else "image"
+            print(f"\n[选中颜色] 标签:{selected[0].label if selected else '?'}  {fname} → {timing_str}")
+            for i, shape in enumerate(selected):
+                if i < len(result.shapes):
+                    attrs = getattr(result.shapes[i], 'attributes', {}) or {}
+                    if attrs:
+                        shape.attributes = attrs
+                    pts = [[int(p.x()), int(p.y())] for p in shape.points]
+                    print(f"[[{pts}, ('{'...' if shape.description else ''}', {shape.score}), {attrs}]]")
+            sys.stdout.flush()
+
+            self.parent.canvas.update()
+            self.parent.set_dirty(mark_as_manually_edited=False)
+            self.model_manager.new_model_status.emit(
+                self.tr(f"颜色提取完成。共处理 {len(boxes)} 个框。")
+            )
 
         QTimer.singleShot(0, _do)
 
@@ -1210,6 +1366,27 @@ class AutoLabelingWidget(QWidget):
                 self._get_replace_button_style("#e67e22", "#d35400")
             )
 
+    def _update_color_mode_state(self, checked):
+        model = self.model_manager.loaded_model_config.get("model")
+        if hasattr(model, "color_mode"):
+            model.color_mode = checked
+        if checked:
+            self.toggle_color_mode.setText(self.tr("颜色"))
+            self.toggle_color_mode.setStyleSheet(
+                self._get_replace_button_style("#5cb85c", "#4cae4c")
+            )
+            self.model_manager.new_model_status.emit(
+                self.tr("运行模式切换为：颜色提取")
+            )
+        else:
+            self.toggle_color_mode.setText(self.tr("OCR"))
+            self.toggle_color_mode.setStyleSheet(
+                self._get_replace_button_style("#d9534f", "#c9302c")
+            )
+            self.model_manager.new_model_status.emit(
+                self.tr("运行模式切换为：OCR识别")
+            )
+
     def _update_end2end_button_state(self, checked, tooltip_on, tooltip_off):
         """更新 End2End 按钮的状态和颜色"""
         self.toggle_end2end.setToolTip(
@@ -1283,7 +1460,7 @@ class AutoLabelingWidget(QWidget):
         # 创建非模态对话框，允许同时操作主界面
         # OCR 模式下用 OCR 说明文字，检测模式下用检测说明文字
         model_type = self.model_manager.loaded_model_config.get("type", "")
-        if "ppocr" in model_type:
+        if "ppocr" in model_type or "manga_ocr" in model_type:
             info_text = self.tr(
                 "勾选要执行 OCR 的标签：\n"
                 "未勾选的标签将被跳过，不会进行 OCR 识别"

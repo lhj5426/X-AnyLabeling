@@ -16456,9 +16456,30 @@ class LabelingWidget(QtWidgets.QWidget):
         # 文本内容过滤
         if mode == 'text':
             shapes = data.get("shapes", [])
+            filter_labels = filter_config.get('filter_labels', [])
+            exclude_locked = filter_config.get('exclude_locked', True)
+            
+            # 排除锁定的标签
+            locked_labels = set()
+            if exclude_locked:
+                locked_labels_str = self._config.get("locked_labels", "")
+                locked_labels = {
+                    label.strip()
+                    for label in locked_labels_str.split(",")
+                    if label.strip()
+                }
+            
+            # 过滤锁定标签
+            if locked_labels:
+                shapes = [s for s in shapes if s.get("label") not in locked_labels]
+            
+            # 如果指定了标签过滤，只检查这些标签的shapes
+            if filter_labels:
+                shapes = [s for s in shapes if s.get("label") in filter_labels]
+            
             if not shapes:
-                # 没有标注框 → 不包含文本
-                return value == 'no_text'
+                # 没有符合条件的框（过场页/无标注/标签过滤后为空）→ 排除
+                return False
 
             has_text = False
             has_empty = False

@@ -4293,7 +4293,7 @@ class Canvas(
                         high = mid - 1
                 return best_font
 
-            def draw_text_in_rect(text, text_rect):
+            def draw_text_in_rect(text, text_rect, fg_color=None, bg_color=None):
                 text_rect = QtCore.QRectF(text_rect).normalized()
                 if text_rect.width() <= 1 or text_rect.height() <= 1:
                     return
@@ -4301,6 +4301,10 @@ class Canvas(
                 display_text = str(text).strip()
                 if not display_text:
                     return
+
+                # Use per-shape colors from attributes if provided, else defaults
+                use_text_color = fg_color if fg_color else text_color
+                use_bg_color = bg_color if bg_color else background_color
 
                 p.save()
                 p.setRenderHint(QtGui.QPainter.Antialiasing, True)
@@ -4313,10 +4317,10 @@ class Canvas(
                     return
 
                 p.setPen(QtCore.Qt.NoPen)
-                p.setBrush(background_color)
+                p.setBrush(use_bg_color)
                 p.drawRect(QtCore.QRectF(text_rect))
 
-                p.setPen(QtGui.QPen(text_color))
+                p.setPen(QtGui.QPen(use_text_color))
 
                 is_vertical = inner_rect.height() > inner_rect.width() * 1.35 and len(display_text.replace(" ", "")) > 1
                 if is_vertical:
@@ -4365,6 +4369,17 @@ class Canvas(
                 if not description:
                     continue
 
+                # Extract fg/bg colors from shape attributes if available
+                shape_fg = None
+                shape_bg = None
+                attrs = getattr(shape, 'attributes', {})
+                if attrs:
+                    if 'fg' in attrs and isinstance(attrs['fg'], (list, tuple)) and len(attrs['fg']) >= 3:
+                        shape_fg = QtGui.QColor(int(attrs['fg'][0]), int(attrs['fg'][1]), int(attrs['fg'][2]))
+                    if 'bg' in attrs and isinstance(attrs['bg'], (list, tuple)) and len(attrs['bg']) >= 3:
+                        shape_bg = QtGui.QColor(int(attrs['bg'][0]), int(attrs['bg'][1]), int(attrs['bg'][2]))
+                        shape_bg.setAlpha(235)
+
                 if shape.shape_type in ["rotation", "rotation3"] and len(shape.points) == 4:
                     p0, p1, _, p3 = shape.points
                     width = math.hypot(p1.x() - p0.x(), p1.y() - p0.y())
@@ -4381,7 +4396,7 @@ class Canvas(
                     p.save()
                     p.setWorldTransform(transform, True)
                     text_rect = QtCore.QRectF(0, 0, width, height)
-                    draw_text_in_rect(description, text_rect)
+                    draw_text_in_rect(description, text_rect, shape_fg, shape_bg)
                     p.restore()
                     continue
 
@@ -4390,7 +4405,7 @@ class Canvas(
                 except IndexError:
                     continue
                 text_rect = bbox.adjusted(padding, padding, -padding, -padding)
-                draw_text_in_rect(description, text_rect)
+                draw_text_in_rect(description, text_rect, shape_fg, shape_bg)
             p.restore()
         # Draw labels
         if self.show_labels:

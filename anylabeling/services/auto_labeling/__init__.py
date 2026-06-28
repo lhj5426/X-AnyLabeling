@@ -78,6 +78,7 @@ _CUSTOM_MODELS = [
     "yolo26_pose",
     "u_rtdetr",
     "yoloe",
+    "manga_ocr",
 ]
 
 
@@ -271,6 +272,7 @@ _AUTO_LABELING_PRESERVE_EXISTING_ANNOTATIONS_STATE_MODELS = [
     "yolo26_pose",
     "u_rtdetr",
     "yoloe",
+    "manga_ocr",
     "segment_anything_2_video",
 ]
 
@@ -278,12 +280,14 @@ _AUTO_LABELING_PRESERVE_EXISTING_ANNOTATIONS_STATE_MODELS = [
 # --- set_auto_labeling_rotation_state ---
 _AUTO_LABELING_ROTATION_MODELS = [
     "ppocr_v6",
+    "manga_ocr",
 ]
 
 
 # --- set_auto_labeling_filter_non_rotated ---
 _AUTO_LABELING_FILTER_NON_ROTATED_MODELS = [
     "ppocr_v6",
+    "manga_ocr",
 ]
 
 

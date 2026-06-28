@@ -411,6 +411,26 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="button_color_only">
+       <property name="text">
+        <string>仅颜色</string>
+       </property>
+       <property name="toolTip">
+        <string>全图检测文字区域并提取颜色，不识别文字</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="button_recog_color">
+       <property name="text">
+        <string>识别选中颜色</string>
+       </property>
+       <property name="toolTip">
+        <string>对选中的检测框提取颜色（不检测、不OCR）</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="QPushButton" name="toggle_rotation">
        <property name="text">
         <string>旋转</string>
@@ -439,6 +459,22 @@
        </property>
        <property name="toolTip">
         <string>开启：只保留有旋转角度的检测框；关闭：显示所有检测框</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="toggle_color_mode">
+       <property name="text">
+        <string>OCR</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
+       </property>
+       <property name="checked">
+        <bool>false</bool>
+       </property>
+       <property name="toolTip">
+        <string>切换运行模式：OCR识别文字 / 颜色提取</string>
        </property>
       </widget>
      </item>

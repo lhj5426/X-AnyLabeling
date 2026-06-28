@@ -106,6 +106,15 @@ class FileFilterDialog(QDialog):
         
         text_layout.addWidget(self.text_has_text)
         text_layout.addWidget(self.text_no_text)
+        
+        self.text_exclude_locked = QCheckBox("排除锁定的标签")
+        self.text_exclude_locked.setChecked(
+            self.label_widget._config.get("text_exclude_locked", True)
+            if self.label_widget and hasattr(self.label_widget, "_config")
+            else True
+        )
+        text_layout.addWidget(self.text_exclude_locked)
+        
         text_group.setLayout(text_layout)
         layout.addWidget(text_group)
         
@@ -223,7 +232,7 @@ class FileFilterDialog(QDialog):
         self.setLayout(layout)
     
     def on_label_selection_changed(self):
-        """当标签选择改变时，自动选中"按标签过滤"单选按钮"""
+        """当标签选择改变时，自动选中对应的单选按钮"""
         # 检查是否有任何标签被勾选
         has_checked = False
         for i in range(self.label_list.count()):
@@ -231,9 +240,15 @@ class FileFilterDialog(QDialog):
                 has_checked = True
                 break
         
+        if not has_checked:
+            return
+        
+        # 如果当前已是文本过滤模式，保持在文本模式（标签作为文本过滤的范围限定）
+        if self.text_has_text.isChecked() or self.text_no_text.isChecked():
+            return
+        
         if (
-            has_checked
-            and not self.overlap_only.isChecked()
+            not self.overlap_only.isChecked()
         ):
             self.filter_by_label.setChecked(True)
 
@@ -271,10 +286,13 @@ class FileFilterDialog(QDialog):
         """全选标签"""
         for i in range(self.label_list.count()):
             self.label_list.item(i).setCheckState(Qt.Checked)
+        # 如果当前已是文本过滤或重叠模式，不切换单选按钮
         if (
-            not self.overlap_only.isChecked()
+            self.text_has_text.isChecked() or self.text_no_text.isChecked()
+            or self.overlap_only.isChecked()
         ):
-            self.filter_by_label.setChecked(True)
+            return
+        self.filter_by_label.setChecked(True)
     
     def select_no_labels(self):
         """取消全选标签"""
@@ -304,9 +322,31 @@ class FileFilterDialog(QDialog):
         elif self.text_has_text.isChecked():
             config['mode'] = 'text'
             config['value'] = 'has_text'
+            # 收集勾选的标签（限定文本搜索范围）
+            checked_labels = []
+            for i in range(self.label_list.count()):
+                item = self.label_list.item(i)
+                if item.checkState() == Qt.Checked:
+                    checked_labels.append(item.text())
+            config['filter_labels'] = checked_labels
+            config['exclude_locked'] = self.text_exclude_locked.isChecked()
+            # 保存设置
+            if self.label_widget and hasattr(self.label_widget, "_config"):
+                self.label_widget._config["text_exclude_locked"] = self.text_exclude_locked.isChecked()
         elif self.text_no_text.isChecked():
             config['mode'] = 'text'
             config['value'] = 'no_text'
+            # 收集勾选的标签（限定文本搜索范围）
+            checked_labels = []
+            for i in range(self.label_list.count()):
+                item = self.label_list.item(i)
+                if item.checkState() == Qt.Checked:
+                    checked_labels.append(item.text())
+            config['filter_labels'] = checked_labels
+            config['exclude_locked'] = self.text_exclude_locked.isChecked()
+            # 保存设置
+            if self.label_widget and hasattr(self.label_widget, "_config"):
+                self.label_widget._config["text_exclude_locked"] = self.text_exclude_locked.isChecked()
         elif self.difficult_only.isChecked():
             config['mode'] = 'difficult'
             config['value'] = 'difficult'
