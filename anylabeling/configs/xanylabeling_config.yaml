@@ -7,7 +7,8 @@ keep_prev: false
 keep_prev_scale: false
 keep_prev_brightness: false
 keep_prev_contrast: false
-auto_use_last_label: false
+auto_use_last_label: true
+continuous_drawing: false  # 连续标注模式：完成一个标注后自动保持当前绘制工具
 auto_highlight_shape: true
 auto_switch_to_edit_mode: true
 show_groups: false
@@ -87,24 +88,48 @@ shape:
 # main
 flag_dock:
   show: true
-  closable: false
-  movable: false
-  floatable: false
+  closable: true
+  movable: true
+  floatable: true
 label_dock:
   show: true
-  closable: false
-  movable: false
-  floatable: false
+  closable: true
+  movable: true
+  floatable: true
 shape_dock:
   show: true
-  closable: false
-  movable: false
-  floatable: false
+  closable: true
+  movable: true
+  floatable: true
 file_dock:
   show: true
+  closable: true
+  movable: true
+  floatable: true
+tools_dock:
+  show: true
   closable: false
-  movable: false
-  floatable: false
+  movable: true
+  floatable: true
+shape_text_dock:
+  show: true
+  closable: true
+  movable: true
+  floatable: true
+thumbnail_dock:
+  show: false
+  closable: true
+  movable: true
+  floatable: true
+attributes_dock:
+  show: true
+  closable: true
+  movable: true
+  floatable: true
+
+# UI dock state (Base64 encoded, auto-saved)
+ui:
+  dock_state: ""
 
 # navigator
 navigator:
@@ -150,6 +175,18 @@ canvas:
     opacity: 0.5
   zoom_at_mouse_percentage_increase: 20
   zoom_at_mouse_shortcut: Ctrl+B
+  brush:
+    point_distance: 25.0  # minimum screen pixel distance between auto-added points
+    simplify_epsilon: 2.0  # contour simplification tolerance in image pixels
+    max_undo_steps: 30  # maximum number of brush undo snapshots
+    max_undo_memory_mb: 128  # memory cap for brush undo snapshots
+    brush_cursor_color: [0, 255, 255, 255]  # RGBA - 画笔圈颜色
+    eraser_cursor_color: [255, 100, 100, 255]  # RGBA - 橡皮擦圈颜色
+    brush_cursor_shape: circle  # 光标形状: circle 或 square
+    brush_radius: 12  # 画笔/橡皮擦大小 (1-200px)
+    brush_invert: false  # 反转模式：默认画笔，勾选后默认橡皮擦
+  mask:
+    opacity: 80  # transparency value (0-255) for brush-edit mask overlay
 
 shortcuts:
   add_point_to_edge: Ctrl+Shift+P
@@ -177,6 +214,7 @@ shortcuts:
   edit_group_id: Alt+G
   edit_label: Ctrl+E
   edit_polygon: Ctrl+J
+  edit_brush_mode: Shift+B
   expand_margins: Ctrl+Shift+M
   fit_width: Ctrl+Shift+F
   fit_window: Ctrl+F
@@ -252,6 +290,7 @@ shortcuts:
   shortcut_manager_tool: Ctrl+Alt+K
   wheel_settings_tool: Ctrl+Alt+W
   toggle_ghost_paste: B
+  toggle_continuous_drawing: L
 
 # Auto labeling
 custom_models: []

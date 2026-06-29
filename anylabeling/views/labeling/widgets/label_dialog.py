@@ -45,6 +45,7 @@ class ColoredComboBox(QtWidgets.QComboBox):
             "line": QtGui.QColor("#FF6D00"),  # Bright Orange
             "point": QtGui.QColor("#00ACC1"),  # Teal
             "linestrip": QtGui.QColor("#6D4C41"),  # Brown
+            "brush": QtGui.QColor("#455A64"),  # Blue Grey
         }
 
     def addModeItem(self, text, userData=None):
@@ -110,6 +111,7 @@ class DigitShortcutDialog(QtWidgets.QDialog):
             "line",
             "point",
             "linestrip",
+            "brush",
         ]
 
         self.setWindowTitle(self.tr("Digit Shortcut Manager"))

@@ -2,9 +2,13 @@
 
 import math
 import html
+import copy
 from copy import deepcopy
 from pathlib import Path
 from typing import List, Optional, Union, Any
+
+import cv2
+import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QWheelEvent
@@ -116,6 +120,7 @@ class Canvas(
     show_shape = QtCore.pyqtSignal(int, int, QtCore.QPointF)
     selection_changed = QtCore.pyqtSignal(list)
     shape_moved = QtCore.pyqtSignal()
+    shapes_deleted = QtCore.pyqtSignal(list)
     shape_rotated = QtCore.pyqtSignal()
     drawing_polygon = QtCore.pyqtSignal(bool)
     vertex_selected = QtCore.pyqtSignal(bool)
@@ -132,6 +137,9 @@ class Canvas(
     mouse_pos_changed = QtCore.pyqtSignal(object)  # 鼠标位置变化信号（图像坐标），用于导航器显示
     animation_toggle_requested = QtCore.pyqtSignal()
     animation_seek_requested = QtCore.pyqtSignal(float)
+    # Emitted when brush-edit mode is toggled on/off (keeps the UI in sync).
+    brush_mode_changed = QtCore.pyqtSignal(bool)
+    brush_history_changed = QtCore.pyqtSignal(bool)
 
     CREATE, EDIT = 0, 1
 
@@ -242,6 +250,10 @@ class Canvas(
 
         self.rectangle3_width = self._config.get("rectangle3_width", 200)
         self.rotation3_copy_line_length = self._config.get("rotation3_copy_line_length", 500)
+
+        # Brush edit mode config
+        self.brush_config = self._config.get("canvas", {}).get("brush", {})
+        self.mask_opacity = self._config.get("canvas", {}).get("mask", {}).get("opacity", 80)
 
         super().__init__(*args, **kwargs)
         # Initialise local state.
@@ -360,6 +372,49 @@ class Canvas(
         self.paste_preview_line_color = self._config.get('paste_preview_line_color', [255, 0, 255])  # 虚影线条颜色 (RGB)
         self.paste_preview_opacity = self._config.get('paste_preview_opacity', 0.4)  # 虚影透明度
         self.paste_preview_fill_opacity = self._config.get('paste_preview_fill_opacity', 0.3)  # 虚影填充透明度
+
+        # 画笔编辑模式（通过涂画/擦除来优化选定的形状）。
+        self.is_brush_mode = False
+        self.brush_radius = float(self.brush_config.get("brush_radius", 12))  # 图像像素（半径，支持小数以精细调整）
+        self.brush_cursor_shape = self.brush_config.get("brush_cursor_shape", "circle")  # circle 或 square
+        self.brush_invert = self.brush_config.get("brush_invert", False)  # 反转：默认橡皮擦
+        self.eraser_mode = False  # 按住 Ctrl 时为 True
+        self._brush_target_shape = None
+        self._brush_original_shape = None
+        self._prev_brush_pos = None
+        self._brush_overlay_cache = {}
+        self._brush_modified = False
+        self.brush_simplify_epsilon_px = float(self.brush_config.get("simplify_epsilon", 2.0))
+        self._brush_undo_stack = []
+        self._brush_redo_stack = []
+        self._brush_baseline_mask = None
+        self._brush_stroke_dirty = False
+        self._brush_max_undo_steps = max(1, int(self.brush_config.get("max_undo_steps", 30)))
+        self._brush_max_undo_bytes = max(1, int(self.brush_config.get("max_undo_memory_mb", 128))) * 1024 * 1024
+        self.is_brush_draw_mode = False
+        self._brush_erase_target = None
+        self._brush_erase_original_points = None
+        self._brush_erase_bbox = None
+
+        # 橡皮擦切割模式（参考矩形分割工具的切割逻辑）
+        self._eraser_cut_mode = None  # None=像素擦除, 'vertical'=垂直切分, 'horizontal'=水平切分
+
+        # 标记：橡皮擦分割后需要刷新标签列表（等画笔模式退出后统一刷新）
+        self._split_pending_refresh = False
+
+        # 画布中央临时提示文字
+        self._announcement_text = ""
+        self._announcement_msec = 0
+        self._announcement_timer = QtCore.QTimer(self)
+        self._announcement_timer.setSingleShot(True)
+        self._announcement_timer.timeout.connect(self._clear_announcement)
+
+        # 画笔大小数值标注（调整时短暂显示）
+        self._brush_size_label_visible = False
+        self._brush_size_label_timer = QtCore.QTimer(self)
+        self._brush_size_label_timer.setSingleShot(True)
+        self._brush_size_label_timer.timeout.connect(self._hide_brush_size_label)
+
         # self.line represents:
         #   - create_mode == 'polygon': edge from last point to current
         #   - create_mode == 'rectangle': diagonal line of the rectangle
@@ -508,6 +563,1053 @@ class Canvas(
         if loading_text:
             self.loading_text = loading_text
         self.update()
+
+    # ------------------------------------------------------------------ #
+    # Brush editing mode
+    #
+    # Brush editing lets the user paint (add) or erase onto a rasterized
+    # mask, resize the brush with the mouse wheel, then convert the mask
+    # back into a simplified polygon on exit.
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _polygon_to_mask(points_xy, shape_hw):
+        """Rasterize polygon vertices into a binary uint8 mask."""
+        h, w = shape_hw
+        mask = np.zeros((h, w), dtype=np.uint8)
+        if not points_xy:
+            return mask
+        pts = np.array(points_xy, dtype=np.int32).reshape((-1, 1, 2))
+        cv2.fillPoly(mask, [pts], 255)
+        return mask
+
+    @staticmethod
+    def _mask_to_polylines(mask):
+        """Extract a mask's external contours as polylines."""
+        if mask is None:
+            return []
+        if mask.dtype != np.uint8:
+            mask = (mask > 0).astype(np.uint8) * 255
+        if mask.ndim != 2:
+            mask = mask.squeeze()
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        polylines = []
+        for cnt in contours:
+            if cnt is None or len(cnt) < 3:
+                continue
+            pts = cnt.reshape(-1, 2)
+            polylines.append([(int(x), int(y)) for x, y in pts])
+        return polylines
+
+    def _apply_brush_to_mask(self, mask, x, y, radius, add=True):
+        """Stamp a filled circle or square onto a mask in place."""
+        if mask is None:
+            return mask
+        r = max(1, int(round(radius)))
+        xi, yi = int(round(x)), int(round(y))
+        val = 255 if add else 0
+        if self.brush_cursor_shape == "square":
+            cv2.rectangle(
+                mask,
+                (xi - r, yi - r),
+                (xi + r, yi + r),
+                val,
+                thickness=-1,
+                lineType=cv2.LINE_8,
+            )
+        else:
+            cv2.circle(
+                mask,
+                (xi, yi),
+                r,
+                val,
+                thickness=-1,
+                lineType=cv2.LINE_8,
+            )
+        return mask
+
+    @staticmethod
+    def _simplify_contour(cnt, epsilon_px):
+        """Simplify a contour with the Ramer-Douglas-Peucker algorithm."""
+        if cnt is None or len(cnt) < 3:
+            return []
+        eps = max(0.0, float(epsilon_px))
+        if eps == 0:
+            pts = cnt.reshape(-1, 2)
+            return [(int(x), int(y)) for x, y in pts]
+        approx = cv2.approxPolyDP(cnt, eps, True)
+        if approx is None or len(approx) < 3:
+            return []
+        pts = approx.reshape(-1, 2)
+        return [(int(x), int(y)) for x, y in pts]
+
+    def _ensure_brush_mask(self, shape):
+        """Ensure shape owns an editable mask buffer."""
+        if shape is None or self.pixmap is None:
+            return
+        if getattr(shape, "mask", None) is None:
+            h, w = int(self.pixmap.height()), int(self.pixmap.width())
+            points = [
+                (int(round(point.x())), int(round(point.y())))
+                for point in shape.points
+            ]
+            shape.mask = self._polygon_to_mask(points, (h, w))
+            shape._brush_mask_version = 0
+        shape._brush_using_mask = True
+
+    def _update_shape_points_from_mask(self, shape):
+        """Rewrite shape.points from its mask's largest component."""
+        if shape is None or getattr(shape, "mask", None) is None:
+            return False
+        polylines = self._mask_to_polylines(shape.mask)
+        if not polylines:
+            shape.points = []
+            return False
+        best = None
+        best_area = -1.0
+        for poly in polylines:
+            if len(poly) < 3:
+                continue
+            area = float(cv2.contourArea(np.array(poly, dtype=np.int32)))
+            if area > best_area:
+                best_area = area
+                best = poly
+        if best is None or len(best) < 3:
+            shape.points = []
+            return False
+        cnt = np.array(best, dtype=np.int32).reshape((-1, 1, 2))
+        outer = self._simplify_contour(cnt, self.brush_simplify_epsilon_px)
+        if len(outer) < 3:
+            outer = best
+        shape.mask.fill(0)
+        cv2.fillPoly(shape.mask, [cnt], 255)
+        self._bump_brush_version(shape)
+        shape.shape_type = "polygon"
+        shape.points = [QtCore.QPointF(float(x), float(y)) for x, y in outer]
+        shape.other_data.pop("holes", None)
+        shape.close()
+        return True
+
+    def _invalidate_brush_cache(self, shape):
+        """Drop the cached overlay image for shape."""
+        if shape is None:
+            return
+        self._brush_overlay_cache.pop(shape, None)
+
+    def _bump_brush_version(self, shape):
+        """Advance a shape's mask version and invalidate its cache."""
+        shape._brush_mask_version = (
+            int(getattr(shape, "_brush_mask_version", 0)) + 1
+        )
+        self._invalidate_brush_cache(shape)
+
+    def _get_brush_render_data(self, shape):
+        """Build and cache the outline path for a mask."""
+        if shape is None or getattr(shape, "mask", None) is None:
+            return None
+        version = int(getattr(shape, "_brush_mask_version", 0))
+        cached = self._brush_overlay_cache.get(shape)
+        if cached and cached[0] == version:
+            return cached[1]
+
+        mask = shape.mask
+        if mask.dtype != np.uint8:
+            mask = (mask > 0).astype(np.uint8) * 255
+        if mask.ndim != 2:
+            mask = mask.squeeze()
+
+        outline_path = QtGui.QPainterPath()
+        for poly in self._mask_to_polylines(mask):
+            if len(poly) < 3:
+                continue
+            outline_path.moveTo(float(poly[0][0]), float(poly[0][1]))
+            for x, y in poly[1:]:
+                outline_path.lineTo(float(x), float(y))
+            outline_path.closeSubpath()
+
+        self._brush_overlay_cache[shape] = (version, outline_path)
+        return outline_path
+
+    def _restore_brush_original_geometry(self, shape):
+        """Restore geometry captured when brush editing started."""
+        original = self._brush_original_shape
+        if shape is None or original is None:
+            return
+        shape.shape_type = original.shape_type
+        shape.points = [QtCore.QPointF(point) for point in original.points]
+        shape.direction = original.direction
+        shape.center = original.center
+        shape.other_data = copy.deepcopy(original.other_data)
+
+    def _leave_brush_mode(self, cancel):
+        """Leave brush mode by committing or discarding mask changes.
+
+        Edit mode (is_brush_draw_mode=False): on commit the existing
+        polygon's points are updated and shape_moved is emitted; on cancel
+        the original geometry is restored.
+
+        Draw mode (is_brush_draw_mode=True): on commit the mask is converted
+        to a new polygon and new_shape is emitted for label assignment; on
+        cancel or empty mask the dummy shape is silently removed.
+        """
+        # Commit or cancel any active erase target before leaving brush mode
+        if self._brush_erase_target is not None:
+            self._commit_erase_target(cancel=cancel)
+
+        target = self._brush_target_shape
+        is_draw = self.is_brush_draw_mode
+        self.is_brush_mode = False
+        self.is_brush_draw_mode = False
+        self.override_cursor(CURSOR_DEFAULT)
+        self._prev_brush_pos = None
+        self._brush_target_shape = None
+        self.eraser_mode = False
+
+        if target is not None and getattr(target, "mask", None) is not None:
+            if is_draw:
+                # --- Draw mode ---
+                has_geometry = False
+                if not cancel and self._brush_modified:
+                    has_geometry = self._update_shape_points_from_mask(target)
+                target._brush_using_mask = False
+                target.mask = None
+                self._invalidate_brush_cache(target)
+                if has_geometry:
+                    # Commit: move to end so shapes[-1] is correct for
+                    # the label widget's new_shape handler.
+                    if target in self.shapes:
+                        self.shapes.remove(target)
+                    self.shapes.append(target)
+                    target.label = target.label or ""
+                    target.close()
+                    # 画笔创建的多边形默认不选中
+                    target.selected = False
+                    self.selected_shapes = [
+                        s for s in self.selected_shapes if s is not target
+                    ]
+                    self.store_shapes()
+                    self.new_shape.emit()
+                else:
+                    # Discard the blank dummy shape.
+                    if target in self.shapes:
+                        self.shapes.remove(target)
+                    self.selected_shapes = [
+                        s for s in self.selected_shapes if s is not target
+                    ]
+                    target.selected = False
+            else:
+                # --- Edit mode (original behaviour) ---
+                if self._brush_baseline_mask is not None and np.array_equal(
+                    target.mask, self._brush_baseline_mask
+                ):
+                    self._brush_modified = False
+                has_geometry = True
+                edit_split_occurred = False
+                if cancel or not self._brush_modified:
+                    self._restore_brush_original_geometry(target)
+                else:
+                    # Check for disconnected fragments (eraser cut) before
+                    # the standard "keep largest only" update.
+                    new_fragments = self._split_fragments_from_mask(target)
+                    if new_fragments is not None:
+                        edit_split_occurred = True
+                        has_geometry = True
+                        for frag in new_fragments:
+                            self.shapes.append(frag)
+                    else:
+                        edit_split_occurred = False
+                        has_geometry = self._update_shape_points_from_mask(target)
+                target._brush_using_mask = False
+                target.mask = None
+                self._invalidate_brush_cache(target)
+                if self._brush_modified and not cancel:
+                    if not has_geometry and target in self.shapes:
+                        self.shapes.remove(target)
+                        self.selected_shapes = [
+                            s for s in self.selected_shapes if s is not target
+                        ]
+                        target.selected = False
+                    # Update label list BEFORE store_shapes/shape_moved
+                    # so auto_save sees the correct shape list
+                    if edit_split_occurred:
+                        self.parent.load_shapes(self.shapes, replace=True)
+                    self.store_shapes()
+                    if has_geometry:
+                        self.shape_moved.emit()
+                    else:
+                        self.shapes_deleted.emit([target])
+
+        self._brush_modified = False
+        self._brush_undo_stack = []
+        self._brush_redo_stack = []
+        self._brush_baseline_mask = None
+        self._brush_original_shape = None
+        self._brush_stroke_dirty = False
+        self._brush_erase_target = None
+        self._brush_erase_original_points = None
+        self._brush_erase_bbox = None
+        self._eraser_cut_mode = None
+        if self._split_pending_refresh:
+            self._split_pending_refresh = False
+            self.parent.load_shapes(self.shapes, replace=True)
+            self.shape_moved.emit()
+        self.brush_mode_changed.emit(False)
+        self.brush_history_changed.emit(self.is_shape_restorable)
+        self.update()
+
+    def cancel_brush_mode(self):
+        """Discard brush changes and restore the original polygon."""
+        if self.is_brush_mode:
+            self._leave_brush_mode(cancel=True)
+        else:
+            self.brush_mode_changed.emit(False)
+
+    def set_brush_mode(self, enabled):
+        """Enter or leave brush mode.
+
+        When a single polygon is selected, brush mode edits that polygon's
+        mask (edit mode).  When nothing is selected, a blank dummy Shape
+        is created so the user can doodle a new polygon from scratch
+        (draw mode, is_brush_draw_mode=True).
+        """
+        if enabled:
+            if self.pixmap is None:
+                self.brush_mode_changed.emit(False)
+                return
+            self.set_editing(True)
+            self.is_brush_mode = True
+            self._brush_modified = False
+            self.override_cursor(QtCore.Qt.BlankCursor)
+            self._prev_brush_pos = None
+
+            # Edit mode: a single unlocked polygon is selected.
+            if (
+                len(self.selected_shapes) == 1
+                and self.selected_shapes[0].shape_type == "polygon"
+                and not getattr(self.selected_shapes[0], "locked", False)
+            ):
+                self.is_brush_draw_mode = False
+                target = self.selected_shapes[0]
+                self._brush_target_shape = target
+                self._brush_original_shape = target.copy()
+            else:
+                # Draw mode: create a blank dummy shape to paint on.
+                self.is_brush_draw_mode = True
+                dummy = Shape(label="", shape_type="polygon")
+                dummy.visible = True
+                dummy.selected = True
+                self.shapes.append(dummy)
+                self.selected_shapes = [dummy]
+                self._brush_target_shape = dummy
+                self._brush_original_shape = None
+
+            self._ensure_brush_mask(self._brush_target_shape)
+            self._invalidate_brush_cache(self._brush_target_shape)
+            mask = getattr(self._brush_target_shape, "mask", None)
+            if mask is not None:
+                self._brush_baseline_mask = mask.copy()
+                self._brush_undo_stack = [self._brush_baseline_mask.copy()]
+                self._brush_redo_stack = []
+            else:
+                self._brush_baseline_mask = None
+                self._brush_undo_stack = []
+                self._brush_redo_stack = []
+            self.brush_mode_changed.emit(True)
+            self.brush_history_changed.emit(False)
+            self.update()
+            return
+
+        self._leave_brush_mode(cancel=False)
+
+    def _push_brush_undo_state(self):
+        """Snapshot the current mask onto the brush undo stack."""
+        shape = self._brush_target_shape
+        if shape is None or getattr(shape, "mask", None) is None:
+            return
+        mask = shape.mask
+        if not self._brush_undo_stack:
+            self._brush_undo_stack = [mask.copy()]
+            self._brush_redo_stack = []
+            return
+        last = self._brush_undo_stack[-1]
+        if last.shape == mask.shape and np.array_equal(last, mask):
+            return
+        self._brush_undo_stack.append(mask.copy())
+        self._brush_redo_stack.clear()
+        while len(self._brush_undo_stack) > self._brush_max_undo_steps + 1:
+            del self._brush_undo_stack[1]
+        while (
+            len(self._brush_undo_stack) > 2
+            and sum(state.nbytes for state in self._brush_undo_stack)
+            > self._brush_max_undo_bytes
+        ):
+            del self._brush_undo_stack[1]
+        self.brush_history_changed.emit(self.brush_can_undo())
+
+    def brush_can_undo(self):
+        """Return whether a brush stroke is available to undo."""
+        return self.is_brush_mode and len(self._brush_undo_stack) > 1
+
+    def brush_can_redo(self):
+        """Return whether a brush stroke is available to redo."""
+        return self.is_brush_mode and len(self._brush_redo_stack) > 0
+
+    def _restore_brush_mask(self, mask):
+        """Apply a mask snapshot to the target shape and refresh it."""
+        shape = self._brush_target_shape
+        shape.mask = mask.copy()
+        self._bump_brush_version(shape)
+        self._update_shape_points_from_mask(shape)
+        if self._brush_baseline_mask is not None:
+            self._brush_modified = not np.array_equal(
+                shape.mask, self._brush_baseline_mask
+            )
+        self.update()
+
+    def brush_undo(self):
+        """Revert the target shape's mask to the previous stroke."""
+        if not self.brush_can_undo():
+            return
+        shape = self._brush_target_shape
+        if shape is None or getattr(shape, "mask", None) is None:
+            return
+        current = self._brush_undo_stack.pop()
+        self._brush_redo_stack.append(current)
+        self._restore_brush_mask(self._brush_undo_stack[-1])
+        self.brush_history_changed.emit(self.brush_can_undo())
+
+    def brush_redo(self):
+        """Re-apply the next stroke on the brush redo stack."""
+        if not self.brush_can_redo():
+            return
+        shape = self._brush_target_shape
+        if shape is None or getattr(shape, "mask", None) is None:
+            return
+        nxt = self._brush_redo_stack.pop()
+        self._brush_undo_stack.append(nxt.copy())
+        self._restore_brush_mask(nxt)
+        self.brush_history_changed.emit(self.brush_can_undo())
+
+    def _find_polygon_at_pos(self, pos):
+        """Find the topmost polygon under *pos*, skipping the brush dummy."""
+        for shape in reversed(self.shapes):
+            if self.is_brush_draw_mode and shape is self._brush_target_shape:
+                continue
+            if not self.is_visible(shape):
+                continue
+            if shape.shape_type != "polygon":
+                continue
+            if getattr(shape, "locked", False):
+                continue
+            if len(shape.points) < 3:
+                continue
+            if shape.contains_point(pos):
+                return shape
+        return None
+
+    def _find_polygons_on_cut_line(self, pos):
+        """找出切割线穿过的所有多边形（参考矩形分割工具 _find_shapes_on_crosshair_line）。
+
+        Args:
+            pos: 鼠标位置 QPointF
+
+        Returns:
+            与切割线相交的多边形列表（按绘制顺序从上到下）
+        """
+        shapes_on_line = []
+        if self._eraser_cut_mode == 'vertical':
+            line_x = pos.x()
+            for shape in reversed(self.shapes):
+                if self.is_brush_draw_mode and shape is self._brush_target_shape:
+                    continue
+                if not self.is_visible(shape) or shape.shape_type != "polygon":
+                    continue
+                if getattr(shape, "locked", False) or len(shape.points) < 3:
+                    continue
+                xs = [p.x() for p in shape.points]
+                if min(xs) < line_x < max(xs):
+                    shapes_on_line.append(shape)
+        elif self._eraser_cut_mode == 'horizontal':
+            line_y = pos.y()
+            for shape in reversed(self.shapes):
+                if self.is_brush_draw_mode and shape is self._brush_target_shape:
+                    continue
+                if not self.is_visible(shape) or shape.shape_type != "polygon":
+                    continue
+                if getattr(shape, "locked", False) or len(shape.points) < 3:
+                    continue
+                ys = [p.y() for p in shape.points]
+                if min(ys) < line_y < max(ys):
+                    shapes_on_line.append(shape)
+        return shapes_on_line
+
+    def _split_polygon_by_line(self, points, cut_pos, cut_mode):
+        """沿直线切分多边形（核心切割逻辑，参考 _split_rectangle_vertically/_horizontally）。
+
+        Args:
+            points: QPointF 列表
+            cut_pos: (x, y) 切割线经过的点
+            cut_mode: 'vertical' 或 'horizontal'
+
+        Returns:
+            (poly1_points, poly2_points) 各为 QPointF 列表，失败返回 (None, None)
+        """
+        n = len(points)
+        if n < 3:
+            return None, None
+
+        intersections = []  # [(x, y, edge_idx)]
+
+        if cut_mode == 'vertical':
+            cut_x = cut_pos[0]
+            for i in range(n):
+                p1 = points[i]
+                p2 = points[(i + 1) % n]
+                x1, y1 = p1.x(), p1.y()
+                x2, y2 = p2.x(), p2.y()
+                if min(x1, x2) < cut_x < max(x1, x2):
+                    t = (cut_x - x1) / (x2 - x1)
+                    y_int = y1 + t * (y2 - y1)
+                    intersections.append((cut_x, y_int, i))
+            intersections.sort(key=lambda p: p[1])
+        else:  # horizontal
+            cut_y = cut_pos[1]
+            for i in range(n):
+                p1 = points[i]
+                p2 = points[(i + 1) % n]
+                x1, y1 = p1.x(), p1.y()
+                x2, y2 = p2.x(), p2.y()
+                if min(y1, y2) < cut_y < max(y1, y2):
+                    t = (cut_y - y1) / (y2 - y1)
+                    x_int = x1 + t * (x2 - x1)
+                    intersections.append((x_int, cut_y, i))
+            intersections.sort(key=lambda p: p[0])
+
+        if len(intersections) != 2:
+            return None, None
+
+        int1, int2 = intersections[0], intersections[1]
+        p_int1 = QtCore.QPointF(int1[0], int1[1])
+        p_int2 = QtCore.QPointF(int2[0], int2[1])
+
+        # 多边形1：从交点1 沿多边形边界走到交点2
+        poly1 = [QtCore.QPointF(p_int1)]
+        idx = (int1[2] + 1) % n
+        while idx != int2[2]:
+            poly1.append(QtCore.QPointF(points[idx]))
+            idx = (idx + 1) % n
+        poly1.append(QtCore.QPointF(p_int2))
+
+        # 多边形2：从交点2 沿多边形边界走到交点1
+        poly2 = [QtCore.QPointF(p_int2)]
+        idx = (int2[2] + 1) % n
+        while idx != int1[2]:
+            poly2.append(QtCore.QPointF(points[idx]))
+            idx = (idx + 1) % n
+        poly2.append(QtCore.QPointF(p_int1))
+
+        return poly1, poly2
+
+    def _begin_erase_stroke(self, pos):
+        """Start erasing from polygon at *pos*.
+
+        切割模式下：沿切割线切分多边形（参考矩形分割工具切割逻辑）。
+        默认模式下：像素擦除（原有行为）。
+        """
+        # ── 切割模式：沿直线切分多边形 ──
+        if self._eraser_cut_mode is not None:
+            self._brush_erase_target = None
+            self._brush_erase_original_points = None
+            self._brush_erase_bbox = None
+            targets = self._find_polygons_on_cut_line(pos)
+            new_shapes_added = []
+            shapes_removed = []
+            cut_mode = self._eraser_cut_mode
+            for shape in targets:
+                poly1, poly2 = self._split_polygon_by_line(
+                    shape.points, (pos.x(), pos.y()), cut_mode
+                )
+                if poly1 is None or poly2 is None:
+                    continue
+                new1 = Shape(
+                    label=shape.label, shape_type=shape.shape_type,
+                    flags=shape.flags.copy() if shape.flags else {},
+                    group_id=shape.group_id, description=shape.description,
+                    difficult=shape.difficult, direction=shape.direction,
+                    attributes=shape.attributes.copy() if shape.attributes else {},
+                    kie_linking=shape.kie_linking[:] if shape.kie_linking else [],
+                )
+                new1.points = poly1
+                new1.close()
+                new2 = Shape(
+                    label=shape.label, shape_type=shape.shape_type,
+                    flags=shape.flags.copy() if shape.flags else {},
+                    group_id=shape.group_id, description=shape.description,
+                    difficult=shape.difficult, direction=shape.direction,
+                    attributes=shape.attributes.copy() if shape.attributes else {},
+                    kie_linking=shape.kie_linking[:] if shape.kie_linking else [],
+                )
+                new2.points = poly2
+                new2.close()
+                if shape in self.shapes:
+                    self.shapes.remove(shape)
+                self.selected_shapes = [
+                    s for s in self.selected_shapes if s is not shape
+                ]
+                self.shapes.append(new1)
+                self.shapes.append(new2)
+                new_shapes_added.extend([new1, new2])
+                shapes_removed.append(shape)
+            if new_shapes_added:
+                self.store_shapes()
+                if shapes_removed:
+                    self.shapes_deleted.emit(shapes_removed)
+                self.update()
+            return
+
+        # ── 默认模式：像素擦除鼠标下方的多边形 ──
+        target = self._find_polygon_at_pos(pos)
+        if target is None:
+            self._brush_erase_target = None
+            self._brush_erase_original_points = None
+            self._brush_erase_bbox = None
+            return
+        self._brush_erase_target = target
+        self._brush_erase_original_points = [QtCore.QPointF(p) for p in target.points]
+        xs = [p.x() for p in target.points]
+        ys = [p.y() for p in target.points]
+        self._brush_erase_bbox = (min(xs), min(ys), max(xs), max(ys))
+        self._ensure_brush_mask(target)
+        self._invalidate_brush_cache(target)
+        radius = max(1, int(round(self.brush_radius)))
+        self._apply_brush_to_mask(
+            target.mask, pos.x(), pos.y(), radius=radius, add=False
+        )
+        self._bump_brush_version(target)
+
+    def _split_fragments_from_mask(self, shape):
+        """Detect disconnected components in shape.mask and split them.
+
+        If the mask contains 2+ significant disconnected contours,
+        keep the largest one in *shape* and return a list of new Shape
+        objects for the rest.  Returns None when no splitting is needed.
+        """
+        if shape is None or getattr(shape, "mask", None) is None:
+            return None
+        polylines = self._mask_to_polylines(shape.mask)
+        if len(polylines) < 2:
+            return None
+
+        # Score each polyline by area, filter tiny noise
+        scored = []
+        for poly in polylines:
+            if len(poly) < 3:
+                continue
+            cnt = np.array(poly, dtype=np.int32).reshape((-1, 1, 2))
+            area = float(cv2.contourArea(cnt))
+            scored.append((area, poly, cnt))
+
+        if len(scored) < 2:
+            return None
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        best_area, best_poly, best_cnt = scored[0]
+
+        # Only keep fragments whose area >= 5% of the largest component
+        min_area = best_area * 0.05
+        fragments = []
+        for area, poly, cnt in scored[1:]:
+            if area < min_area:
+                continue
+            simplified = self._simplify_contour(cnt, self.brush_simplify_epsilon_px)
+            if len(simplified) < 3:
+                simplified = poly
+
+            # Create new shape with all properties copied from the original
+            frag = Shape(
+                label=shape.label,
+                shape_type="polygon",
+                flags=shape.flags.copy() if shape.flags else {},
+                group_id=shape.group_id,
+                description=shape.description,
+                difficult=shape.difficult,
+                direction=shape.direction,
+                attributes=shape.attributes.copy() if shape.attributes else {},
+                kie_linking=shape.kie_linking[:] if shape.kie_linking else [],
+            )
+            frag.points = [QtCore.QPointF(float(x), float(y)) for x, y in simplified]
+            frag.close()
+            frag.visible = True
+            fragments.append(frag)
+
+        if not fragments:
+            return None
+
+        # Update the original shape to keep only the largest component
+        simplified = self._simplify_contour(best_cnt, self.brush_simplify_epsilon_px)
+        if len(simplified) < 3:
+            simplified = best_poly
+        shape.shape_type = "polygon"
+        shape.points = [QtCore.QPointF(float(x), float(y)) for x, y in simplified]
+        shape.other_data.pop("holes", None)
+        shape.close()
+        shape.mask.fill(0)
+        cv2.fillPoly(shape.mask, [best_cnt], 255)
+        self._bump_brush_version(shape)
+
+        return fragments
+
+    def _commit_erase_target(self, cancel=False):
+        """Commit or cancel the current erase target.
+
+        On commit: if the eraser stroke disconnected the polygon into
+        multiple fragments, split them into separate labels (keeping all
+        attributes) instead of silently dropping the smaller pieces.
+        On cancel: restore the polygon's original geometry.
+        """
+        target = self._brush_erase_target
+        if target is None:
+            self._brush_erase_original_points = None
+            self._brush_erase_bbox = None
+            return
+
+        if cancel:
+            # Restore original geometry if available, else just clean up
+            if self._brush_erase_original_points is not None:
+                target.points = [QtCore.QPointF(p) for p in self._brush_erase_original_points]
+                target.close()
+            target._brush_using_mask = False
+            target.mask = None
+            self._invalidate_brush_cache(target)
+            self._brush_erase_target = None
+            self._brush_erase_original_points = None
+            self._brush_erase_bbox = None
+            self.update()
+            return
+
+        # Check for disconnected fragments and split them into new shapes
+        new_fragments = self._split_fragments_from_mask(target)
+
+        split_occurred = False
+        if new_fragments is not None:
+            # Splitting happened: target already updated to largest fragment
+            has_geometry = True
+            for frag in new_fragments:
+                self.shapes.append(frag)
+            split_occurred = True
+        else:
+            # No splitting: standard single-component flow
+            has_geometry = self._update_shape_points_from_mask(target)
+
+        target._brush_using_mask = False
+        target.mask = None
+        self._invalidate_brush_cache(target)
+        self._brush_erase_target = None
+        self._brush_erase_original_points = None
+        self._brush_erase_bbox = None
+        if not has_geometry:
+            if target in self.shapes:
+                self.shapes.remove(target)
+            self.selected_shapes = [
+                s for s in self.selected_shapes if s is not target
+            ]
+            target.selected = False
+            self.store_shapes()
+            self.shapes_deleted.emit([target])
+        else:
+            self.store_shapes()
+            if split_occurred:
+                self._split_pending_refresh = True
+            else:
+                self.shape_moved.emit()
+        self.update()
+
+    def _brush_mouse_press(self, ev, pos):
+        """Handle a mouse press while brush mode is active."""
+        if ev.button() == QtCore.Qt.RightButton:
+            return True
+        if ev.button() == QtCore.Qt.LeftButton and self.editing():
+            # Shift+左键：画布拖拽，不触发笔刷绘制
+            is_shift_pressed = bool(ev.modifiers() & QtCore.Qt.ShiftModifier)
+            if is_shift_pressed:
+                return False
+            ctrl = bool(ev.modifiers() & QtCore.Qt.ControlModifier)
+            self.eraser_mode = not ctrl if self.brush_invert else ctrl
+            # Draw mode + Ctrl: erase from existing polygon under cursor
+            if self.is_brush_draw_mode and self.eraser_mode:
+                self._begin_erase_stroke(pos)
+                self._prev_brush_pos = QtCore.QPointF(pos)
+                self.update()
+                return True
+            # Normal: paint/erase on the brush target (dummy or selected)
+            if self._brush_target_shape is not None:
+                self._ensure_brush_mask(self._brush_target_shape)
+                self._apply_brush_to_mask(
+                    self._brush_target_shape.mask,
+                    pos.x(),
+                    pos.y(),
+                    radius=max(1, int(round(self.brush_radius))),
+                    add=not self.eraser_mode,
+                )
+                self._prev_brush_pos = QtCore.QPointF(pos)
+                self._brush_stroke_dirty = True
+                self._brush_modified = True
+                self._bump_brush_version(self._brush_target_shape)
+                self.update()
+                return True
+        return False
+
+    def _brush_mouse_move(self, ev, pos):
+        """Handle mouse movement while brush mode is active."""
+        self.prev_move_point = pos
+        was_eraser = self.eraser_mode
+        ctrl = bool(ev.modifiers() & QtCore.Qt.ControlModifier)
+        self.eraser_mode = not ctrl if self.brush_invert else ctrl
+
+        if not (QtCore.Qt.LeftButton & ev.buttons()):
+            self.update()
+            return True
+
+        radius = max(1, int(round(self.brush_radius)))
+
+        # Draw mode: Ctrl transitions and real-time erase
+        if self.is_brush_draw_mode:
+            if was_eraser and not self.eraser_mode:
+                # Ctrl released: commit erase target, fall through to paint
+                self._commit_erase_target()
+                self._prev_brush_pos = None
+            elif not was_eraser and self.eraser_mode:
+                # Ctrl pressed mid-stroke: start erasing
+                self._begin_erase_stroke(pos)
+                self._prev_brush_pos = QtCore.QPointF(pos)
+                self.update()
+                return True
+
+            if self.eraser_mode:
+                if self._brush_erase_target is not None:
+                    target = self._brush_erase_target
+                    # Fast bbox check: only do expensive hit-test when
+                    # the brush center is outside the expanded bbox
+                    bbox = self._brush_erase_bbox
+                    if bbox is not None:
+                        bx0, by0, bx1, by1 = bbox
+                        in_bbox = (
+                            bx0 - radius <= pos.x() <= bx1 + radius
+                            and by0 - radius <= pos.y() <= by1 + radius
+                        )
+                    else:
+                        in_bbox = False
+                    if not in_bbox:
+                        # Brush left the target's bbox: check for a new one
+                        new_target = self._find_polygon_at_pos(pos)
+                        if new_target is not target:
+                            self._commit_erase_target()
+                            if new_target is not None:
+                                self._begin_erase_stroke(pos)
+                            self._prev_brush_pos = QtCore.QPointF(pos)
+                            self.update()
+                            return True
+                    # Continue erasing from current target (mask-only, no
+                    # contour extraction — the overlay shows the mask live)
+                    self._ensure_brush_mask(target)
+                    prev = self._prev_brush_pos
+                    if prev is None:
+                        self._apply_brush_to_mask(
+                            target.mask, pos.x(), pos.y(),
+                            radius=radius, add=False,
+                        )
+                    else:
+                        dx = pos.x() - prev.x()
+                        dy = pos.y() - prev.y()
+                        dist = float((dx * dx + dy * dy) ** 0.5)
+                        step = max(1.0, radius * 0.5)
+                        steps = int(dist // step) if dist > 0 else 0
+                        for i in range(steps + 1):
+                            t = (i / steps) if steps > 0 else 1.0
+                            x = prev.x() * (1 - t) + pos.x() * t
+                            y = prev.y() * (1 - t) + pos.y() * t
+                            self._apply_brush_to_mask(
+                                target.mask, x, y, radius=radius, add=False,
+                            )
+                    self._bump_brush_version(target)
+                    self._prev_brush_pos = QtCore.QPointF(pos)
+                    self.update()
+                    return True
+                else:
+                    # No current target: try to find one under cursor
+                    self._begin_erase_stroke(pos)
+                    self._prev_brush_pos = QtCore.QPointF(pos)
+                    self.update()
+                    return True
+
+        # Normal: paint/erase on brush target (dummy or selected polygon)
+        target = self._brush_target_shape
+        if target is not None:
+            self._ensure_brush_mask(target)
+            add = not self.eraser_mode
+            prev = self._prev_brush_pos
+            if prev is None:
+                self._apply_brush_to_mask(
+                    target.mask, pos.x(), pos.y(), radius=radius, add=add
+                )
+            else:
+                dx = pos.x() - prev.x()
+                dy = pos.y() - prev.y()
+                dist = float((dx * dx + dy * dy) ** 0.5)
+                step = max(1.0, radius * 0.5)
+                steps = int(dist // step) if dist > 0 else 0
+                for i in range(steps + 1):
+                    t = (i / steps) if steps > 0 else 1.0
+                    x = prev.x() * (1 - t) + pos.x() * t
+                    y = prev.y() * (1 - t) + pos.y() * t
+                    self._apply_brush_to_mask(
+                        target.mask, x, y, radius=radius, add=add
+                    )
+            self._prev_brush_pos = QtCore.QPointF(pos)
+            self._brush_stroke_dirty = True
+            self._brush_modified = True
+            self._bump_brush_version(target)
+        self.update()
+        return True
+
+    def _brush_mouse_release(self, ev):
+        """Finish a brush stroke or exit brush mode on mouse release."""
+        if ev.button() == QtCore.Qt.RightButton:
+            self.set_brush_mode(False)
+            return True
+        if ev.button() == QtCore.Qt.LeftButton:
+            # Commit erase target if active (draw-mode Ctrl erase)
+            if self._brush_erase_target is not None:
+                self._commit_erase_target()
+                self._prev_brush_pos = None
+                self.update()
+                return True
+            # Normal: finalize brush target (dummy or selected polygon)
+            if (
+                self._brush_target_shape is not None
+                and getattr(self._brush_target_shape, "mask", None) is not None
+            ):
+                self._update_shape_points_from_mask(self._brush_target_shape)
+                if self._brush_stroke_dirty:
+                    self._push_brush_undo_state()
+                self._brush_stroke_dirty = False
+                self._prev_brush_pos = None
+                self.update()
+                return True
+        return False
+
+    def _brush_key_press(self, ev):
+        """Handle brush-specific undo/redo shortcuts and eraser cut mode."""
+        modifiers = ev.modifiers()
+        key = ev.key()
+        if key == QtCore.Qt.Key_Escape:
+            self.cancel_brush_mode()
+            ev.accept()
+            return True
+
+        # 橡皮擦切割模式切换：仅当橡皮擦激活时有效
+        if self.eraser_mode:
+            if key == QtCore.Qt.Key_1:
+                self._eraser_cut_mode = (
+                    None if self._eraser_cut_mode == 'vertical' else 'vertical'
+                )
+                msg = self.tr("橡皮擦: 垂直切割") if self._eraser_cut_mode else self.tr("橡皮擦: 像素擦除")
+                self.show_announcement(msg, 1500)
+                self.update()
+                ev.accept()
+                return True
+            elif key == QtCore.Qt.Key_2:
+                self._eraser_cut_mode = (
+                    None if self._eraser_cut_mode == 'horizontal' else 'horizontal'
+                )
+                msg = self.tr("橡皮擦: 水平切割") if self._eraser_cut_mode else self.tr("橡皮擦: 像素擦除")
+                self.show_announcement(msg, 1500)
+                self.update()
+                ev.accept()
+                return True
+
+        ctrl = bool(modifiers & QtCore.Qt.ControlModifier)
+        shift = bool(modifiers & QtCore.Qt.ShiftModifier)
+        if ctrl and key == QtCore.Qt.Key_Z:
+            if shift:
+                self.brush_redo()
+            else:
+                self.brush_undo()
+            ev.accept()
+            return True
+        if ctrl and key == QtCore.Qt.Key_Y:
+            self.brush_redo()
+            ev.accept()
+            return True
+        return False
+
+    def _paint_brush_overlays(self, p):
+        """Paint live mask overlays for shapes being brush-edited."""
+        for shape in self.shapes:
+            if not getattr(shape, "_brush_using_mask", False):
+                continue
+            if getattr(shape, "mask", None) is None or not shape.visible:
+                continue
+            outline_path = self._get_brush_render_data(shape)
+            if outline_path is not None:
+                outline_color = (
+                    shape.select_line_color
+                    if shape.selected
+                    else shape.line_color
+                )
+                pen = QtGui.QPen(outline_color)
+                pen.setWidth(
+                    max(1, int(round(shape.line_width / Shape.scale)))
+                )
+                if getattr(shape, "difficult", False):
+                    pen.setStyle(QtCore.Qt.DashLine)
+                p.setPen(pen)
+                fill_color = QtGui.QColor(outline_color)
+                fill_color.setAlpha(int(self.mask_opacity))
+                p.setBrush(fill_color)
+                p.drawPath(outline_path)
+
+    def _paint_brush_cursor(self, p):
+        """Draw the brush-size preview at the cursor (circle or square)."""
+        if not self.is_brush_mode:
+            return
+        r = max(1.0, float(self.brush_radius))
+        p.setOpacity(1.0)
+        if self.eraser_mode:
+            color = self.brush_config.get("eraser_cursor_color", [255, 100, 100, 255])
+        else:
+            color = self.brush_config.get("brush_cursor_color", [0, 255, 255, 255])
+        pen_color = QtGui.QColor(*color[:3], color[3] if len(color) > 3 else 255)
+        fill_color = QtGui.QColor(*color[:3], min(80, color[3]) if len(color) > 3 else 50)
+        p.setPen(QtGui.QPen(pen_color, 2))
+        p.setBrush(fill_color)
+        if self.brush_cursor_shape == "square":
+            p.drawRect(QtCore.QRectF(
+                self.prev_move_point.x() - r,
+                self.prev_move_point.y() - r,
+                r * 2, r * 2
+            ))
+        else:
+            p.drawEllipse(QtCore.QPointF(self.prev_move_point), r, r)
+
+        # 画笔大小数值标注（仅调整时显示，黑底白字）
+        if self._brush_size_label_visible:
+            font = QtGui.QFont()
+            font.setPixelSize(max(10, int(r * 0.6)))
+            p.setFont(font)
+            label = f"{int(r * 2)}px"
+            fm = QtGui.QFontMetrics(font)
+            tw = fm.width(label)
+            th = fm.height()
+            x = self.prev_move_point.x() + r + 4
+            y = self.prev_move_point.y() - r - 4
+            pad = 3
+            bg_rect = QtCore.QRectF(x - pad, y - th + pad, tw + pad * 2, th + pad * 2)
+            p.fillRect(bg_rect, QtGui.QColor(0, 0, 0, 180))
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 1))
+            p.drawText(QtCore.QPointF(x, y), label)
 
     def set_auto_labeling_mode(self, mode: AutoLabelingMode) -> None:
         """
@@ -672,14 +1774,6 @@ class Canvas(
     def enterEvent(self, _):
         """Mouse enter event"""
         self.override_cursor(self._cursor)
-
-    def leaveEvent(self, _):
-        """Mouse leave event"""
-        self.store_moving_shape()
-        self.un_highlight()
-        # 发射hover状态变化信号
-        self.shape_hover_changed.emit()
-        self.restore_cursor()
 
     def focusOutEvent(self, _):
         """Window out of focus event"""
@@ -1037,7 +2131,11 @@ class Canvas(
 
     # QT Overload
     def leaveEvent(self, ev):
-        """Handle mouse leaving the canvas - clear navigator mouse indicator"""
+        """Handle mouse leaving the canvas."""
+        self.store_moving_shape()
+        self.un_highlight()
+        self.shape_hover_changed.emit()
+        self.restore_cursor()
         self.mouse_pos_changed.emit(None)
         super().leaveEvent(ev)
 
@@ -1054,6 +2152,27 @@ class Canvas(
             ratio = self._animation_progress_ratio_at(pos)
             if ratio is not None:
                 self.animation_seek_requested.emit(ratio)
+            return
+
+        if self.is_brush_mode and self.editing():
+            # Shift+左键拖拽：画布平移
+            is_shift_pressed = bool(QtCore.Qt.ShiftModifier & int(ev.modifiers()))
+            if is_shift_pressed and (QtCore.Qt.LeftButton & ev.buttons()):
+                self.override_cursor(CURSOR_MOVE)
+                if self.pixmap and self.pixmap.width() and self.pixmap.height():
+                    delta = ev.localPos() - self.prev_pan_point
+                    self.scroll_request.emit(
+                        delta.x() / (self.pixmap.width() * self.scale),
+                        Qt.Horizontal,
+                        1,
+                    )
+                    self.scroll_request.emit(
+                        delta.y() / (self.pixmap.height() * self.scale),
+                        Qt.Vertical,
+                        1,
+                    )
+                return
+            self._brush_mouse_move(ev, pos)
             return
 
         # 发射鼠标位置信号（用于导航器显示）
@@ -1550,6 +2669,9 @@ class Canvas(
             return
         pos = self.transform_pos(ev.localPos())
 
+        if self.is_brush_mode and self._brush_mouse_press(ev, pos):
+            return
+
         if (
             self.animation_only_mode
             and ev.button() == QtCore.Qt.LeftButton
@@ -1918,6 +3040,9 @@ class Canvas(
             and self.animation_progress_dragging
         ):
             self.animation_progress_dragging = False
+            return
+
+        if self.is_brush_mode and self._brush_mouse_release(ev):
             return
 
         # Handle Alt+drag selection box completion
@@ -3593,7 +4718,8 @@ class Canvas(
                 shape.fill = self._fill_drawing and (
                     shape.selected or shape == self.h_hape
                 )
-                shape.paint(p)
+                if not getattr(shape, "_brush_using_mask", False):
+                    shape.paint(p)
 
                 # --- Alignment Tool Highlighting ---
                 if self.is_alignment_target_mode or self.is_reference_selection_mode or self.reference_shape:
@@ -3848,6 +4974,9 @@ class Canvas(
                     text_pen = QtGui.QPen(QtGui.QColor("#FFFFFF"))
                     p.setPen(text_pen)
                     p.drawText(base_pos, text)
+
+        # Draw live brush-edit overlays on top of the regular shapes.
+        self._paint_brush_overlays(p)
 
         if self.current:
             # Don't paint the shape itself in rotation3 mode (only paint line with arrow)
@@ -4869,6 +5998,30 @@ class Canvas(
         # 绘制探测框（仅在自动探测模式下且放大镜未手动启用时）
         if self.magnifier_auto_detect and not self.magnifier_enabled:
             self.draw_detect_box(p)
+
+        # Brush-size preview circle follows the cursor in brush mode.
+        self._paint_brush_cursor(p)
+
+        # Canvas center announcement text (e.g. "连续标注模式 已开启")
+        if self._announcement_text:
+            font = QtGui.QFont()
+            font.setPointSize(24)
+            font.setBold(True)
+            p.setFont(font)
+            p.setPen(QtGui.QColor(255, 255, 255, 230))
+            # Draw dark background
+            fm = QtGui.QFontMetrics(font)
+            tw = fm.width(self._announcement_text)
+            th = fm.height()
+            r = self.rect()
+            bg_rect = QtCore.QRectF(
+                (r.width() - tw) / 2 - 20,
+                (r.height() - th) / 2 - 10,
+                tw + 40,
+                th + 20,
+            )
+            p.fillRect(bg_rect, QtGui.QColor(0, 0, 0, 160))
+            p.drawText(r, QtCore.Qt.AlignCenter, self._announcement_text)
 
         p.end()
 
@@ -6050,6 +7203,46 @@ class Canvas(
         mods = ev.modifiers()
         delta = ev.angleDelta()
 
+        if self.is_brush_mode:
+            # Shift+滚轮：缩放画布，不走画笔大小调整
+            is_shift_pressed = bool(QtCore.Qt.ShiftModifier & int(mods))
+            if is_shift_pressed:
+                if self.pan_ps_style:
+                    scroll_area = self._get_scroll_area()
+                    if scroll_area:
+                        self.zoom_request.emit(delta.y(), ev.pos())
+                    else:
+                        self.zoom_request.emit(delta.y(), ev.pos())
+                else:
+                    self.zoom_request.emit(delta.y(), ev.pos())
+                ev.accept()
+                return
+            else:
+                if delta.y() == 0:
+                    ev.accept()
+                    return
+                step = 0.5 if delta.y() > 0 else -0.5
+                self.brush_radius = max(0.5, min(9999, self.brush_radius + step))
+                self._brush_size_label_visible = True
+                self._brush_size_label_timer.start(1200)
+                self.brush_config["brush_radius"] = self.brush_radius
+                # 同步更新画笔菜单输入框
+                if self.parent is not None:
+                    spin = getattr(self.parent, '_brush_size_spin', None)
+                    if spin is not None:
+                        spin.blockSignals(True)
+                        spin.setValue(int(round(self.brush_radius * 2)))
+                        spin.blockSignals(False)
+                # 保存画笔大小到配置文件
+                try:
+                    from anylabeling.config import save_config
+                    save_config(self._config)
+                except Exception:
+                    pass
+                self.update()
+                ev.accept()
+                return
+
         if self.drawing() and self.create_mode == "rectangle3":
             wheel_up = delta.y() > 0
             step = 5
@@ -6614,10 +7807,35 @@ class Canvas(
         self.large_rotation_increment = speed_settings.get("large_rotation_increment", 0.0087)
         self.small_rotation_increment = speed_settings.get("small_rotation_increment", 0.001745)
 
+    def show_announcement(self, text, msec=1500):
+        """Show a temporary overlay text in the center of the canvas."""
+        self._announcement_text = text
+        self._announcement_msec = msec
+        self._announcement_timer.start(msec)
+        self.update()
+
+    def _clear_announcement(self):
+        """Clear the announcement text."""
+        self._announcement_text = ""
+        self.update()
+
+    def _hide_brush_size_label(self):
+        """Hide the brush size label."""
+        self._brush_size_label_visible = False
+        self.update()
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
+            # 连续标注模式下 ESC 退出当前绘制（不关闭开关）
+            if self.parent is not None and getattr(self.parent, '_continuous_drawing', False):
+                self.parent.keyPressEvent(event)
+                return
             event.accept()
             return
+
+        if self.is_brush_mode and self.editing():
+            if self._brush_key_press(event):
+                return
 
         # 分割模式下，按1切换垂直分割，按2切换水平分割
         if self.segmentation_mode is not None:
@@ -6835,6 +8053,7 @@ class Canvas(
 
     def load_pixmap(self, pixmap, clear_shapes=True):
         """Load pixmap"""
+        self.cancel_brush_mode()
         self.pixmap = pixmap
         if clear_shapes:
             self.shapes = []
@@ -6845,6 +8064,7 @@ class Canvas(
 
     def load_shapes(self, shapes, replace=True):
         """Load shapes"""
+        self.cancel_brush_mode()
         if replace:
             self.shapes = list(shapes)
         else:

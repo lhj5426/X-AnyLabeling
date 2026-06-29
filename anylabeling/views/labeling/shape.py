@@ -168,6 +168,12 @@ class Shape:
         # 标签独立安全边界设置（None表示使用全局设置）
         self._safety_border_settings = None  # 安全边界设置字典
 
+        # Brush-edit state (managed by Canvas brush mode; mask is a
+        # uint8 (H, W) array while editing and None otherwise).
+        self.mask = None
+        self._brush_using_mask = False
+        self._brush_mask_version = 0
+
         # Rotation setting
         self.direction = direction
         self.center = None

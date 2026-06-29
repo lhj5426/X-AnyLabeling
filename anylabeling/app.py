@@ -36,6 +36,32 @@ from anylabeling.views.labeling.utils.update_checker import (
 from anylabeling.resources import resources
 
 
+def _filter_harmless_qt_warnings():
+    """Install a Qt message handler that suppresses harmless warnings.
+
+    QDockWidget "Negative sizes (0,-1)" warning: Qt's internal C++ code
+    (during setWidget/addDockWidget/restoreState) calls setMinimumWidth(0)
+    which internally does setMinimumSize(0, minimumSize().height()). If
+    the height was internally reset to -1, this triggers the warning.
+    It is completely harmless — Qt just ignores the negative value.
+    """
+    def handler(mode, context, message):
+        if "Negative sizes" in message and "QDockWidget" in message:
+            return  # Suppress harmless warning
+        # Default behavior for all other messages
+        if mode == QtCore.QtWarningMsg:
+            print(f"Qt WARNING: {message}", file=sys.stderr)
+        elif mode == QtCore.QtCriticalMsg:
+            print(f"Qt CRITICAL: {message}", file=sys.stderr)
+        elif mode == QtCore.QtFatalMsg:
+            print(f"Qt FATAL: {message}", file=sys.stderr)
+
+    QtCore.qInstallMessageHandler(handler)
+
+
+_filter_harmless_qt_warnings()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(

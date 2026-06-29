@@ -151,6 +151,11 @@ class ColorManagerDialog(QDialog):
         self.spacing_guide_text_bg_color_button = self.create_color_button('spacing_guide_text_bg_color', self.config.get('spacing_guide_text_bg_color', [0, 0, 0, 150]))
         left_form.addRow(self.tr("间距线文字背景色:"), self.spacing_guide_text_bg_color_button)
 
+        # Brush cursor colors
+        brush_config = self.config.get('canvas', {}).get('brush', {})
+        self.brush_cursor_color_button = self.create_color_button(['canvas', 'brush', 'brush_cursor_color'], brush_config.get('brush_cursor_color', [0, 255, 255, 255]))
+        left_form.addRow(self.tr("画笔圈颜色:"), self.brush_cursor_color_button)
+
         # === 右列配置项 ===
         self.select_fill_color_button = self.create_color_button(['shape', 'select_fill_color'], self.config['shape']['select_fill_color'])
         right_form.addRow(self.tr("选中填充颜色:"), self.select_fill_color_button)
@@ -289,6 +294,9 @@ class ColorManagerDialog(QDialog):
 
         self.path_delete_number_color_button = self.create_color_button('path_delete_number_color', self.config.get('path_delete_number_color', [117, 117, 117]))
         right_form.addRow(self.tr("删除线序号背景色:"), self.path_delete_number_color_button)
+
+        self.eraser_cursor_color_button = self.create_color_button(['canvas', 'brush', 'eraser_cursor_color'], brush_config.get('eraser_cursor_color', [255, 100, 100, 255]))
+        right_form.addRow(self.tr("橡皮擦圈颜色:"), self.eraser_cursor_color_button)
 
         # 将左列添加到水平布局
         columns_layout.addLayout(left_form)

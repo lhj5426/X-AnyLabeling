@@ -105,6 +105,36 @@ from ...services import merger, tag_sorting
 LABEL_COLORMAP = utils.label_colormap()
 LABEL_OPACITY = 128
 
+
+class ShrinkableWidget(QtWidgets.QWidget):
+    """QWidget whose minimumSizeHint returns (0, 0).
+
+    A plain QWidget with a layout has minimumSizeHint() = layout.minimumSize(),
+    which is the sum of children's effective minimums. Even if children have
+    setMinimumWidth(0), their minimumSizeHint() (based on text/content) still
+    propagates up through the layout. This subclass breaks that chain:
+    minimumSizeHint() returns (0, 0) so the parent layout can shrink freely,
+    while sizeHint() stays normal so the widget is still visible at full size.
+    """
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(0, 0)
+
+
+class ShrinkablePushButton(QtWidgets.QPushButton):
+    """QPushButton whose minimumSizeHint returns (0, 0).
+
+    Qt layouts use max(minimumSize, minimumSizeHint) for the effective minimum.
+    QPushButton.minimumSizeHint is based on text width, so setMinimumWidth(0)
+    alone can't make the dock shrink below the button text width.
+    QSizePolicy.Ignored would also zero the preferred size → button disappears.
+    This subclass keeps sizeHint() intact (button visible at normal width)
+    while overriding minimumSizeHint() to (0, 0) (allows shrinking to 0).
+    """
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(0, 0)
+
 class MergeThread(QtCore.QThread):
     progress = QtCore.pyqtSignal(int, str)
     finished = QtCore.pyqtSignal(str)
@@ -684,9 +714,12 @@ class LabelingWidget(QtWidgets.QWidget):
         self.tag_sort_total = 0
         self.tag_sort_last_payload = None
         self._crosshair_was_toggled_for_drawing = False
+        self._crosshair_was_toggled_for_brush = False
+        self._continuous_drawing = self._config.get("continuous_drawing", False)
         self.label_flags = self._config["label_flags"]
         self.label_loop_count = -1
         self.digit_to_label = None
+        self._digit_shortcut_used_brush = False
         self.drawing_digit_shortcuts = self._config.get("digit_shortcuts", {})
 
         self.label_toggle_shortcuts = self._config.get("label_toggle_shortcuts", {})
@@ -827,14 +860,20 @@ class LabelingWidget(QtWidgets.QWidget):
         self.label_list.item_changed.connect(self.label_item_changed)
         self.label_list.item_dropped.connect(self.label_order_changed)
         self.shape_dock = QtWidgets.QDockWidget(self.tr("Objects"), self)
-        
+        self.shape_dock.setObjectName("Objects")
+        # Pre-set minimum size before setWidget — Qt's internal code may call
+        # setMinimumWidth(0) during setWidget, which does
+        # setMinimumSize(0, minimumSize().height()); if height is -1 (unset),
+        # this triggers "Negative sizes (0,-1)" warning.
+        self.shape_dock.setMinimumSize(0, 0)
+
         # 创建对象控制按钮
-        shape_control_widget = QtWidgets.QWidget()
+        shape_control_widget = ShrinkableWidget()
         shape_control_layout = QtWidgets.QHBoxLayout()
         shape_control_layout.setContentsMargins(2, 2, 2, 2)
         shape_control_layout.setSpacing(2)
         
-        self.btn_select_all_shapes = QtWidgets.QPushButton(self.tr("全选"))
+        self.btn_select_all_shapes = ShrinkablePushButton(self.tr("全选"))
         def select_all_objects():
             for item in self.label_list:
                 item.setCheckState(Qt.Checked)
@@ -844,7 +883,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.actions.visibility_shapes_mode.setChecked(True)
         self.btn_select_all_shapes.clicked.connect(select_all_objects)
 
-        self.btn_invert_selection_shapes = QtWidgets.QPushButton(self.tr("反选"))
+        self.btn_invert_selection_shapes = ShrinkablePushButton(self.tr("反选"))
         def invert_all_objects():
             # 获取反选功能增强设置
             exclude_locked = self._config.get("invert_exclude_locked", True)
@@ -864,7 +903,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
         self.btn_invert_selection_shapes.clicked.connect(invert_all_objects)
 
-        self.btn_deselect_all_shapes = QtWidgets.QPushButton(self.tr("取消"))
+        self.btn_deselect_all_shapes = ShrinkablePushButton(self.tr("取消"))
         def deselect_all_objects():
             # 获取取消功能增强设置
             exclude_locked = self._config.get("deselect_exclude_locked", True)
@@ -978,7 +1017,7 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # 高亮按钮
         self._highlight_on = False
-        self.btn_highlight = QtWidgets.QPushButton(self.tr("高亮"))
+        self.btn_highlight = ShrinkablePushButton(self.tr("高亮"))
         self.btn_highlight.setCheckable(True)
         def toggle_highlight():
             all_shapes = [item.shape() for item in self.label_list]
@@ -1178,21 +1217,25 @@ class LabelingWidget(QtWidgets.QWidget):
         shape_control_layout.addStretch()
         shape_control_widget.setLayout(shape_control_layout)
         
-        shape_container = QtWidgets.QWidget()
+        shape_container = ShrinkableWidget()
         shape_layout = QtWidgets.QVBoxLayout()
         shape_layout.setContentsMargins(0, 0, 0, 0)
         shape_layout.setSpacing(2)
+
+        # Add filter layout (moved from right_sidebar_layout)
+        filter_layout = QtWidgets.QHBoxLayout()
+        filter_layout.addWidget(self.label_filter_combobox, 90)
+        filter_layout.addWidget(self.gid_filter_combobox, 10)
+        shape_layout.addLayout(filter_layout)
+
         shape_layout.addWidget(shape_control_widget)
         shape_layout.addWidget(self.label_list)
         shape_container.setLayout(shape_layout)
-        
+
         self.shape_dock.setWidget(shape_container)
         self.shape_dock.setStyleSheet(
             "QDockWidget::title {" "text-align: center;" "padding: 0px;" "}"
         )
-        self.shape_dock.setTitleBarWidget(QtWidgets.QWidget())
-        if self.shape_dock.titleBarWidget():
-            self.shape_dock.titleBarWidget().installEventFilter(self)
 
         self.unique_label_list = UniqueLabelQListWidget(self)
         # 连接标签可见性变化信号
@@ -1260,9 +1303,11 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.label_dock = QtWidgets.QDockWidget(self.tr("Labels"), self)
         self.label_dock.setObjectName("Labels")
-        
+        # Pre-set minimum size before setWidget — same reason as shape_dock above
+        self.label_dock.setMinimumSize(0, 0)
+
         # 创建标签容器widget
-        label_container = QtWidgets.QWidget()
+        label_container = ShrinkableWidget()
         label_layout = QtWidgets.QVBoxLayout()
         label_layout.setContentsMargins(0, 0, 0, 0)
         label_layout.setSpacing(2)
@@ -1318,9 +1363,8 @@ class LabelingWidget(QtWidgets.QWidget):
         file_list_layout.setSpacing(4)
         file_list_layout.addLayout(search_filter_layout)
         file_list_layout.addWidget(self.file_list_widget)
-        self.file_dock = QtWidgets.QDockWidget("", self)
+        self.file_dock = QtWidgets.QDockWidget(self.tr("路径列表"), self)
         self.file_dock.setObjectName("Files")
-        self.file_dock.setTitleBarWidget(QtWidgets.QWidget(self))
         file_list_widget = QtWidgets.QWidget()
         file_list_widget.setLayout(file_list_layout)
         self.file_dock.setWidget(file_list_widget)
@@ -1443,6 +1487,13 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         # Connect mouse position signal to navigator for real-time position indicator
         self.canvas.mouse_pos_changed.connect(self._on_canvas_mouse_pos_changed)
+        # Keep the brush-edit toggle in sync when the canvas exits brush
+        # mode on its own (e.g. via a right-click).
+        self.canvas.brush_mode_changed.connect(self.on_brush_mode_changed)
+        self.canvas.brush_history_changed.connect(
+            lambda can_undo: self.actions.undo.setEnabled(can_undo)
+        )
+        self.canvas.shapes_deleted.connect(self.on_shapes_deleted)
         # [Feature] support for automatically switching to editing mode
         # when the cursor moves over an object
         self.canvas.h_shape_is_hovered = self._config.get(
@@ -1457,15 +1508,14 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self._central_widget = scroll_area
 
-        features = QtWidgets.QDockWidget.DockWidgetFeatures()
+        # Enable full dock features (movable, floatable, closable) for all docks
+        dock_features = (
+            QtWidgets.QDockWidget.DockWidgetClosable
+            | QtWidgets.QDockWidget.DockWidgetFloatable
+            | QtWidgets.QDockWidget.DockWidgetMovable
+        )
         for dock in ["flag_dock", "label_dock", "shape_dock", "file_dock"]:
-            if self._config[dock]["closable"]:
-                features = features | QtWidgets.QDockWidget.DockWidgetClosable
-            if self._config[dock]["floatable"]:
-                features = features | QtWidgets.QDockWidget.DockWidgetFloatable
-            if self._config[dock]["movable"]:
-                features = features | QtWidgets.QDockWidget.DockWidgetMovable
-            getattr(self, dock).setFeatures(features)
+            getattr(self, dock).setFeatures(dock_features)
             if self._config[dock]["show"] is False:
                 getattr(self, dock).setVisible(False)
 
@@ -1630,6 +1680,15 @@ class LabelingWidget(QtWidgets.QWidget):
             self.tr('Toggle "Auto Use Last Label" mode'),
             checkable=True,
             checked=self._config["auto_use_last_label"],
+        )
+        continuous_drawing_mode = action(
+            self.tr("连续标注模式"),
+            lambda x: self._toggle_continuous_drawing(x),
+            None,
+            None,
+            self.tr("开启后标注完成后自动保持当前绘制工具，按 ESC 退出"),
+            checkable=True,
+            checked=self._config.get("continuous_drawing", False),
         )
 
         use_system_clipboard = action(
@@ -1800,6 +1859,89 @@ class LabelingWidget(QtWidgets.QWidget):
             "edit",
             self.tr("Move and edit the selected polygons"),
             enabled=False,
+        )
+        edit_brush_mode = action(
+            self.tr("涂鸦画笔"),
+            lambda checked: self.toggle_brush_mode(checked),
+            shortcuts.get("edit_brush_mode", "Shift+B"),
+            "brush",
+            self.tr(
+                "未选中多边形时直接涂鸦创建新多边形，"
+                "选中多边形时在其上涂抹或擦除，"
+                "按住 Ctrl 绘制以擦除，滚动滚轮调整笔刷大小"
+            ),
+            enabled=False,
+            checkable=True,
+            checked=False,
+        )
+        # 画笔形状选择菜单 (右键/长按)
+        brush_shape_menu = QtWidgets.QMenu(self)
+        brush_shape_menu.setTitle(self.tr("画笔形状"))
+        brush_shape_group = QtWidgets.QActionGroup(brush_shape_menu)
+        brush_shape_group.setExclusive(True)
+        circle_action = brush_shape_menu.addAction(self.tr("圆形光标"))
+        circle_action.setCheckable(True)
+        square_action = brush_shape_menu.addAction(self.tr("方形光标"))
+        square_action.setCheckable(True)
+        brush_shape_group.addAction(circle_action)
+        brush_shape_group.addAction(square_action)
+        # 初始化选中状态
+        current_shape = self._config.get("canvas", {}).get("brush", {}).get("brush_cursor_shape", "circle")
+        circle_action.setChecked(current_shape != "square")
+        square_action.setChecked(current_shape == "square")
+        edit_brush_mode.setMenu(brush_shape_menu)
+        # 保存选择
+        def on_brush_shape_chosen(act):
+            shape = "square" if act is square_action else "circle"
+            self._config.setdefault("canvas", {}).setdefault("brush", {})["brush_cursor_shape"] = shape
+            save_config(self._config)
+            self.canvas.brush_cursor_shape = shape
+            self.canvas.update()
+        circle_action.triggered.connect(lambda: on_brush_shape_chosen(circle_action))
+        square_action.triggered.connect(lambda: on_brush_shape_chosen(square_action))
+        # 画笔反转模式（默认画笔，勾选后默认橡皮擦）
+        brush_shape_menu.addSeparator()
+        invert_action = brush_shape_menu.addAction(self.tr("反转模式 (默认橡皮擦)"))
+        invert_action.setCheckable(True)
+        invert_action.setChecked(self._config.get("canvas", {}).get("brush", {}).get("brush_invert", False))
+        def on_brush_invert_chosen():
+            enabled = invert_action.isChecked()
+            self._config.setdefault("canvas", {}).setdefault("brush", {})["brush_invert"] = enabled
+            save_config(self._config)
+            self.canvas.brush_invert = enabled
+            self.canvas.update()
+        invert_action.triggered.connect(on_brush_invert_chosen)
+        # 画笔大小数值输入框
+        brush_shape_menu.addSeparator()
+        size_widget = QtWidgets.QWidget()
+        size_layout = QtWidgets.QHBoxLayout(size_widget)
+        size_layout.setContentsMargins(8, 4, 8, 4)
+        size_layout.setSpacing(6)
+        size_label = QtWidgets.QLabel(self.tr("画笔大小:"))
+        size_layout.addWidget(size_label)
+        size_spin = QtWidgets.QSpinBox()
+        size_spin.setRange(2, 19998)
+        size_spin.setValue(int(round(self.canvas.brush_radius * 2)))
+        size_spin.setSingleStep(1)
+        size_spin.setSuffix(" px")
+        size_spin.setFixedWidth(90)
+        self._brush_size_spin = size_spin  # 保存引用，供外部同步
+        size_layout.addWidget(size_spin)
+        size_layout.addStretch()
+        def on_brush_size_changed(val):
+            self.canvas.brush_radius = max(0.5, val / 2)
+            self.canvas.brush_config["brush_radius"] = max(0.5, val / 2)
+            save_config(self._config)
+            self.canvas._brush_size_label_visible = True
+            self.canvas._brush_size_label_timer.start(1200)
+            self.canvas.update()
+        size_spin.valueChanged.connect(on_brush_size_changed)
+        size_action = QtWidgets.QWidgetAction(brush_shape_menu)
+        size_action.setDefaultWidget(size_widget)
+        brush_shape_menu.addAction(size_action)
+        # 菜单弹出时同步输入框为当前画笔大小
+        brush_shape_menu.aboutToShow.connect(
+            lambda: self._sync_brush_size_spin()
         )
         group_selected_shapes = action(
             self.tr("Group Selected Shapes"),
@@ -2209,6 +2351,21 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="edit",
             tip=self.tr("开启/关闭虚影粘贴模式"),
         )
+
+        toggle_continuous_drawing = action(
+            self.tr("切换连续标注模式"),
+            self.toggle_continuous_drawing_shortcut,
+            shortcuts.get("toggle_continuous_drawing", "L"),
+            icon="edit",
+            tip=self.tr("开启/关闭连续标注模式"),
+        )
+        # 直接用 QShortcut 确保快捷键可靠触发（ApplicationShortcut 不受焦点影响）
+        self._cont_draw_qshortcut = QtWidgets.QShortcut(
+            QtGui.QKeySequence(shortcuts.get("toggle_continuous_drawing", "L")),
+            self,
+        )
+        self._cont_draw_qshortcut.setContext(Qt.ApplicationShortcut)
+        self._cont_draw_qshortcut.activated.connect(self.toggle_continuous_drawing_shortcut)
 
         open_chatbot = action(
             self.tr("ChatBot"),
@@ -2980,6 +3137,7 @@ class LabelingWidget(QtWidgets.QWidget):
             delete_image_file=delete_image_file,
             keep_prev_mode=keep_prev_mode,
             auto_use_last_label_mode=auto_use_last_label_mode,
+            continuous_drawing_mode=continuous_drawing_mode,
             use_system_clipboard=use_system_clipboard,
             visibility_shapes_mode=visibility_shapes_mode,
             run_all_images=run_all_images,
@@ -2996,6 +3154,7 @@ class LabelingWidget(QtWidgets.QWidget):
             remove_point=remove_point,
             create_mode=create_mode,
             edit_mode=edit_mode,
+            edit_brush_mode=edit_brush_mode,
             create_rectangle_mode=create_rectangle_mode,
             create_rotation_mode=create_rotation_mode,
             create_rotation3_mode=create_rotation3_mode,
@@ -3039,6 +3198,7 @@ class LabelingWidget(QtWidgets.QWidget):
             page_text_tool=page_text_tool,
             highlight_settings_tool=highlight_settings_tool,
             toggle_ghost_paste=toggle_ghost_paste,
+            toggle_continuous_drawing=toggle_continuous_drawing,
             label_manager=label_manager,
             object_manager=object_manager,
             edit_group_id=gid_manager,
@@ -3154,6 +3314,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 None,
                 keep_prev_mode,
                 auto_use_last_label_mode,
+                continuous_drawing_mode,
                 use_system_clipboard,
                 visibility_shapes_mode,
             ),
@@ -3169,6 +3330,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 create_point_mode,
                 create_line_strip_mode,
                 edit_mode,
+                edit_brush_mode,
                 edit,
                 union_selection,
                 copy,
@@ -3203,6 +3365,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 digit_shortcut_8,
                 digit_shortcut_9,
                 edit_mode,
+                edit_brush_mode,
                 brightness_contrast,
                 loop_thru_labels,
             ),
@@ -3401,13 +3564,179 @@ class LabelingWidget(QtWidgets.QWidget):
                 export_ocr_ass,
             ),
         )
+
+        # Connect aboutToShow to update menu RIGHT BEFORE showing
+        # This ensures menu is always fresh when displayed
+        self.menus.recent_files.aboutToShow.connect(self.update_file_menu)
+
+        # Custom context menu for the canvas widget:
+        utils.add_actions(self.canvas.menus[0], self.actions.menu)
+        utils.add_actions(
+            self.canvas.menus[1],
+            (
+                action("&Copy here", self.copy_shape),
+                action("&Move here", self.move_shape),
+            ),
+        )
+
+        self.tools = self.toolbar("Tools")
+        # Menu buttons on Left
+        self.actions.tool = (
+            # open_,
+            opendir,
+            open_next_image,
+            open_prev_image,
+            save,
+            delete_file,
+            None,
+            create_mode,
+            self.actions.create_rectangle_mode,
+            self.actions.create_rectangle3_mode,  # 新增的三次点击水平矩形
+            self.actions.create_rotation_mode,
+            self.actions.create_rotation3_mode,  # 新增的三次点击旋转矩形
+            self.actions.create_circle_mode,
+            self.actions.create_line_mode,
+            self.actions.create_point_mode,
+            self.actions.create_line_strip_mode,
+            None,
+            edit_mode,
+            edit_brush_mode,
+            delete,
+            undo,
+            loop_thru_labels,
+            None,
+            zoom,
+            cycle_zoom_mode,
+            open_chatbot,
+            open_vqa,
+            toggle_auto_labeling_widget,
+            run_all_images,
+            image_category_manager_tool,
+        )
+
+        # === Inner QMainWindow for dock widget functionality ===
+        self.main_window = QtWidgets.QMainWindow()
+        self.main_window.setDockOptions(
+            QtWidgets.QMainWindow.AllowNestedDocks
+            | QtWidgets.QMainWindow.AnimatedDocks
+            | QtWidgets.QMainWindow.AllowTabbedDocks
+        )
+        self.main_window.setCentralWidget(QtWidgets.QWidget())
+        self.main_window.centralWidget().setLayout(QtWidgets.QVBoxLayout())
+        self.main_window.centralWidget().layout().setContentsMargins(0, 0, 0, 0)
+
+        # Separator style: subtle but grabbable splitters
+        self.main_window.setStyleSheet(
+            "QMainWindow::separator {"
+            "background: rgba(128, 128, 128, 30);"
+            "width: 5px;"
+            "height: 5px;"
+            "}"
+            "QMainWindow::separator:hover {"
+            "background: #4F9DFF;"
+            "}"
+            "QMainWindow::separator:horizontal {"
+            "cursor: splitv;"
+            "}"
+            "QMainWindow::separator:vertical {"
+            "cursor: splith;"
+            "}"
+        )
+
+        # Dock title style - padding for easier grabbing
+        dock_title_style = (
+            "QDockWidget::title {"
+            "text-align: center;"
+            "padding: 3px 6px;"
+            "}"
+        )
+
+        # Dock features constant
+        dock_features = (
+            QtWidgets.QDockWidget.DockWidgetClosable
+            | QtWidgets.QDockWidget.DockWidgetFloatable
+            | QtWidgets.QDockWidget.DockWidgetMovable
+        )
+
+        # --- tools_dock ---
+        self.tools_dock = QtWidgets.QDockWidget("", self)
+        self.tools_dock.setObjectName("ToolsDock")
+        self.tools_dock.setFeatures(
+            QtWidgets.QDockWidget.DockWidgetFloatable
+            | QtWidgets.QDockWidget.DockWidgetMovable
+        )
+        tools_container = QtWidgets.QWidget()
+        tools_dock_layout = QtWidgets.QVBoxLayout()
+        tools_dock_layout.setContentsMargins(0, 0, 0, 0)
+        tools_dock_layout.addWidget(self.tools)
+        tools_container.setLayout(tools_dock_layout)
+        self.tools_dock.setWidget(tools_container)
+        self.tools_dock.setMinimumWidth(40)
+        self.tools_dock.setMaximumWidth(40)
+        self.tools_dock.setStyleSheet(dock_title_style)
+        self.tools_dock.dockLocationChanged.connect(self.on_tools_dock_location_changed)
+
+        # --- thumbnail_dock ---
+        self.thumbnail_dock = QtWidgets.QDockWidget(self.tr("Thumbnail"), self)
+        self.thumbnail_dock.setObjectName("Thumbnail")
+        self.thumbnail_dock.setFeatures(dock_features)
+        self.thumbnail_dock.setStyleSheet(dock_title_style)
+
+        # --- shape_text_dock ---
+        self.shape_text_dock = QtWidgets.QDockWidget(self.tr("文本框"), self)
+        self.shape_text_dock.setObjectName("TextEditor")
+        self.shape_text_dock.setFeatures(dock_features)
+        self.shape_text_dock.setStyleSheet(dock_title_style)
+
+        # --- navigator_dock — embed NavigatorDialog as a dockable panel ---
+        self.navigator_dock = QtWidgets.QDockWidget(self.tr("导航器"), self)
+        self.navigator_dock.setObjectName("NavigatorDock")
+        self.navigator_dock.setFeatures(dock_features)
+        self.navigator_dock.setStyleSheet(dock_title_style)
+        # Make NavigatorDialog behave as a plain widget inside the dock
+        self.navigator_dialog.setWindowFlags(Qt.Widget)
+        self.navigator_dock.setWidget(self.navigator_dialog)
+        # Prevent dialog's closeEvent from saving visible=False — dock state handles visibility
+        self.navigator_dialog.app_closing = True
+        # Sync navigator dialog's dynamic title (resolution, selection count, shape
+        # dimensions) to the dock's title bar. The dialog's _update_title() calls
+        # setWindowTitle() which has no visible effect when embedded as Qt.Widget —
+        # we intercept it to also update the dock's visible title bar.
+        _orig_nav_set_title = self.navigator_dialog.setWindowTitle
+        def _synced_nav_set_title(title):
+            _orig_nav_set_title(title)
+            self.navigator_dock.setWindowTitle(title)
+        self.navigator_dialog.setWindowTitle = _synced_nav_set_title
+        # Hide initially — dock state restore will show it if needed
+        self.navigator_dock.hide()
+
+        # Reset Views action for dock layout
+        reset_views = action(
+            self.tr("&Reset Views"),
+            self.reset_dock_layout,
+            "Ctrl+Shift+V",
+            "refresh",
+            self.tr("Reset dock widgets layout to default"),
+        )
+
+        # Lock layout action — prevent docks from being dragged out as floating windows
+        self.lock_layout_action = QtWidgets.QAction(self.tr("锁定布局"), self)
+        self.lock_layout_action.setCheckable(True)
+        self.lock_layout_action.setToolTip(
+            self.tr("Lock dock layout — prevent dragging docks out as floating windows")
+        )
+        self.lock_layout_action.toggled.connect(self.toggle_layout_lock)
+
         utils.add_actions(
             self.menus.view,
             (
                 self.flag_dock.toggleViewAction(),
                 self.label_dock.toggleViewAction(),
+                self.shape_text_dock.toggleViewAction(),
                 self.shape_dock.toggleViewAction(),
                 self.file_dock.toggleViewAction(),
+                reset_views,
+                self.lock_layout_action,
                 None,
                 show_navigator,
                 None,
@@ -3449,58 +3778,10 @@ class LabelingWidget(QtWidgets.QWidget):
             ),
         )
 
-        # Connect aboutToShow to update menu RIGHT BEFORE showing
-        # This ensures menu is always fresh when displayed
-        self.menus.recent_files.aboutToShow.connect(self.update_file_menu)
-
-        # Custom context menu for the canvas widget:
-        utils.add_actions(self.canvas.menus[0], self.actions.menu)
-        utils.add_actions(
-            self.canvas.menus[1],
-            (
-                action("&Copy here", self.copy_shape),
-                action("&Move here", self.move_shape),
-            ),
-        )
-
-        self.tools = self.toolbar("Tools")
-        # Menu buttons on Left
-        self.actions.tool = (
-            # open_,
-            opendir,
-            open_next_image,
-            open_prev_image,
-            save,
-            delete_file,
-            None,
-            create_mode,
-            self.actions.create_rectangle_mode,
-            self.actions.create_rectangle3_mode,  # 新增的三次点击水平矩形
-            self.actions.create_rotation_mode,
-            self.actions.create_rotation3_mode,  # 新增的三次点击旋转矩形
-            self.actions.create_circle_mode,
-            self.actions.create_line_mode,
-            self.actions.create_point_mode,
-            self.actions.create_line_strip_mode,
-            None,
-            edit_mode,
-            delete,
-            undo,
-            loop_thru_labels,
-            None,
-            zoom,
-            cycle_zoom_mode,
-            open_chatbot,
-            open_vqa,
-            toggle_auto_labeling_widget,
-            run_all_images,
-            image_category_manager_tool,
-        )
-
+        # === Main layout ===
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
 
-        layout.addWidget(self.tools)
         central_layout = QVBoxLayout()
         central_layout.setContentsMargins(0, 0, 0, 0)
         self.label_instruction = QLabel(self.get_labeling_instruction())
@@ -3646,19 +3927,17 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas_overlay_label.setAttribute(Qt.WA_TransparentForMouseEvents)  # Don't block mouse events
         
         central_layout.addWidget(self.canvas_container)
-        layout.addItem(central_layout)
+
+        # Set central widget on inner QMainWindow
+        center_widget = QtWidgets.QWidget()
+        center_widget.setLayout(central_layout)
+        self.main_window.centralWidget().layout().addWidget(center_widget)
 
         # Save central area for resize
         self._central_widget = scroll_area
         self._scroll_area = scroll_area  # Keep reference for overlay positioning
 
-        # Stretch central area (image view)
-        layout.setStretch(1, 1)
-
-        right_sidebar_layout = QVBoxLayout()
-        right_sidebar_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Thumbnail image display
+        # --- Thumbnail dock content ---
         self.thumbnail_pixmap = None
         self.thumbnail_container = QWidget()
         thumbnail_image_layout = QVBoxLayout()
@@ -3671,72 +3950,110 @@ class LabelingWidget(QtWidgets.QWidget):
         thumbnail_image_layout.addWidget(self.thumbnail_image_label)
         self.thumbnail_container.setLayout(thumbnail_image_layout)
         self.thumbnail_container.hide()
-        right_sidebar_layout.addWidget(self.thumbnail_container)
+        self.thumbnail_dock.setWidget(self.thumbnail_container)
+        if self._config.get("thumbnail_dock", {}).get("show", False) is False:
+            self.thumbnail_dock.setVisible(False)
 
-        # Shape attributes
+        # --- Shape text dock content (includes attributes + text editor) ---
         self.shape_attributes = QLabel(self.tr("Attributes"))
         self.grid_layout = QGridLayout()
-        self.scroll_area = QScrollArea()
-        # Show vertical scrollbar as needed
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        # Disable horizontal scrollbar
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setWidgetResizable(True)
-        # Create a container widget for the grid layout
+        self.attributes_scroll_area = QScrollArea()
+        self.attributes_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.attributes_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.attributes_scroll_area.setWidgetResizable(True)
         self.grid_layout_container = QWidget()
         self.grid_layout_container.setLayout(self.grid_layout)
-        self.scroll_area.setWidget(self.grid_layout_container)
-        if not self.attributes:
-            self.shape_attributes.hide()
-            self.scroll_area.hide()
-        right_sidebar_layout.addWidget(
-            self.shape_attributes, 0, Qt.AlignCenter
-        )
-        right_sidebar_layout.addWidget(self.scroll_area)
+        self.attributes_scroll_area.setWidget(self.grid_layout_container)
 
-        # Shape text label (缩小描述区域)
         self.shape_text_label = QLabel("Object Text")
         self.shape_text_edit = QPlainTextEdit()
-        self.shape_text_edit.setMaximumHeight(60)  # 限制高度
-        right_sidebar_layout.addWidget(
-            self.shape_text_label, 0, Qt.AlignCenter
-        )
-        right_sidebar_layout.addWidget(self.shape_text_edit)
-        right_sidebar_layout.addWidget(self.flag_dock)
-        right_sidebar_layout.addWidget(self.label_dock)
+        self.shape_text_edit.setMaximumHeight(60)
+        shape_text_container = QtWidgets.QWidget()
+        shape_text_dock_layout = QtWidgets.QVBoxLayout()
+        shape_text_dock_layout.setContentsMargins(0, 0, 0, 0)
+        shape_text_dock_layout.addWidget(self.shape_attributes, 0, Qt.AlignCenter)
+        shape_text_dock_layout.addWidget(self.attributes_scroll_area)
+        shape_text_dock_layout.addWidget(self.shape_text_label, 0, Qt.AlignCenter)
+        shape_text_dock_layout.addWidget(self.shape_text_edit)
+        shape_text_dock_layout.addStretch(1)
+        shape_text_container.setLayout(shape_text_dock_layout)
+        self.shape_text_dock.setWidget(shape_text_container)
+        if not self.attributes:
+            self.shape_attributes.hide()
+            self.attributes_scroll_area.hide()
+        # Backward compatibility: keep self.scroll_area pointing to attributes scroll area
+        self.scroll_area = self.attributes_scroll_area
 
-        # Create a horizontal layout for the filters
-        filter_layout = QHBoxLayout()
-        filter_layout.addWidget(self.label_filter_combobox, 90)
-        filter_layout.addWidget(self.gid_filter_combobox, 10)
-        right_sidebar_layout.addLayout(filter_layout)
+        # --- Pre-set minimum sizes BEFORE addDockWidget ---
+        # Qt's addDockWidget internally calls setMinimumWidth(0) on the dock,
+        # which does setMinimumSize(0, minimumSize().height()). If the dock's
+        # minimum height hasn't been explicitly set yet, Qt uses -1 → warning.
+        # Setting setMinimumSize(0, 0) first prevents this.
+        for dock in [self.thumbnail_dock, self.shape_text_dock, self.flag_dock,
+                     self.label_dock, self.shape_dock, self.file_dock,
+                     self.navigator_dock]:
+            dock.setMinimumSize(0, 0)
+            if dock.widget():
+                dock.widget().setMinimumSize(0, 0)
 
-        right_sidebar_layout.addWidget(self.shape_dock)
-        right_sidebar_layout.addWidget(self.file_dock)
-        self.file_dock.setFeatures(QDockWidget.DockWidgetFloatable)
-        dock_features = (
-            ~QDockWidget.DockWidgetMovable
-            | ~QDockWidget.DockWidgetFloatable
-            | ~QDockWidget.DockWidgetClosable
-        )
-        rev_dock_features = ~dock_features
-        self.label_dock.setFeatures(
-            self.label_dock.features() & rev_dock_features
-        )
-        self.file_dock.setFeatures(
-            self.file_dock.features() & rev_dock_features
-        )
-        self.flag_dock.setFeatures(
-            self.flag_dock.features() & rev_dock_features
-        )
-        self.shape_dock.setFeatures(
-            self.shape_dock.features() & rev_dock_features
+        # --- Add all docks to inner QMainWindow ---
+        self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.tools_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.thumbnail_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.shape_text_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.flag_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.label_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.shape_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.file_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.navigator_dock)
+
+        # Recursively zero minimum width on all child widgets (buttons, comboboxes, lists)
+        for dock in [self.thumbnail_dock, self.shape_text_dock, self.flag_dock,
+                     self.label_dock, self.shape_dock, self.file_dock,
+                     self.navigator_dock]:
+            if dock.widget():
+                for child in dock.widget().findChildren(QtWidgets.QWidget):
+                    # Guard against -1 (unset minimum height) — same root cause as above
+                    cur_h = child.minimumSize().height()
+                    child.setMinimumSize(0, cur_h if cur_h >= 0 else 0)
+                    # Fix QComboBox: use minimum contents length instead of full text width
+                    if isinstance(child, QtWidgets.QComboBox):
+                        child.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                        child.setMinimumContentsLength(1)
+
+        # Install event filters on docks for auto-collapse (drawer behavior)
+        for dock in [self.shape_text_dock, self.flag_dock, self.label_dock,
+                     self.shape_dock, self.file_dock, self.thumbnail_dock,
+                     self.navigator_dock]:
+            dock.installEventFilter(self)
+
+        # --- Connect dock signals for debounced state saving ---
+        for dock in [self.tools_dock, self.shape_text_dock, self.flag_dock,
+                     self.label_dock, self.shape_dock, self.file_dock,
+                     self.thumbnail_dock, self.navigator_dock]:
+            dock.dockLocationChanged.connect(self._schedule_dock_save)
+            dock.visibilityChanged.connect(self._schedule_dock_save)
+            dock.visibilityChanged.connect(self._restore_dock_size)
+
+        # Sync show_navigator action when navigator dock is closed via its
+        # own close button (not via the menu action).
+        self.navigator_dock.visibilityChanged.connect(
+            lambda visible: (
+                self.actions.show_navigator.setChecked(visible)
+                if hasattr(self, 'actions') and hasattr(self.actions, 'show_navigator')
+                else None
+            )
         )
 
+        # --- Connect shape text edit ---
         self.shape_text_edit.textChanged.connect(self.shape_text_changed)
 
-        layout.addItem(right_sidebar_layout)
+        # --- Add inner QMainWindow to outer layout ---
+        layout.addWidget(self.main_window)
+        layout.setStretch(0, 1)
         self.setLayout(layout)
+
+        # --- Load dock state with delay to ensure UI is ready ---
+        QtCore.QTimer.singleShot(100, self.load_dock_state)
 
         if output_file is not None and self._config["auto_save"]:
             logger.warning(
@@ -3780,11 +4097,26 @@ class LabelingWidget(QtWidgets.QWidget):
         self.recent_folders = self.settings.value("recent_folders", []) or []
         size = self.settings.value("window/size", QtCore.QSize(600, 500))
         position = self.settings.value("window/position", QtCore.QPoint(0, 0))
-        # state = self.settings.value("window/state", QtCore.QByteArray())
-        self.resize(size)
-        self.move(position)
+        was_maximized = self.settings.value("window/maximized", 0)
+        if isinstance(was_maximized, str):
+            was_maximized = was_maximized.lower() in ("true", "1")
+        else:
+            was_maximized = bool(was_maximized)
+        # Only restore geometry if not maximized — showMaximized() in app.py handles the rest
+        if not was_maximized:
+            self.resize(size)
+            self.move(position)
         # or simply:
         # self.restoreGeometry(settings['window/geometry']
+
+        # Restore dock lock state
+        dock_locked = self.settings.value("dock/locked", 0)
+        if isinstance(dock_locked, str):
+            dock_locked = dock_locked.lower() in ("true", "1")
+        else:
+            dock_locked = bool(dock_locked)
+        if dock_locked:
+            self.lock_layout_action.setChecked(True)  # triggers toggle_layout_lock via toggled signal
 
         # Since loading the file may take some time,
         # make sure it runs in the background.
@@ -3831,8 +4163,13 @@ class LabelingWidget(QtWidgets.QWidget):
         try:
             # Restore navigator from config file
             navigator_restored = self.navigator_dialog.restore_from_config()
-            
+
             if navigator_restored:
+                # Navigator was visible — show the dock (dock state is
+                # restored separately by load_dock_state, but if the dock
+                # isn't visible yet, show it here).
+                if hasattr(self, 'navigator_dock') and not self.navigator_dock.isVisible():
+                    self.navigator_dock.show()
                 # Update navigator content only if image exists, otherwise mark for later
                 if hasattr(self, 'image') and not self.image.isNull():
                     self.navigator_dialog.set_image(QtGui.QPixmap.fromImage(self.image))
@@ -3840,7 +4177,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 else:
                     # Mark for restoration when image is loaded
                     self._should_restore_navigator = True
-                
+
                 # Update menu item checked state
                 if hasattr(self, 'actions') and hasattr(self.actions, 'show_navigator'):
                     self.actions.show_navigator.setChecked(True)
@@ -4022,6 +4359,7 @@ class LabelingWidget(QtWidgets.QWidget):
             self.actions.digit_shortcut_8,
             self.actions.digit_shortcut_9,
             self.actions.edit_mode,
+            self.actions.edit_brush_mode,
         )
         utils.add_actions(self.menus.edit, actions + self.actions.editMenu)
 
@@ -4142,6 +4480,8 @@ class LabelingWidget(QtWidgets.QWidget):
             action.setEnabled(value)
         for action in self.actions.on_load_active:
             action.setEnabled(value)
+        if not value:
+            self.actions.edit_brush_mode.setEnabled(False)
 
     def queue_event(self, function):
         QtCore.QTimer.singleShot(0, function)
@@ -4818,6 +5158,10 @@ class LabelingWidget(QtWidgets.QWidget):
             action availability. Also marks the document as dirty to indicate
             unsaved changes after the undo operation.
         """
+        if getattr(self.canvas, "is_brush_mode", False):
+            self.canvas.brush_undo()
+            self.actions.undo.setEnabled(self.canvas.brush_can_undo())
+            return
         self.canvas.restore_shape()
         self.label_list.clear()
         self.load_shapes(self.canvas.shapes)
@@ -7881,6 +8225,7 @@ class LabelingWidget(QtWidgets.QWidget):
             "shortcut_manager_tool": "shortcut_manager_tool",
             "wheel_settings_tool": "wheel_settings_tool",
             "toggle_ghost_paste": "toggle_ghost_paste",
+            "toggle_continuous_drawing": "toggle_continuous_drawing",
             # 其他
             "loop_thru_labels": "loop_thru_labels",
             "keep_prev_mode": "toggle_keep_prev_mode",
@@ -8810,6 +9155,18 @@ class LabelingWidget(QtWidgets.QWidget):
             )
         popup.show_popup(self, popup_height=36, position="center")
 
+    def toggle_continuous_drawing_shortcut(self):
+        """快捷键切换连续标注模式（开关）+ 画布叠加提示"""
+        new_state = not self._continuous_drawing
+        self._toggle_continuous_drawing(new_state)
+        self.actions.continuous_drawing_mode.setChecked(new_state)
+        if new_state:
+            msg = self.tr("✅ 连续标注模式 已开启 (ESC退出)")
+        else:
+            msg = self.tr("❌ 连续标注模式 已关闭")
+        popup = Popup(msg, self, msec=1500)
+        popup.show_popup(self, popup_height=36, position="center")
+
     def toggle_label_manager(self):
         """切换标签管理器窗口"""
         # 这个对话框是模态的，每次都创建新的
@@ -9331,11 +9688,12 @@ class LabelingWidget(QtWidgets.QWidget):
         for s in self.canvas.shapes:
             highlight_states[id(s)] = (getattr(s, 'selected', False), getattr(s, 'fill', False))
 
-        # Update UI
-        self.set_dirty()
+        # Update UI - load_shapes must come before set_dirty
+        # so auto_save sees the correct label_list
         self.canvas.deselect_shape()
+        self.load_shapes(self.canvas.shapes, replace=True)
+        self.set_dirty()
         self.canvas.update()
-        self.load_shapes(self.canvas.shapes)
 
         # 恢复所有形状的高亮状态
         for s in self.canvas.shapes:
@@ -9440,6 +9798,7 @@ class LabelingWidget(QtWidgets.QWidget):
             # Edit operations
             "edit_label": self.actions.edit,
             "edit_polygon": self.actions.edit_mode,
+            "edit_brush_mode": self.actions.edit_brush_mode,
             "copy_polygon": self.actions.copy,
             "paste_polygon": self.actions.paste,
             "toggle_lock": self.actions.toggle_lock,
@@ -9496,6 +9855,7 @@ class LabelingWidget(QtWidgets.QWidget):
             ("旋转标签快捷键管理器",): "keymap_dialog",
             ("Loop through labels", "循环标签"): "loop_thru_labels",
             ("切换虚影粘贴模式",): "toggle_ghost_paste",
+            ("切换连续标注模式",): "toggle_continuous_drawing",
             ("标签排序工具",): "tag_sort_tool",
             ("旋转框角度修正工具",): "angle_correction_tool",
             ("区域合并工具",): "merge_tool",
@@ -9576,7 +9936,10 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # Update in-memory config
         if isinstance(key, list):
-            self._config[key[0]][key[1]] = value
+            if len(key) == 3:
+                self._config.setdefault(key[0], {}).setdefault(key[1], {})[key[2]] = value
+            else:
+                self._config[key[0]][key[1]] = value
         else:
             self._config[key] = value
 
@@ -9653,6 +10016,14 @@ class LabelingWidget(QtWidgets.QWidget):
             elif key == 'spacing_guide_text_bg_color':
                 # 间距线文字背景色
                 self.canvas.spacing_guide_text_bg_color = value if isinstance(value, list) else [color.red(), color.green(), color.blue(), color.alpha()]
+            elif key == ['canvas', 'brush', 'brush_cursor_color']:
+                # 画笔圈颜色已更新到config，刷新画布即可
+                self.canvas.update()
+                return
+            elif key == ['canvas', 'brush', 'eraser_cursor_color']:
+                # 橡皮擦圈颜色已更新到config，刷新画布即可
+                self.canvas.update()
+                return
             elif key == 'manually_edited_color':
                 # 手动编辑颜色改变时，更新所有已手动编辑文件的显示
                 new_color = self._get_manually_edited_color()
@@ -9899,6 +10270,7 @@ class LabelingWidget(QtWidgets.QWidget):
         In the middle of drawing, toggling between modes should be disabled.
         """
         self.actions.edit_mode.setEnabled(not drawing)
+        self.actions.edit_brush_mode.setEnabled(not drawing)
         self.actions.undo_last_point.setEnabled(drawing)
         self.actions.undo.setEnabled(not drawing)
         self.actions.delete.setEnabled(not drawing)
@@ -9925,21 +10297,46 @@ class LabelingWidget(QtWidgets.QWidget):
             "line",
             "point",
             "linestrip",
+            "brush",
         ]:
             return
 
-        self.digit_to_label = label
-        self.toggle_draw_mode(edit=False, create_mode=create_mode)
-        
-        # Set crosshair color based on label color (after toggle_draw_mode)
+        # Set crosshair color based on label color
         rgb = self._get_rgb_by_label(label)
         hex_color = "#{:02x}{:02x}{:02x}".format(rgb[0], rgb[1], rgb[2])
+
+        if create_mode == "brush":
+            # Brush draw mode: digit_to_label is picked up by the
+            # new_shape handler when the doodle is committed.
+            self.digit_to_label = label
+            self._digit_shortcut_used_brush = True
+            self.actions.edit_brush_mode.setChecked(True)
+            self.toggle_brush_mode(True)
+            self.canvas.cross_line_color = hex_color
+            self.canvas.update()
+            return
+
+        self._digit_shortcut_used_brush = False
+        self.digit_to_label = label
+        self.toggle_draw_mode(edit=False, create_mode=create_mode)
+
+        # Set crosshair color based on label color (after toggle_draw_mode)
         self.canvas.cross_line_color = hex_color
         self.canvas.update()
 
     def toggle_draw_mode(
-        self, edit=True, create_mode="rectangle", disable_auto_labeling=True
+        self,
+        edit=True,
+        create_mode="rectangle",
+        disable_auto_labeling=True,
+        preserve_brush_mode=False,
     ):
+        if not preserve_brush_mode:
+            self._digit_shortcut_used_brush = False
+            if getattr(self.canvas, "is_brush_mode", False):
+                self.canvas.cancel_brush_mode()
+            elif self.actions.edit_brush_mode.isChecked():
+                self.actions.edit_brush_mode.setChecked(False)
         # Define modes that should have the auto-crosshair feature.
         auto_crosshair_modes = {"rotation", "rectangle", "rotation3"}
 
@@ -10084,6 +10481,68 @@ class LabelingWidget(QtWidgets.QWidget):
                 raise ValueError(f"Unsupported create_mode: {create_mode}")
         self.actions.edit_mode.setEnabled(not edit)
         self.label_instruction.setText(self.get_labeling_instruction())
+
+    def toggle_brush_mode(self, checked):
+        """Enable or disable brush-draw mode for creating a new polygon."""
+        if checked:
+            if self.canvas.current is not None:
+                self.canvas.current = None
+                self.canvas.set_hiding(False)
+                self.canvas.drawing_polygon.emit(False)
+                self.canvas.update()
+            self.toggle_draw_mode(True, preserve_brush_mode=True)
+            self.set_text_editing(True)
+            self.canvas.set_brush_mode(True)
+            self.actions.edit_mode.setEnabled(True)
+            if not self.canvas.cross_line_show:
+                self.toggle_crosshair()
+                self._crosshair_was_toggled_for_brush = True
+            else:
+                self._crosshair_was_toggled_for_brush = False
+            self.label_instruction.setText(self.get_labeling_instruction())
+            return
+
+        if getattr(self.canvas, "is_brush_mode", False):
+            self.canvas.set_brush_mode(False)
+        self.label_instruction.setText(self.get_labeling_instruction())
+
+    def on_brush_mode_changed(self, enabled):
+        """Synchronize brush action and lock the active shape selection."""
+        self.actions.edit_brush_mode.setChecked(enabled)
+        self.label_list.setEnabled(not enabled)
+        if not enabled and self._crosshair_was_toggled_for_brush:
+            self.toggle_crosshair()
+            self._crosshair_was_toggled_for_brush = False
+
+    def _toggle_continuous_drawing(self, enabled):
+        """Toggle continuous drawing mode on/off."""
+        self._continuous_drawing = enabled
+        self._config["continuous_drawing"] = enabled
+        save_config(self._config)
+        if not enabled:
+            # 关闭连续模式时切回编辑模式并恢复十字线
+            self.set_edit_mode()
+
+    def _restart_continuous_drawing(self, create_mode, saved_color):
+        """Restart drawing mode while preserving crosshair color."""
+        self.toggle_draw_mode(edit=False, create_mode=create_mode,
+                              disable_auto_labeling=False, preserve_brush_mode=True)
+        self.canvas.cross_line_color = saved_color
+        self.canvas.update()
+
+    def _restart_brush_continuous(self, saved_color):
+        """Restart brush mode while preserving crosshair color."""
+        self.toggle_brush_mode(True)
+        self.canvas.cross_line_color = saved_color
+        self.canvas.update()
+
+    def _sync_brush_size_spin(self):
+        """Sync the brush size spinbox to current brush_radius."""
+        spin = getattr(self, '_brush_size_spin', None)
+        if spin is not None:
+            spin.blockSignals(True)
+            spin.setValue(int(round(self.canvas.brush_radius * 2)))
+            spin.blockSignals(False)
 
     def set_edit_mode(self):
         # Disable auto labeling
@@ -10769,6 +11228,8 @@ class LabelingWidget(QtWidgets.QWidget):
         self.actions.delete.setEnabled(n_selected)
         self.actions.copy.setEnabled(n_selected)
         self.actions.edit.setEnabled(n_selected >= 1 and same_type)
+        # Brush draw mode only needs an image loaded, not a selection.
+        self.actions.edit_brush_mode.setEnabled(self.canvas.pixmap is not None)
         self.actions.toggle_lock.setEnabled(n_selected)
         self.actions.union_selection.setEnabled(
             not all(value > 0 for value in allow_merge_shape_type.values())
@@ -11009,13 +11470,13 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def create_label_control_buttons(self):
         """创建标签控制按钮"""
-        self.label_control_widget = QtWidgets.QWidget()
+        self.label_control_widget = ShrinkableWidget()
         control_layout = QtWidgets.QHBoxLayout()
         control_layout.setContentsMargins(2, 2, 2, 2)
         control_layout.setSpacing(2)
 
         # 全选按钮
-        self.btn_select_all = QtWidgets.QPushButton(self.tr("全选"))
+        self.btn_select_all = ShrinkablePushButton(self.tr("全选"))
         self.btn_select_all.setToolTip(self.tr("选择所有标签"))
         def select_all_labels():
             for i in range(self.unique_label_list.count()):
@@ -11028,7 +11489,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.btn_select_all.clicked.connect(select_all_labels)
 
         # 反选按钮
-        self.btn_invert_selection = QtWidgets.QPushButton(self.tr("反选"))
+        self.btn_invert_selection = ShrinkablePushButton(self.tr("反选"))
         self.btn_invert_selection.setToolTip(self.tr("反向选择标签"))
         def invert_labels():
             # 统计对象区当前存在的标签集合
@@ -11047,7 +11508,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.btn_invert_selection.clicked.connect(invert_labels)
 
         # 隐藏按钮（原取消按钮）
-        self.btn_deselect_all = QtWidgets.QPushButton(self.tr("隐藏"))
+        self.btn_deselect_all = ShrinkablePushButton(self.tr("隐藏"))
         self.btn_deselect_all.setToolTip(self.tr("隐藏所有标签"))
         def deselect_all_labels():
             # 取消标签列表的勾选
@@ -11069,7 +11530,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.btn_deselect_all.clicked.connect(deselect_all_labels)
 
         # 重叠显示按钮
-        self.btn_overlap = QtWidgets.QPushButton(self.tr("重叠"))
+        self.btn_overlap = ShrinkablePushButton(self.tr("重叠"))
         self.btn_overlap.setCheckable(True)
         # 从配置读取初始状态
         show_overlap_initial = self._config.get("show_overlap", True)
@@ -13788,6 +14249,17 @@ class LabelingWidget(QtWidgets.QWidget):
             self.set_dirty()
             # Update expand margins dialog colors after adding new shape
             self._update_expand_margins_colors()
+            # 连续标注模式：标注完成后重新激活当前绘制工具
+            if self._continuous_drawing:
+                if self._digit_shortcut_used_brush:
+                    # 画笔模式：重新激活画笔
+                    saved_color = self.canvas.cross_line_color
+                    QtCore.QTimer.singleShot(50, lambda: self._restart_brush_continuous(saved_color))
+                elif self.canvas.create_mode != "edit":
+                    current_mode = self.canvas.create_mode
+                    saved_color = self.canvas.cross_line_color
+                    QtCore.QTimer.singleShot(50, lambda mode=current_mode, color=saved_color:
+                        self._restart_continuous_drawing(mode, color))
         else:
             self.canvas.undo_last_line()
             self.canvas.shapes_backups.pop()
@@ -14257,42 +14729,19 @@ class LabelingWidget(QtWidgets.QWidget):
         QTimer.singleShot(50, self.update_navigator_viewport)
 
     def toggle_navigator(self):
-        """Toggle the navigator window visibility"""
-        if self.navigator_dialog.isVisible():
-            self.navigator_dialog.hide()
-            # Save visibility state to config
-            if "navigator" not in self._config:
-                self._config["navigator"] = {}
-            self._config["navigator"]["visible"] = False
-            # Update menu item state
+        """Toggle the navigator dock visibility"""
+        if self.navigator_dock.isVisible():
+            self.navigator_dock.hide()
             if hasattr(self, 'actions') and hasattr(self.actions, 'show_navigator'):
                 self.actions.show_navigator.setChecked(False)
         else:
-            self.navigator_dialog.show()
-            # Save visibility state to config
-            if "navigator" not in self._config:
-                self._config["navigator"] = {}
-            self._config["navigator"]["visible"] = True
-            # 同时保存当前位置和大小
-            self._config["navigator"]["position_x"] = self.navigator_dialog.x()
-            self._config["navigator"]["position_y"] = self.navigator_dialog.y()
-            self._config["navigator"]["width"] = self.navigator_dialog.width()
-            self._config["navigator"]["height"] = self.navigator_dialog.height()
-            
+            self.navigator_dock.show()
             # Update navigator when shown, only if image is loaded
             if hasattr(self, 'image') and not self.image.isNull():
                 self.navigator_dialog.set_image(QtGui.QPixmap.fromImage(self.image))
                 self.update_navigator_viewport()
-            # Update menu item state
             if hasattr(self, 'actions') and hasattr(self.actions, 'show_navigator'):
                 self.actions.show_navigator.setChecked(True)
-        
-        # 立即保存config到文件
-        try:
-            from anylabeling.config import save_config
-            save_config(self._config)
-        except Exception as e:
-            print(f"Failed to save navigator visibility: {e}")
 
     def set_zoom(self, value, scroll_to_top_left=True):
         self._set_zoom_mode_action_state(
@@ -15317,6 +15766,15 @@ class LabelingWidget(QtWidgets.QWidget):
     # QT Overload
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
+            if getattr(self.canvas, "is_brush_mode", False):
+                self.canvas.cancel_brush_mode()
+            elif self.actions.edit_brush_mode.isChecked():
+                self.actions.edit_brush_mode.setChecked(False)
+            if self._continuous_drawing:
+                # ESC 退出当前绘制（不关闭连续标注开关）
+                if self.canvas.drawing():
+                    self.canvas.cancel_drawing()
+                self.set_edit_mode()
             event.accept()
             return
         if event.key() == Qt.Key_Backspace:
@@ -15364,6 +15822,196 @@ class LabelingWidget(QtWidgets.QWidget):
         
         super(LabelingWidget, self).keyPressEvent(event)
 
+    # ==================== Dock Widget State Management ====================
+
+    def _schedule_dock_save(self):
+        """Debounced dock state save - only saves 500ms after last change."""
+        if not hasattr(self, '_dock_save_debounce'):
+            self._dock_save_debounce = QtCore.QTimer()
+            self._dock_save_debounce.setSingleShot(True)
+            self._dock_save_debounce.timeout.connect(lambda: self.save_dock_state(force=True))
+        self._dock_save_debounce.start(500)
+
+    def save_dock_state(self, force=False):
+        """Save dock state to QSettings."""
+        try:
+            if not hasattr(self, 'main_window'):
+                return
+            byte_state = self.main_window.saveState()
+            if byte_state.isEmpty():
+                return
+            if not hasattr(self, 'settings'):
+                self.settings = QtCore.QSettings("anylabeling", "anylabeling")
+            self.settings.setValue("dock/state", byte_state)
+        except Exception as e:
+            logger.error(f"Error saving dock state: {e}")
+
+    def load_dock_state(self):
+        """Load dock state from QSettings."""
+        was_maximized = self.window().isMaximized()
+        # Re-assert minimum sizes before restoreState — Qt's internal restore
+        # code may call setMinimumWidth on docks, which does
+        # setMinimumSize(0, minimumSize().height()); if height is -1 (unset),
+        # this produces "Negative sizes" warnings.
+        for dock in [self.thumbnail_dock, self.shape_text_dock, self.flag_dock,
+                     self.label_dock, self.shape_dock, self.file_dock,
+                     self.navigator_dock]:
+            dock.setMinimumSize(0, 0)
+        try:
+            if not hasattr(self, 'settings'):
+                self.settings = QtCore.QSettings("anylabeling", "anylabeling")
+            byte_state = self.settings.value("dock/state", QtCore.QByteArray())
+            if not byte_state or (isinstance(byte_state, QtCore.QByteArray) and byte_state.isEmpty()):
+                return
+            # restoreState can un-maximize the outer window — re-maximize in finally
+            if self.main_window.restoreState(byte_state):
+                pass  # restoreState already restores dock sizes
+            else:
+                self.reset_dock_layout()
+        except Exception as e:
+            logger.warning(f"Error restoring dock state: {e}")
+            try:
+                if not hasattr(self, 'settings'):
+                    self.settings = QtCore.QSettings("anylabeling", "anylabeling")
+                self.settings.remove("dock/state")
+            except Exception:
+                pass
+        finally:
+            # Always re-maximize if the window was maximized before restoreState.
+            # Deferred to next event loop so any async layout side effects from
+            # restoreState (posted resize/show events) are processed first.
+            if was_maximized:
+                QtCore.QTimer.singleShot(0, lambda: self.window().showMaximized())
+
+    def reset_dock_layout(self):
+        """Reset dock widget layout to default positions."""
+        # removeDockWidget fully removes dock from layout (unlike close() which
+        # only hides). This properly clears tab/nested configurations so
+        # addDockWidget can place docks in default positions.
+        for dock in [self.shape_text_dock, self.flag_dock, self.label_dock,
+                     self.shape_dock, self.file_dock, self.tools_dock,
+                     self.thumbnail_dock, self.navigator_dock]:
+            self.main_window.removeDockWidget(dock)
+
+        self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.tools_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.thumbnail_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.shape_text_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.flag_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.label_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.shape_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.file_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.navigator_dock)
+
+        self.tools_dock.show()
+        self.shape_text_dock.show()
+        self.label_dock.show()
+        self.shape_dock.show()
+        self.file_dock.show()
+        if hasattr(self, 'flag_dock') and self._config.get("flags"):
+            self.flag_dock.show()
+        else:
+            self.flag_dock.hide()
+        self.thumbnail_dock.hide()
+        self.navigator_dock.hide()
+        self.tools_dock.raise_()
+
+        self.main_window.resizeDocks(
+            [self.tools_dock, self.shape_text_dock, self.flag_dock,
+             self.label_dock, self.shape_dock, self.file_dock],
+            [40, 300, 300, 300, 300, 300],
+            Qt.Horizontal,
+        )
+
+        QtCore.QTimer.singleShot(100, self.save_dock_state)
+        try:
+            self.parent.parent.statusBar().showMessage(self.tr("Dock layout reset to default"), 5000)
+        except Exception:
+            pass
+
+    def toggle_layout_lock(self, locked):
+        """Lock/unlock dock layout. When locked, docks cannot be dragged,
+        closed, or floated — title bars hidden for clean appearance."""
+        if locked:
+            features = QtWidgets.QDockWidget.NoDockWidgetFeatures
+            tools_features = QtWidgets.QDockWidget.NoDockWidgetFeatures
+        else:
+            features = (
+                QtWidgets.QDockWidget.DockWidgetClosable
+                | QtWidgets.QDockWidget.DockWidgetFloatable
+                | QtWidgets.QDockWidget.DockWidgetMovable
+            )
+            tools_features = (
+                QtWidgets.QDockWidget.DockWidgetFloatable
+                | QtWidgets.QDockWidget.DockWidgetMovable
+            )
+        # Lock all docks EXCEPT navigator_dock (handled separately below)
+        for dock in [self.tools_dock, self.thumbnail_dock, self.shape_text_dock,
+                     self.flag_dock, self.label_dock, self.shape_dock, self.file_dock]:
+            if dock is self.tools_dock:
+                dock.setFeatures(tools_features)
+            else:
+                dock.setFeatures(features)
+            if locked:
+                # Hide title bar entirely — clean look like before dock modifications
+                dock.setTitleBarWidget(QtWidgets.QWidget())
+            else:
+                # Restore default title bar
+                dock.setTitleBarWidget(None)
+
+        # Navigator dock: title bar shows dynamic info (resolution, selection
+        # count, shape dimensions) — must NEVER be hidden. If the navigator is
+        # floating (not docked into main window), locking should not affect it.
+        nav_area = self.main_window.dockWidgetArea(self.navigator_dock)
+        if nav_area == Qt.NoDockWidgetArea:
+            # Floating — restore normal features, don't lock
+            self.navigator_dock.setFeatures(
+                QtWidgets.QDockWidget.DockWidgetClosable
+                | QtWidgets.QDockWidget.DockWidgetFloatable
+                | QtWidgets.QDockWidget.DockWidgetMovable
+            )
+        else:
+            # Docked — lock with other docks, but keep title bar visible
+            if locked:
+                self.navigator_dock.setFeatures(
+                    QtWidgets.QDockWidget.NoDockWidgetFeatures
+                )
+            else:
+                self.navigator_dock.setFeatures(
+                    QtWidgets.QDockWidget.DockWidgetClosable
+                    | QtWidgets.QDockWidget.DockWidgetFloatable
+                    | QtWidgets.QDockWidget.DockWidgetMovable
+                )
+        # Always ensure title bar is the default (visible) — never hidden
+        self.navigator_dock.setTitleBarWidget(None)
+
+        if hasattr(self, 'settings'):
+            self.settings.setValue("dock/locked", 1 if locked else 0)
+
+    def on_tools_dock_location_changed(self):
+        """Handle tools dock location changes to adjust toolbar orientation."""
+        area = self.main_window.dockWidgetArea(self.tools_dock)
+        if area == Qt.TopDockWidgetArea or area == Qt.BottomDockWidgetArea:
+            self.tools.setOrientation(Qt.Horizontal)
+            self.tools.setMaximumWidth(16777215)
+            self.tools_dock.setMinimumSize(0, 65)
+            self.tools_dock.setMaximumHeight(65)
+            self.tools_dock.setMaximumWidth(16777215)
+        else:
+            self.tools.setOrientation(Qt.Vertical)
+            self.tools.setMaximumWidth(40)
+            self.tools_dock.setMinimumSize(40, 0)
+            self.tools_dock.setMaximumWidth(40)
+            self.tools_dock.setMaximumHeight(16777215)
+            if not area:  # Floating dock
+                self.tools_dock.setMinimumSize(0, 0)
+                self.tools_dock.setMaximumWidth(16777215)
+                self.tools_dock.resize(40, 300)
+                self.tools.setOrientation(Qt.Vertical)
+        self.tools.update()
+        self._schedule_dock_save()
+
+    # ==================== End Dock Widget State Management ====================
+
     def resizeEvent(self, _):
         if (
             self._active_image_widget()
@@ -15372,6 +16020,14 @@ class LabelingWidget(QtWidgets.QWidget):
         ):
             self.adjust_scale()
         self.update_thumbnail_pixmap()
+        # Debounced dock state save on resize
+        if hasattr(self, "_resize_timer"):
+            self._resize_timer.stop()
+        else:
+            self._resize_timer = QtCore.QTimer()
+            self._resize_timer.setSingleShot(True)
+            self._resize_timer.timeout.connect(self.save_dock_state)
+        self._resize_timer.start(100)
 
     def paint_canvas(self, center_scrollbars=True):
         """Paint the canvas with current zoom level.
@@ -15463,44 +16119,121 @@ class LabelingWidget(QtWidgets.QWidget):
         self.settings.setValue(
             "filename", self.filename if self.filename else ""
         )
-        self.settings.setValue("window/size", self.size())
-        self.settings.setValue("window/position", self.pos())
+        # Only save geometry when not maximized, otherwise the saved size
+        # would be the screen size at (0,0) causing a "fake maximized" state.
+        if self.window().isMaximized():
+            self.settings.setValue("window/maximized", 1)
+        else:
+            self.settings.setValue("window/maximized", 0)
+            self.settings.setValue("window/size", self.size())
+            self.settings.setValue("window/position", self.pos())
         self.settings.setValue("window/state", self.parent.parent.saveState())
+        self.save_dock_state(force=True)
         self.settings.setValue("recent_files", self.recent_files)
         self.settings.setValue("recent_folders", self.recent_folders)
         
         # 通知导航器应用正在关闭，避免导航器closeEvent覆盖visible状态
         if hasattr(self, 'navigator_dialog'):
             self.navigator_dialog.app_closing = True
-        
+
         # 保存导航器状态到配置文件
-        if hasattr(self, 'navigator_dialog'):
-            navigator_visible = self.navigator_dialog.isVisible()
-            
-            # 确保配置文件中有navigator节点
+        if hasattr(self, 'navigator_dock'):
+            # Navigator is now embedded in a dock — visibility is determined
+            # by the dock, not the dialog. Position/size are managed by dock
+            # state (save_dock_state), but we keep config in sync for
+            # restore_from_config compatibility.
+            navigator_visible = self.navigator_dock.isVisible()
+
             if "navigator" not in self._config:
                 self._config["navigator"] = {}
-            
-            # 保存可见性状态（保持当前状态，不强制为False）
+
             self._config["navigator"]["visible"] = navigator_visible
-            
-            # 总是保存导航器的位置和大小（无论是否可见）
-            self._config["navigator"]["position_x"] = self.navigator_dialog.x()
-            self._config["navigator"]["position_y"] = self.navigator_dialog.y()
-            self._config["navigator"]["width"] = self.navigator_dialog.width()
-            self._config["navigator"]["height"] = self.navigator_dialog.height()
         
         save_config(self._config)
         # ask the use for where to save the labels
         # self.settings.setValue('window/geometry', self.saveGeometry())
 
     def eventFilter(self, obj, event):
-        """Filter events for double-click on dock title."""
+        """Filter events for double-click on dock title and dock auto-collapse."""
+        # Dock auto-collapse: detect resize, debounce check
+        if isinstance(obj, QtWidgets.QDockWidget) and event.type() == QtCore.QEvent.Resize:
+            if not hasattr(self, '_dock_collapse_timer'):
+                self._dock_collapse_timer = QtCore.QTimer()
+                self._dock_collapse_timer.setSingleShot(True)
+                self._dock_collapse_timer.timeout.connect(self._check_dock_collapse)
+            self._dock_collapse_timer.start(500)
+        # Double-click on shape_dock title bar → open object manager
         if hasattr(self, "shape_dock") and self.shape_dock and obj is self.shape_dock.titleBarWidget():
             if event.type() == QtCore.QEvent.MouseButtonDblClick:
                 self.object_manager()
                 return True
         return super(LabelingWidget, self).eventFilter(obj, event)
+
+    def _check_dock_collapse(self):
+        """Auto-hide docks resized too small (drawer behavior).
+        Drag a dock to the very edge → it hides.
+        Reopen from View menu or click its toggleViewAction.
+        """
+        # Don't auto-collapse while user is actively dragging (mouse button pressed).
+        # This prevents crash when nesting two docks side by side — one dock
+        # temporarily gets very small during the drag, and collapsing it mid-drag
+        # then calling resizeDocks causes a Qt C++ segfault.
+        if QtWidgets.QApplication.mouseButtons() & (Qt.LeftButton | Qt.RightButton):
+            return
+        THRESHOLD = 8
+        collapsible = [self.shape_text_dock, self.flag_dock, self.label_dock,
+                       self.shape_dock, self.file_dock, self.thumbnail_dock]
+        for dock in collapsible:
+            if not dock.isVisible():
+                continue
+            area = self.main_window.dockWidgetArea(dock)
+            if area in (Qt.LeftDockWidgetArea, Qt.RightDockWidgetArea):
+                if 0 < dock.width() <= THRESHOLD:
+                    if not hasattr(dock, '_prev_width'):
+                        dock._prev_width = max(dock.width(), 200)
+                    dock.hide()
+            elif area in (Qt.TopDockWidgetArea, Qt.BottomDockWidgetArea):
+                if 0 < dock.height() <= THRESHOLD:
+                    if not hasattr(dock, '_prev_height'):
+                        dock._prev_height = max(dock.height(), 200)
+                    dock.hide()
+
+    def _restore_dock_size(self, visible):
+        """Restore dock size when re-shown after auto-collapse (drawer pull-out)."""
+        if not visible:
+            return
+        # Find which dock triggered this signal
+        sender = self.sender()
+        if not sender or not isinstance(sender, QtWidgets.QDockWidget):
+            return
+        # Only restore if this dock was previously auto-collapsed
+        prev_w = getattr(sender, '_prev_width', None)
+        prev_h = getattr(sender, '_prev_height', None)
+        if not prev_w and not prev_h:
+            return
+        # Defer resizeDocks to next event loop to avoid segfault when
+        # the dock is in a nested/split configuration. Calling resizeDocks
+        # synchronously during visibilityChanged can crash Qt's layout engine.
+        def _do_resize():
+            try:
+                if not sender.isVisible():
+                    return
+                area = self.main_window.dockWidgetArea(sender)
+                if area in (Qt.LeftDockWidgetArea, Qt.RightDockWidgetArea) and prev_w and prev_w > 8:
+                    self.main_window.resizeDocks([sender], [prev_w], Qt.Horizontal)
+                    if hasattr(sender, '_prev_width'):
+                        delattr(sender, '_prev_width')
+                elif area in (Qt.TopDockWidgetArea, Qt.BottomDockWidgetArea) and prev_h and prev_h > 8:
+                    self.main_window.resizeDocks([sender], [prev_h], Qt.Vertical)
+                    if hasattr(sender, '_prev_height'):
+                        delattr(sender, '_prev_height')
+            except Exception as e:
+                logger.warning(f"Error restoring dock size: {e}")
+                if hasattr(sender, '_prev_width'):
+                    delattr(sender, '_prev_width')
+                if hasattr(sender, '_prev_height'):
+                    delattr(sender, '_prev_height')
+        QtCore.QTimer.singleShot(0, _do_resize)
 
     # QT Overload
     def dragEnterEvent(self, event):
@@ -15662,6 +16395,8 @@ class LabelingWidget(QtWidgets.QWidget):
         if not self.may_continue():
             return
 
+        self.save_dock_state()
+
         if self.file_list_widget.count() <= 0:
             return
 
@@ -15679,6 +16414,8 @@ class LabelingWidget(QtWidgets.QWidget):
     def open_next_image(self, _value=False, load=True):
         if not self.may_continue():
             return
+
+        self.save_dock_state()
 
         image_count = self.file_list_widget.count()
         if image_count <= 0:
@@ -16030,6 +16767,15 @@ class LabelingWidget(QtWidgets.QWidget):
             if self.no_shape():
                 for action in self.actions.on_shapes_present:
                     action.setEnabled(False)
+
+    def on_shapes_deleted(self, shapes):
+        """Handle shapes removed by the canvas (e.g. brush-erased to empty)."""
+        self.remove_labels(shapes)
+        self.set_dirty()
+        self._update_expand_margins_colors()
+        if self.no_shape():
+            for action in self.actions.on_shapes_present:
+                action.setEnabled(False)
 
     def delete_selected_shape(self):
         self.remove_labels(self.canvas.delete_selected())
@@ -17003,9 +17749,7 @@ class LabelingWidget(QtWidgets.QWidget):
             self.shape_text_edit.setDisabled(False)
         else:
             self.shape_text_edit.setDisabled(True)
-            self.shape_text_label.setText(
-                self.tr("Switch to Edit mode for description editing")
-            )
+            self.shape_text_label.setText("")
             self.shape_text_edit.textChanged.disconnect()
             self.shape_text_edit.setPlainText("")
             self.shape_text_edit.textChanged.connect(self.shape_text_changed)
