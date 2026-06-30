@@ -385,7 +385,8 @@ class PPOCRv6(PPOCRv4):
 
     def predict_shapes_from_boxes(self, image, boxes, image_path=None):
         """
-        只对给定框区域进行 OCR 识别，跳过全图检测。
+        对给定框区域进行 OCR 识别。
+        全图 DBNet 拆分框内文本行后再逐行识别，保证排序正确。
         boxes: 列表，每个元素为 4 个点的坐标 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
         """
         if image is None or not boxes:
@@ -404,37 +405,104 @@ class PPOCRv6(PPOCRv4):
             return AutoLabelingResult([], replace=False), {}
         t_load = time.time()
 
-        # 对每个框裁剪图片区域
-        img_crop_list = []
-        valid_indices = []
-        for i, box in enumerate(boxes):
-            try:
+        np_boxes = []
+        for box in boxes:
+            if isinstance(box, (list, np.ndarray)):
                 pts = np.array(box, dtype=np.float32)
+                if pts.shape == (4, 2):
+                    np_boxes.append(pts)
+                elif pts.shape == (4, 1, 2):
+                    np_boxes.append(pts.reshape(-1, 2))
+
+        if len(np_boxes) == 0:
+            return AutoLabelingResult([], replace=False), {}
+
+        has_detector = hasattr(self.text_system, 'text_detector') and self.text_system.text_detector is not None
+
+        # 全图 DBNet 检测文本行
+        all_det_boxes = []
+        if has_detector:
+            try:
+                all_det_boxes = self.text_system.text_detector(image)
+                if all_det_boxes is None:
+                    all_det_boxes = []
+            except Exception:
+                all_det_boxes = []
+
+        # 按用户框收集内部 DBNet 行
+        final_boxes = []
+        box_mapping = []
+        for i, user_box in enumerate(np_boxes):
+            ux1 = user_box[:, 0].min(); uy1 = user_box[:, 1].min()
+            ux2 = user_box[:, 0].max(); uy2 = user_box[:, 1].max()
+            box_w = ux2 - ux1; box_h = uy2 - uy1
+            is_vertical = box_h > box_w
+
+            lines = []
+            for db_pts in all_det_boxes:
+                if len(db_pts) < 4:
+                    continue
+                dbx1 = db_pts[:, 0].min(); dby1 = db_pts[:, 1].min()
+                dbx2 = db_pts[:, 0].max(); dby2 = db_pts[:, 1].max()
+                if dbx1 >= ux1 and dbx2 <= ux2 and dby1 >= uy1 and dby2 <= uy2:
+                    lines.append(np.array(db_pts, dtype=np.float32))
+
+            if len(lines) > 1:
+                if is_vertical:
+                    lines.sort(key=lambda b: (-b[:, 0].min(), b[:, 1].min()))
+                else:
+                    lines.sort(key=lambda b: b[:, 1].min())
+                final_boxes.extend(lines)
+                box_mapping.append((i, True, len(lines)))
+            else:
+                final_boxes.append(user_box)
+                box_mapping.append((i, False, 1))
+
+        # 裁剪每行并识别
+        img_crop_list = []
+        for pts in final_boxes:
+            try:
+                if len(pts) == 4:
+                    ordered = np.zeros((4, 2), dtype=np.float32)
+                    s = pts.sum(axis=1); d = np.diff(pts, axis=1)
+                    ordered[0] = pts[np.argmin(s)]; ordered[2] = pts[np.argmax(s)]
+                    ordered[1] = pts[np.argmin(d)]; ordered[3] = pts[np.argmax(d)]
+                    pts = ordered
                 crop = get_rotate_crop_image(image, pts)
                 img_crop_list.append(crop)
-                valid_indices.append(i)
             except Exception as e:
-                logger.warning(f"Failed to crop box {i}: {e}")
+                logger.warning(f"Failed to crop box: {e}")
+                img_crop_list.append(np.ones((48, 16, 3), dtype=np.uint8) * 255)
 
         if not img_crop_list:
             return AutoLabelingResult([], replace=False), {}
 
-        # 只跑识别器，跳过检测器
         rec_res = self.text_system.text_recognizer(img_crop_list)
         t_rec = time.time()
 
         shapes = []
-        for i, idx in enumerate(valid_indices):
-            text = rec_res[i][0]
-            score = float(rec_res[i][1])
-            pts = boxes[idx]
+        result_idx = 0
+        for orig_idx, is_multi, sub_count in box_mapping:
+            if is_multi and result_idx + sub_count <= len(rec_res):
+                line_texts = []
+                max_score = 0.0
+                for j in range(result_idx, result_idx + sub_count):
+                    line_texts.append(rec_res[j][0])
+                    max_score = max(max_score, float(rec_res[j][1]))
+                text = "\n".join(line_texts)
+                score = max_score
+            else:
+                text = rec_res[result_idx][0]
+                score = float(rec_res[result_idx][1])
+
+            pts = boxes[orig_idx]
             is_rotated = self.use_rotation and self._is_rotated_box(pts)
             direction = 0.0
             if is_rotated:
                 import math
                 dx = pts[1][0] - pts[0][0]
                 dy = pts[1][1] - pts[0][1]
-                direction = math.atan2(dy, dx)  # 弧度
+                direction = math.atan2(dy, dx)
                 if direction < 0:
                     direction += 2 * math.pi
             shape = Shape(
@@ -453,6 +521,7 @@ class PPOCRv6(PPOCRv4):
             shape.add_point(QtCore.QPointF(*pt3))
             shape.add_point(QtCore.QPointF(*pt4))
             shapes.append(shape)
+            result_idx += sub_count
 
         timing = {
             "读图": t_load - t0,

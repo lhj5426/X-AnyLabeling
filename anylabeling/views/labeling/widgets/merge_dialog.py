@@ -618,7 +618,8 @@ class MergeDialog(QtWidgets.QDialog):
         }
         
         # 直接读写配置文件，避免get_config的副作用
-        user_config_file = os.path.join(os.path.expanduser("~"), ".YSGxanylabelingrc")
+        from ....config import USER_CONFIG_FILE
+        user_config_file = USER_CONFIG_FILE
         try:
             existing = {}
             if os.path.exists(user_config_file):
@@ -635,7 +636,8 @@ class MergeDialog(QtWidgets.QDialog):
     def load_settings_from_config(self):
         """从配置文件加载设置"""
         # 直接读取配置文件，避免get_config的副作用
-        user_config_file = os.path.join(os.path.expanduser("~"), ".YSGxanylabelingrc")
+        from ....config import USER_CONFIG_FILE
+        user_config_file = USER_CONFIG_FILE
         try:
             if not os.path.exists(user_config_file):
                 return

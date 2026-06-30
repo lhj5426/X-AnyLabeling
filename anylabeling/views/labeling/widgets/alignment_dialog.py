@@ -8,7 +8,8 @@ import yaml
 
 def _load_alignment_settings():
     """从用户配置文件加载对齐工具设置"""
-    config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
+    from ....config import USER_CONFIG_FILE
+    config_file = USER_CONFIG_FILE
     try:
         if osp.exists(config_file):
             with open(config_file, "r", encoding="utf-8") as f:
@@ -21,7 +22,8 @@ def _load_alignment_settings():
 
 def _save_alignment_settings(settings):
     """保存对齐工具设置到用户配置文件"""
-    config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
+    from ....config import USER_CONFIG_FILE
+    config_file = USER_CONFIG_FILE
     try:
         existing = {}
         if osp.exists(config_file):

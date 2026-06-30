@@ -1880,7 +1880,7 @@ def upload_ballontranslator_annotation(self):
     # 创建文本导入模式选择对话框
     dialog = QtWidgets.QDialog(self)
     dialog.setWindowTitle(self.tr("BallonsTranslator 文本导入选项"))
-    dialog.setMinimumWidth(400)
+    dialog.setMinimumWidth(450)
     dialog.setStyleSheet(get_export_option_style())
 
     layout = QVBoxLayout()
@@ -1889,7 +1889,7 @@ def upload_ballontranslator_annotation(self):
 
     # 说明文字
     info_label = QtWidgets.QLabel(
-        self.tr("请选择要导入的文本内容：")
+        self.tr("请选择要导入的文本内容：\n（文字颜色和背景颜色将自动导入）")
     )
     info_label.setWordWrap(True)
     layout.addWidget(info_label)
@@ -1898,19 +1898,19 @@ def upload_ballontranslator_annotation(self):
     text_mode_group = QtWidgets.QButtonGroup(dialog)
     
     source_radio = QtWidgets.QRadioButton(
-        self.tr("仅原文 (text 字段)")
+        self.tr("仅原文 — description=原文, translation=空")
     )
     source_radio.setToolTip(self.tr("只导入 BallonsTranslator 的原文内容"))
     
     target_radio = QtWidgets.QRadioButton(
-        self.tr("仅译文 (translation 字段)")
+        self.tr("仅译文 — description=译文, translation=空")
     )
     target_radio.setToolTip(self.tr("只导入 BallonsTranslator 的译文内容"))
     
     both_radio = QtWidgets.QRadioButton(
-        self.tr("原文/译文 (推荐)")
+        self.tr("原文+译文 — description=原文, translation=译文 (推荐)")
     )
-    both_radio.setToolTip(self.tr("导入格式：原文/译文"))
+    both_radio.setToolTip(self.tr("同时导入原文和译文，并导入文字颜色/背景颜色"))
     both_radio.setChecked(True)  # 默认选中
     
     text_mode_group.addButton(source_radio, 0)
@@ -2012,7 +2012,7 @@ def upload_imagetrans_annotation(self):
     # 创建文本导入模式选择对话框
     dialog = QtWidgets.QDialog(self)
     dialog.setWindowTitle(self.tr("ImageTrans 文本导入选项"))
-    dialog.setMinimumWidth(400)
+    dialog.setMinimumWidth(450)
     dialog.setStyleSheet(get_export_option_style())
 
     layout = QVBoxLayout()
@@ -2021,7 +2021,7 @@ def upload_imagetrans_annotation(self):
 
     # 说明文字
     info_label = QtWidgets.QLabel(
-        self.tr("请选择要导入的文本内容：")
+        self.tr("请选择要导入的文本内容：\n（文字颜色和字号将自动导入）")
     )
     info_label.setWordWrap(True)
     layout.addWidget(info_label)
@@ -2030,19 +2030,19 @@ def upload_imagetrans_annotation(self):
     text_mode_group = QtWidgets.QButtonGroup(dialog)
     
     source_radio = QtWidgets.QRadioButton(
-        self.tr("仅原文 (text 字段)")
+        self.tr("仅原文 — description=原文, translation=空")
     )
     source_radio.setToolTip(self.tr("只导入 ImageTrans 的原文内容"))
     
     target_radio = QtWidgets.QRadioButton(
-        self.tr("仅译文 (target 字段)")
+        self.tr("仅译文 — description=译文, translation=空")
     )
     target_radio.setToolTip(self.tr("只导入 ImageTrans 的译文内容"))
     
     both_radio = QtWidgets.QRadioButton(
-        self.tr("原文/译文 (推荐)")
+        self.tr("原文+译文 — description=原文, translation=译文 (推荐)")
     )
-    both_radio.setToolTip(self.tr("导入格式：原文/译文"))
+    both_radio.setToolTip(self.tr("同时导入原文和译文，并导入文字颜色/字号"))
     both_radio.setChecked(True)  # 默认选中
     
     text_mode_group.addButton(source_radio, 0)

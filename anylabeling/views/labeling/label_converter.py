@@ -1288,21 +1288,13 @@ class LabelConverter:
             return None
 
         description = shape.get('description') or ''
+        translation = shape.get('translation') or ''
         label_text = shape.get('label') or ''
         points = shape['points']
         
-        # 解析 description 字段，支持 "原文/译文" 格式
-        source_text = ""
-        target_text = ""
-        
-        if description:
-            if '/' in description:
-                parts = description.split('/', 1)  # 只分割第一个 /
-                source_text = parts[0].strip()
-                target_text = parts[1].strip() if len(parts) > 1 else ""
-            else:
-                # 如果没有分隔符，将整个内容作为原文
-                source_text = description.strip()
+        # 原文和译文：直接从独立字段读取
+        source_text = (description or '').strip()
+        target_text = (translation or '').strip()
 
         angle_deg = 0.0
         
@@ -1318,21 +1310,33 @@ class LabelConverter:
                 angle_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
                 angle_deg = math.degrees(angle_rad)
 
-            while angle_deg > 180:
-                angle_deg -= 360
-            while angle_deg < -180:
-                angle_deg += 360
-
             center_x = sum(p[0] for p in points) / 4
             center_y = sum(p[1] for p in points) / 4
 
-            unrotated_x = center_x - width / 2
-            unrotated_y = center_y - height / 2
+            # BallonsTranslator 兼容：盒方向每 180° 等同，缩至 [-45, 45]
+            # 例: 270° → 0°,   180° → 0°,   269° → -1°,   271° → 1°,   -3° → -3°
+            box_w, box_h = width, height
+            angle_deg = angle_deg % 360           # → [0, 360)
+            angle_deg = angle_deg % 180           # 方向每 180° 循环
+            if angle_deg > 90:
+                angle_deg -= 180                  # → [-90, 90]
+            if angle_deg > 45:
+                angle_deg -= 90
+                box_w, box_h = height, width
+            elif angle_deg < -45:
+                angle_deg += 90
+                box_w, box_h = height, width
+
+            unrotated_x = center_x - box_w / 2
+            unrotated_y = center_y - box_h / 2
+
+            # 保留浮点精度给字号计算，_bounding_rect 会被取整不能用
+            _float_w, _float_h = box_w, box_h
 
             x1_unrotated = int(round(unrotated_x))
             y1_unrotated = int(round(unrotated_y))
-            x2_unrotated = int(round(unrotated_x + width))
-            y2_unrotated = int(round(unrotated_y + height))
+            x2_unrotated = int(round(unrotated_x + box_w))
+            y2_unrotated = int(round(unrotated_y + box_h))
 
             final_lines = [[[x1_unrotated, y1_unrotated], [x2_unrotated, y1_unrotated], [x2_unrotated, y2_unrotated], [x1_unrotated, y2_unrotated]]]
             _bounding_rect = [x1_unrotated, y1_unrotated, x2_unrotated - x1_unrotated, y2_unrotated - y1_unrotated]
@@ -1353,6 +1357,9 @@ class LabelConverter:
             x_min, y_min = min(x_coords), min(y_coords)
             x_max, y_max = max(x_coords), max(y_coords)
             
+            # 保留浮点精度给字号计算
+            _float_w, _float_h = x_max - x_min, y_max - y_min
+
             x1, y1 = math.floor(x_min), math.floor(y_min)
             x2, y2 = math.ceil(x_max), math.ceil(y_max)
             w, h = x2 - x1, y2 - y1
@@ -1360,7 +1367,83 @@ class LabelConverter:
             final_lines = [[[x1, y1], [x2, y1], [x2, y2], [x1, y2]]]
             _bounding_rect = [x1, y1, w, h]
 
-        is_vertical = h >= w
+        # 根据标签名决定文字排版方向（竖排/横排）
+        vertical_labels = {"balloon", "qipao", "shuqing"}
+        is_vertical = label_text in vertical_labels
+        shape_attrs = shape.get('attributes', {}) or {}
+        fg_color = shape_attrs.get('fg', [0, 0, 0])
+        bg_color = shape_attrs.get('bg', [255, 255, 255])
+        # 确保是整数列表
+        fg_color = [int(c) for c in fg_color[:3]] if isinstance(fg_color, list) and len(fg_color) >= 3 else [0, 0, 0]
+        bg_color = [int(c) for c in bg_color[:3]] if isinstance(bg_color, list) and len(bg_color) >= 3 else [255, 255, 255]
+        # 字号：优先使用保存时 Qt 计算的真实值
+        # 字号计算
+        raw_fs = shape_attrs.get('estimated_font_size', 24.0)
+        _from_geometry = False  # 标记是否走了几何兜底
+
+        if source_text:
+            est_w = _float_w if _float_w > 1 else 1
+            est_h = _float_h if _float_h > 1 else 1
+            if is_vertical:
+                chars = [ch for ch in source_text if not ch.isspace()]
+                n_chars = max(len(chars), 1)
+                if label_text in ("shuqing", "balloon", "qipao"):
+                    raw_fs = min((est_w + 3.9) * 0.662, est_h / max(n_chars, 1))
+                    _from_geometry = True
+            elif raw_fs == 24.0:
+                raw_fs = min((est_w + 3.9) * 0.662, est_h / max(n_chars, 1))
+                _from_geometry = True
+            else:
+                lines = [ln.strip() for ln in source_text.splitlines() if ln.strip()] or [source_text]
+                raw_fs = min((est_h + 3.9) * 0.66, est_w / max(len(lines), 1))
+                _from_geometry = True
+
+        # 字号输出：统一切断小数
+        if _from_geometry:
+            estimated_font_size = int(raw_fs)
+        elif is_vertical:
+            estimated_font_size = int(raw_fs * 1.02)
+        else:
+            estimated_font_size = int(raw_fs * 0.90)
+
+        # 补偿 BT 排版引擎内部占用的空间：
+        #   1) documentMargin() × 2 (QTextDocument 默认边距, 两边各一份)
+        #   2) setPadding(fs × (stroke_width+0.05)/2) 描边内边距 × 2
+        # 综合约需额外增加 字号×(0.15~0.25) 的可用宽度
+        # 通过放大 _bounding_rect 宽度和 xyxy 右边界来实现
+        w_compensation = max(round(estimated_font_size * 0.70), 10)
+        if not is_vertical and source_text:
+            _bounding_rect[2] += w_compensation
+            xyxy[2] += w_compensation
+            # 同步更新 lines 中矩形的右边界坐标
+            updated_lines = []
+            for line in final_lines:
+                if len(line) == 4:
+                    line = [
+                        list(line[0]),
+                        [line[1][0] + w_compensation, line[1][1]],
+                        [line[2][0] + w_compensation, line[2][1]],
+                        list(line[3])
+                    ]
+                updated_lines.append(line)
+            final_lines = updated_lines
+
+        # 竖排底部高度补偿
+        if is_vertical and source_text:
+            h_compensation = max(round(estimated_font_size * 0.70), 10)
+            _bounding_rect[3] += h_compensation
+            xyxy[3] += h_compensation
+            updated_lines = []
+            for line in final_lines:
+                if len(line) == 4:
+                    line = [
+                        list(line[0]),
+                        list(line[1]),
+                        [line[2][0], line[2][1] + h_compensation],
+                        [line[3][0], line[3][1] + h_compensation]
+                    ]
+                updated_lines.append(line)
+            final_lines = updated_lines
 
         obj = {
             "label": label_text,
@@ -1378,9 +1461,10 @@ class LabelConverter:
             "src_is_vertical": is_vertical,
             "det_model": "XAL_Import",
             "region_mask": None, "region_inpaint_dict": None,
+            "bg": bg_color,
             "fontformat": {
-                "font_family": "", "font_size": 24.0, "stroke_width": 0.0,
-                "frgb": [0, 0, 0], "srgb": [0, 0, 0], "bold": False,
+                "font_family": "", "font_size": estimated_font_size, "stroke_width": 0.15,
+                "frgb": fg_color, "srgb": bg_color, "bold": False,
                 "underline": False, "italic": False, "alignment": 0,
                 "vertical": is_vertical, "font_weight": 400, "line_spacing": 1.2,
                 "letter_spacing": 1.15, "opacity": 1.0, "shadow_radius": 0.0,
@@ -1439,7 +1523,7 @@ class LabelConverter:
         """
         Converts a single X-AnyLabeling shape object to ImageTrans's box format.
         Uses OBB for rotation shapes and AABB for others.
-        Supports parsing description field in format: "原文/译文"
+        Exports: text, target, fontcolor, bgColor, shadowColor, shadowRadius, suitableSize.
         """
         if 'points' not in shape or not shape['points']:
             return None
@@ -1447,20 +1531,55 @@ class LabelConverter:
         label = shape.get('label', 'unknown')
         points = shape['points']
         description = shape.get('description', '')
+        translation = shape.get('translation', '')
         
-        # 解析 description 字段，支持 "原文/译文" 格式
-        text_content = ""
-        target_content = ""
+        text_content = (description or '').strip()
+        target_content = (translation or '').strip()
         
-        if description:
-            # 检查是否包含 / 分隔符
-            if '/' in description:
-                parts = description.split('/', 1)  # 只分割第一个 /
-                text_content = parts[0].strip()
-                target_content = parts[1].strip() if len(parts) > 1 else ""
+        # 读取颜色/字号/描边属性
+        attrs = shape.get('attributes', {}) or {}
+        fg_color = attrs.get('fg', None)
+        bg_color = attrs.get('bg', None)
+        font_size = attrs.get('estimated_font_size', None)
+        shadow_color_attr = attrs.get('shadow_color', None)
+        shadow_radius_attr = attrs.get('shadow_radius', None)
+        
+        # 文字颜色 → localStyle.fontcolor
+        fg_str = None
+        if fg_color and isinstance(fg_color, (list, tuple)) and len(fg_color) >= 3:
+            fg_str = f"{int(fg_color[0])},{int(fg_color[1])},{int(fg_color[2])}"
+        
+        # 背景颜色 → bgColor
+        bg_str = None
+        if bg_color and isinstance(bg_color, (list, tuple)) and len(bg_color) >= 3:
+            bg_str = f"{int(bg_color[0])},{int(bg_color[1])},{int(bg_color[2])}"
+        
+        # 描边颜色：优先使用已保存的 shadow_color，否则按 fg 亮度自动判断
+        shadow_color = "255,255,255,1"
+        if shadow_color_attr and isinstance(shadow_color_attr, (list, tuple)) and len(shadow_color_attr) >= 3:
+            shadow_color = f"{int(shadow_color_attr[0])},{int(shadow_color_attr[1])},{int(shadow_color_attr[2])},1"
+        elif fg_color and isinstance(fg_color, (list, tuple)) and len(fg_color) >= 3:
+            r, g, b = fg_color[0], fg_color[1], fg_color[2]
+            fg_lum = 0.299 * r + 0.587 * g + 0.114 * b
+            if fg_lum > 190:
+                shadow_color = "0,0,0,1"
             else:
-                # 如果没有分隔符，将整个内容作为原文
-                text_content = description.strip()
+                shadow_color = "255,255,255,1"
+        
+        # 描边粗细：优先使用已保存的 shadow_radius，否则按标签判断
+        if shadow_radius_attr is not None:
+            try:
+                shadow_radius = int(shadow_radius_attr)
+            except (TypeError, ValueError):
+                shadow_radius = 10 if label.lower() in ('balloon', 'qipao', 'shuqing') else 2
+        else:
+            shadow_radius = 10 if label.lower() in ('balloon', 'qipao', 'shuqing') else 2
+        
+        # 推荐字号
+        try:
+            suitable_size = int(font_size) if font_size is not None else 35
+        except (TypeError, ValueError):
+            suitable_size = 35
         
         itrans_box = None
 
@@ -1491,9 +1610,16 @@ class LabelConverter:
                     "width": math.floor(true_width),
                     "height": math.floor(true_height)
                 },
-                "text": text_content
+                "text": text_content,
+                "wrappedText": text_content,
+                "suitableSize": suitable_size,
+                "shadowRadius": shadow_radius,
+                "shadowColor": shadow_color,
             }
-            # 只有当存在译文时才添加 target 字段
+            if fg_str:
+                itrans_box["localStyle"] = {"fontcolor": fg_str}
+            if bg_str:
+                itrans_box["bgColor"] = bg_str
             if target_content:
                 itrans_box["target"] = target_content
         else:
@@ -1514,9 +1640,16 @@ class LabelConverter:
                     "width": math.floor(width),
                     "height": math.floor(height)
                 },
-                "text": text_content
+                "text": text_content,
+                "wrappedText": text_content,
+                "suitableSize": suitable_size,
+                "shadowRadius": shadow_radius,
+                "shadowColor": shadow_color,
             }
-            # 只有当存在译文时才添加 target 字段
+            if fg_str:
+                itrans_box["localStyle"] = {"fontcolor": fg_str}
+            if bg_str:
+                itrans_box["bgColor"] = bg_str
             if target_content:
                 itrans_box["target"] = target_content
         

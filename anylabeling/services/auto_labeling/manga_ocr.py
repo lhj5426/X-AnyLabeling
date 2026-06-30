@@ -634,7 +634,7 @@ class MangaOCR(Model):
         return AutoLabelingResult(shapes, replace=False)
 
     def predict_shapes_from_boxes(self, image, boxes, image_path=None):
-        """OCR recognition from user-provided boxes."""
+        """OCR from selected boxes. Uses full-image DBNet + crop to split multi-line blocks."""
         if image is None or len(boxes) == 0:
             return AutoLabelingResult([], replace=False), {}
 
@@ -642,7 +642,6 @@ class MangaOCR(Model):
         image = self._load_image(image, image_path)
         t_load = time.time()
 
-        # Convert boxes to numpy arrays
         np_boxes = []
         for box in boxes:
             if isinstance(box, (list, np.ndarray)):
@@ -655,18 +654,81 @@ class MangaOCR(Model):
         if len(np_boxes) == 0:
             return AutoLabelingResult([], replace=False), {}
 
-        # Run OCR
-        ocr_results = self._run_ocr(image, np_boxes)
+        # 用全图 DBNet 检测文本行，避免小图检测不准
+        all_det_boxes, _ = self._run_detection(image)
+
+        # 对每个用户框，收集重叠的 DBNet 行
+        box_line_groups = []
+        for user_box in np_boxes:
+            ux1 = user_box[:, 0].min()
+            uy1 = user_box[:, 1].min()
+            ux2 = user_box[:, 0].max()
+            uy2 = user_box[:, 1].max()
+            box_w = ux2 - ux1
+            box_h = uy2 - uy1
+            is_vertical = box_h > box_w  # 竖排文字
+            lines = []
+            for db_pts in all_det_boxes:
+                if db_pts.shape[0] < 4:
+                    continue
+                dbx1 = db_pts[:, 0].min()
+                dby1 = db_pts[:, 1].min()
+                dbx2 = db_pts[:, 0].max()
+                dby2 = db_pts[:, 1].max()
+                if dbx1 >= ux1 and dbx2 <= ux2 and dby1 >= uy1 and dby2 <= uy2:
+                    lines.append(db_pts)
+            if lines:
+                if is_vertical:
+                    # 竖排：右→左（x降序），同列内上→下（y升序）
+                    lines.sort(key=lambda b: (-b[:, 0].min(), b[:, 1].min()))
+                else:
+                    lines.sort(key=lambda b: b[:, 1].min())
+                box_line_groups.append(lines)
+            else:
+                box_line_groups.append([user_box])
+
+        # 构建最终的 flat boxes + mapping
+        final_boxes = []
+        box_mapping = []
+        for i, lines in enumerate(box_line_groups):
+            if len(lines) > 1:
+                final_boxes.extend(lines)
+                box_mapping.append((i, True, len(lines)))
+            else:
+                final_boxes.append(np_boxes[i])
+                box_mapping.append((i, False, 1))
+
+        ocr_results = self._run_ocr(image, final_boxes)
         t_rec = time.time()
 
-        # Create shapes (no rotation filtering - user explicitly selected these boxes)
         shapes = []
-        for i, (box, ocr_res) in enumerate(zip(np_boxes, ocr_results)):
-            text, prob, fg_color, bg_color = (
-                ocr_res if ocr_res else ("", 0.0, None, None)
-            )
-            shape = self._create_shape(box, prob, text, None, fg_color, bg_color)
-            shapes.append(shape)
+        result_idx = 0
+        for orig_idx, is_multi, sub_count in box_mapping:
+            if is_multi:
+                line_texts = []
+                max_prob = 0.0
+                fg_color = None
+                bg_color = None
+                for j in range(sub_count):
+                    res = ocr_results[result_idx + j]
+                    text, prob, fc, bc = res if res else ("", 0.0, None, None)
+                    if text:
+                        line_texts.append(text)
+                    if prob > max_prob:
+                        max_prob = prob
+                    if fc is not None:
+                        fg_color = fc
+                    if bc is not None:
+                        bg_color = bc
+                text = "\n".join(line_texts)
+                shape = self._create_shape(np_boxes[orig_idx], max_prob, text, None, fg_color, bg_color)
+                shapes.append(shape)
+            else:
+                res = ocr_results[result_idx]
+                text, prob, fg_color, bg_color = res if res else ("", 0.0, None, None)
+                shape = self._create_shape(np_boxes[orig_idx], prob, text, None, fg_color, bg_color)
+                shapes.append(shape)
+            result_idx += sub_count
 
         timing = {
             "读图": t_load - t0,

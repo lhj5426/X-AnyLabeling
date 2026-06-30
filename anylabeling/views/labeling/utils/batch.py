@@ -324,6 +324,16 @@ def _predict_with_existing_boxes(self, image_file):
             if attrs:
                 shapes[idx]["attributes"] = dict(attrs)
 
+    # OCR 文本替换
+    if hasattr(self, 'ocr_replace_dialog'):
+        for j, idx in enumerate(box_indices):
+            desc = shapes[idx].get("description", "")
+            if desc:
+                label = shapes[idx].get("label", "")
+                new_desc = self.ocr_replace_dialog.apply(label, str(desc))
+                if new_desc != desc:
+                    shapes[idx]["description"] = new_desc
+
     # 打印日志（按标签分组，带序号和耗时）
     import time, sys
     from collections import defaultdict

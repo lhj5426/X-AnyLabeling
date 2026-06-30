@@ -96,7 +96,7 @@ def main():
         ),
     )
     default_config_file = os.path.join(
-        os.path.expanduser("~"), ".YSGxanylabelingrc"
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".YSGxanylabelingrc"
     )
     parser.add_argument(
         "--config",

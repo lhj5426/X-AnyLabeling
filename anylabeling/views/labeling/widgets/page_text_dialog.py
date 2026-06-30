@@ -1,5 +1,8 @@
 # -*- encoding: utf-8 -*-
 
+import os
+import os.path as osp
+
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtCore import Qt
 
@@ -180,6 +183,51 @@ class PageTextDialog(QtWidgets.QDialog):
         title_label.setStyleSheet("font-weight: bold; font-size: 12pt;")
         layout.addWidget(title_label)
         
+        # 批量操作按钮
+        button_layout = QtWidgets.QHBoxLayout()
+        self.btn_clear_source = QtWidgets.QPushButton(self.tr("清空原文"))
+        self.btn_copy_source_to_target = QtWidgets.QPushButton(self.tr("原文复制到译文"))
+        self.btn_clear_target = QtWidgets.QPushButton(self.tr("清空译文"))
+        self.btn_clear_source.clicked.connect(self.clear_all_source)
+        self.btn_copy_source_to_target.clicked.connect(self.copy_source_to_target)
+        self.btn_clear_target.clicked.connect(self.clear_all_target)
+        button_layout.addWidget(self.btn_clear_source)
+        button_layout.addWidget(self.btn_copy_source_to_target)
+        button_layout.addWidget(self.btn_clear_target)
+        button_layout.addStretch(1)
+        layout.addLayout(button_layout)
+        
+        # 范围设置
+        scope_widget = QtWidgets.QWidget()
+        scope_layout = QtWidgets.QHBoxLayout(scope_widget)
+        scope_layout.setContentsMargins(0, 4, 0, 4)
+        scope_layout.addWidget(QtWidgets.QLabel(self.tr("应用范围:")))
+        self.scope_group = QtWidgets.QButtonGroup(self)
+        self.radio_current = QtWidgets.QRadioButton(self.tr("仅当前页"))
+        self.radio_all = QtWidgets.QRadioButton(self.tr("所有页面"))
+        self.radio_range = QtWidgets.QRadioButton(self.tr("指定范围"))
+        self.radio_current.setChecked(True)
+        self.scope_group.addButton(self.radio_current, 1)
+        self.scope_group.addButton(self.radio_all, 2)
+        self.scope_group.addButton(self.radio_range, 3)
+        scope_layout.addWidget(self.radio_current)
+        scope_layout.addWidget(self.radio_all)
+        scope_layout.addWidget(self.radio_range)
+        self.spin_start = QtWidgets.QSpinBox()
+        self.spin_start.setPrefix(self.tr("从: "))
+        self.spin_end = QtWidgets.QSpinBox()
+        self.spin_end.setPrefix(self.tr("到: "))
+        self.spin_start.setEnabled(False)
+        self.spin_end.setEnabled(False)
+        self.radio_range.toggled.connect(lambda checked: (
+            self.spin_start.setEnabled(checked),
+            self.spin_end.setEnabled(checked)
+        ))
+        scope_layout.addWidget(self.spin_start)
+        scope_layout.addWidget(self.spin_end)
+        scope_layout.addStretch()
+        layout.addWidget(scope_widget)
+        
         # 创建表格 - 3列：标签、原文、译文
         self.table = QtWidgets.QTableWidget()
         self.table.setColumnCount(3)
@@ -239,23 +287,6 @@ class PageTextDialog(QtWidgets.QDialog):
             self.shapes = self.parent.canvas.shapes
             self.refresh_table()
     
-    def _parse_description(self, description):
-        """解析 description，分离原文和译文"""
-        if not description:
-            return "", ""
-        if '/' in description:
-            parts = description.split('/', 1)
-            return parts[0].strip(), parts[1].strip() if len(parts) > 1 else ""
-        return description, ""
-    
-    def _combine_description(self, source, target):
-        """合并原文和译文为 description"""
-        source = source.strip()
-        target = target.strip()
-        if target:
-            return f"{source}/{target}"
-        return source
-    
     def refresh_table(self):
         """刷新表格显示 - 双语模式，左右两列"""
         # 断开信号，避免触发 cellChanged
@@ -292,9 +323,9 @@ class PageTextDialog(QtWidgets.QDialog):
 
             self.table.setItem(row, 0, label_item)
 
-            # 解析原文和译文
-            description = shape.description or ""
-            source_text, target_text = self._parse_description(description)
+            # 原文和译文：直接读 shape 字段
+            source_text = shape.description or ""
+            target_text = getattr(shape, "translation", "")
 
             # 原文列（可编辑）
             source_item = QtWidgets.QTableWidgetItem(source_text)
@@ -354,22 +385,137 @@ class PageTextDialog(QtWidgets.QDialog):
         target_item = self.table.item(row, 2)
         source_text = source_item.text() if source_item else ""
         target_text = target_item.text() if target_item else ""
-        
-        # 组合新的 description
-        new_description = self._combine_description(source_text, target_text)
 
-        # 更新 shape 的 description
-        if shape.description != new_description:
-            shape.description = new_description
-            self.description_changed.emit(shape_index, new_description)
+        # 直接写入 shape 的 description 和 translation 字段
+        changed = False
+        if shape.description != source_text:
+            shape.description = source_text
+            changed = True
+        if getattr(shape, "translation", "") != target_text:
+            shape.translation = target_text
+            changed = True
+
+        if changed:
+            # 兼容旧代码：通过 description 信号传递修改
+            self.description_changed.emit(shape_index, source_text)
 
             if self.parent and hasattr(self.parent, 'set_dirty'):
                 self.parent.set_dirty()
+    
+    def _apply_to_all_rows(self, apply_func):
+        """对当前页所有可见 shape 应用操作，直接修改 shape 对象并刷新表格"""
+        for row in range(self.table.rowCount()):
+            index_item = self.table.item(row, 0)
+            if not index_item:
+                continue
+            shape_index = index_item.data(Qt.UserRole)
+            if shape_index is None or shape_index >= len(self.shapes):
+                continue
+            shape = self.shapes[shape_index]
+            apply_func(shape)
+
+        self.refresh_table()
+        if self.parent and hasattr(self.parent, 'set_dirty'):
+            self.parent.set_dirty()
+
+    def _get_scope_files(self):
+        """返回需要处理的图片文件列表"""
+        scope = self.scope_group.checkedId()  # 1=当前页, 2=全部, 3=范围
+        if scope == 1:
+            # 仅当前页
+            if self.parent and hasattr(self.parent, 'filename'):
+                return [self.parent.filename]
+            return []
+
+        # 获取所有图片文件
+        image_files = []
+        if self.parent and hasattr(self.parent, 'image_list'):
+            image_files = list(self.parent.image_list)
+        elif self.parent and hasattr(self.parent, 'filename'):
+            # 没有 image_list 但有当前图片，返回当前图片
+            image_files = [self.parent.filename]
+
+        if not image_files:
+            return []
+
+        if scope == 2:
+            return image_files
+        elif scope == 3:
+            start = self.spin_start.value() - 1
+            end = self.spin_end.value()
+            return image_files[max(0, start):min(len(image_files), end)]
+        return []
+
+    def _get_label_path(self, img_path):
+        """根据图片路径计算对应的 JSON 标注路径，考虑 output_dir"""
+        json_path = osp.splitext(img_path)[0] + ".json"
+        if self.parent and getattr(self.parent, 'output_dir', None):
+            json_path = osp.join(self.parent.output_dir, osp.basename(json_path))
+        return json_path
+
+    def _apply_to_image(self, img_path, apply_func):
+        """对单个图片的标注JSON应用操作并保存"""
+        import json
+        json_path = self._get_label_path(img_path)
+        if not json_path or not os.path.exists(json_path):
+            return
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception:
+            return
+
+        modified = False
+        for shape in data.get('shapes', []):
+            desc = shape.get('description', '') or ''
+            trans = shape.get('translation', '') or ''
+            old_desc, old_trans = desc, trans
+            desc, trans = apply_func(desc, trans)
+            if desc != old_desc or trans != old_trans:
+                shape['description'] = desc
+                shape['translation'] = trans
+                modified = True
+
+        if modified:
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def clear_all_source(self):
+        """清空所有原文"""
+        self._apply_to_all_rows(lambda shape: setattr(shape, 'description', ''))
+        scope = self.scope_group.checkedId()
+        if scope != 1:
+            for img_path in self._get_scope_files():
+                self._apply_to_image(img_path, lambda d, t: ("", t))
+
+    def copy_source_to_target(self):
+        """原文复制到译文"""
+        self._apply_to_all_rows(
+            lambda shape: setattr(shape, 'translation', shape.description or '')
+        )
+        scope = self.scope_group.checkedId()
+        if scope != 1:
+            for img_path in self._get_scope_files():
+                self._apply_to_image(img_path, lambda d, t: (d, d))
+
+    def clear_all_target(self):
+        """清空所有译文"""
+        self._apply_to_all_rows(lambda shape: setattr(shape, 'translation', ''))
+        scope = self.scope_group.checkedId()
+        if scope != 1:
+            for img_path in self._get_scope_files():
+                self._apply_to_image(img_path, lambda d, t: (d, ""))
     
     def showEvent(self, event):
         """窗口显示时刷新数据"""
         super().showEvent(event)
         self.refresh_data()
+        # 更新范围 spinbox
+        if self.parent and hasattr(self.parent, 'image_list'):
+            n = len(self.parent.image_list)
+            self.spin_start.setRange(1, n)
+            self.spin_end.setRange(1, n)
+            self.spin_end.setValue(n)
     
     def tr(self, text):
         """翻译函数"""

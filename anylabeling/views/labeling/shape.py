@@ -45,6 +45,7 @@ class Shape:
         "shape_type",
         "flags",
         "description",
+        "translation",
         "attributes",
         "is_edited", # Added for edited status dot
         "is_manually_locked", # Added for manual lock status
@@ -122,6 +123,7 @@ class Shape:
         self.score = score
         self.group_id = group_id
         self.description = description
+        self.translation = ""  # 译文字段，取代 description 斜杠分割
         self.difficult = difficult
         self.is_edited = False # Initialize edited status
         self.is_session_unlocked = False # Initialize session unlock status
@@ -236,6 +238,7 @@ class Shape:
             "points": [(p.x(), p.y()) for p in self.points],
             "group_id": self.group_id,
             "description": self.description,
+            "translation": self.translation or "",
             "difficult": self.difficult,
             "shape_type": self.shape_type,
             "flags": self.flags,
@@ -297,6 +300,7 @@ class Shape:
         self.points = [QtCore.QPointF(p[0], p[1]) for p in data["points"]]
         self.group_id = data.get("group_id")
         self.description = data.get("description", "")
+        self.translation = data.get("translation", "")
         self.difficult = data.get("difficult", False)
         self.shape_type = data.get("shape_type", "polygon")
         self.flags = data.get("flags", {})

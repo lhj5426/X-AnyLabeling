@@ -8,14 +8,21 @@ from PIL import Image
 def convert_ballons_to_anylabel(ballons_json_path, text_mode='both'):
     """
     将 BallonsTranslator 的项目文件转换为多个 X-AnyLabeling 的 .json 标注文件。
-    *** 新版本: 支持对带有 "angle" 字段的框进行反向旋转变换，生成精确的旋转框。***
+    
+    导入内容：
+      - description: 原文 (text 字段)
+      - translation: 译文 (translation 字段)
+      - attributes.fg: 文字颜色 (fontformat.frgb)
+      - attributes.bg: 背景颜色 (fontformat.srgb)
+      - label: 标签类型 (label 字段)
+      - points: 坐标 (xyxy / _bounding_rect + angle)
     
     Args:
         ballons_json_path: BallonsTranslator 项目文件路径
-        text_mode: 文本导入模式
-            - 'source': 仅导入原文 (text 字段)
-            - 'target': 仅导入译文 (translation 字段)
-            - 'both': 导入原文/译文 (默认)
+        text_mode: 文本导入模式（保留向后兼容，已不再区分）
+            - 'source': 仅原文作为 description
+            - 'target': 仅译文作为 description
+            - 'both': 原文→description, 译文→translation (默认)
     """
     try:
         base_dir = Path(ballons_json_path).parent
@@ -50,33 +57,40 @@ def convert_ballons_to_anylabel(ballons_json_path, text_mode='both'):
 
         shapes = []
         for item in items:
-            # 根据 text_mode 处理文本内容
+            # 提取文本内容
             source_text = ''.join(item.get('text', []))
             target_text = item.get('translation', '')
             
             if text_mode == 'source':
                 description = source_text
+                translation = ""
             elif text_mode == 'target':
                 description = target_text
+                translation = ""
             else:  # text_mode == 'both'
-                if source_text and target_text:
-                    description = f"{source_text}/{target_text}"
-                elif source_text:
-                    description = source_text
-                elif target_text:
-                    description = target_text
-                else:
-                    description = ""
+                description = source_text
+                translation = target_text
+
+            # 提取颜色信息: fontformat.frgb→fg, fontformat.srgb→bg
+            fontformat = item.get('fontformat', {})
+            fg_color = fontformat.get('frgb', None)
+            bg_color = fontformat.get('srgb', None)
             
-            # --- 核心改动: 读取角度和几何信息 ---
+            attrs = {}
+            if fg_color and isinstance(fg_color, (list, tuple)) and len(fg_color) >= 3:
+                attrs['fg'] = [int(c) for c in fg_color[:3]]
+            if bg_color and isinstance(bg_color, (list, tuple)) and len(bg_color) >= 3:
+                attrs['bg'] = [int(c) for c in bg_color[:3]]
+
+            # --- 几何信息处理 ---
+            # 优先使用 xyxy (原始外接矩形)，_bounding_rect 可能被 BT 重新计算过
             angle_deg = item.get('angle', 0)
             
-            # BallonsTranslator 格式使用 _bounding_rect 或 xyxy 来定义未旋转的框
-            rect = item.get('_bounding_rect') # [x, y, w, h]
+            rect = item.get('xyxy')  # [x1, y1, x2, y2]
+            if rect:
+                rect = [rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]]
             if not rect:
-                xyxy = item.get('xyxy') # [x1, y1, x2, y2]
-                if xyxy:
-                    rect = [xyxy[0], xyxy[1], xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]]
+                rect = item.get('_bounding_rect')  # [x, y, w, h]
 
             if not rect:
                 print(f"  [警告] 在 {img_name} 中找到无效的几何数据，已跳过。")
@@ -89,7 +103,6 @@ def convert_ballons_to_anylabel(ballons_json_path, text_mode='both'):
             direction = 0.0
 
             if angle_deg != 0:
-                # 这是一个旋转框，需要进行旋转计算
                 shape_type = "rotation"
                 angle_rad = math.radians(angle_deg)
                 direction = angle_rad
@@ -110,7 +123,6 @@ def convert_ballons_to_anylabel(ballons_json_path, text_mode='both'):
                     final_y = center_y + (px * sin_a + py * cos_a)
                     points.append([final_x, final_y])
             else:
-                # 这是一个普通的水平矩形
                 shape_type = "rectangle"
                 points = [
                     [x, y], [x + w, y],
@@ -123,10 +135,11 @@ def convert_ballons_to_anylabel(ballons_json_path, text_mode='both'):
                 "points": points,
                 "group_id": None,
                 "description": description,
+                "translation": translation,
                 "difficult": False,
                 "shape_type": shape_type,
                 "flags": {},
-                "attributes": {},
+                "attributes": attrs,
                 "kie_linking": []
             }
             if shape_type == "rotation":

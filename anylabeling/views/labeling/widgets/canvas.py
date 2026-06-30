@@ -466,6 +466,8 @@ class Canvas(
         self.setFocusPolicy(QtCore.Qt.WheelFocus)
         self.show_groups = False
         self.show_texts = True
+        self.show_translations = False
+        self.char_render_rules = []  # [{'char': str, 'labels': [str], 'rotate': int, 'offset_x': int, 'offset_y': int, 'spacing': int}]
         self.show_labels = True
         self.show_scores = True
         self.show_degrees = False
@@ -5395,7 +5397,7 @@ class Canvas(
             drawing_shape.paint(p)
 
         # Draw texts
-        if self.show_texts:
+        if self.show_texts or self.show_translations:
             text_color = QtGui.QColor("#FFFFFF")
             background_color = QtGui.QColor("#6FB6FF")
             background_color.setAlpha(235)
@@ -5422,7 +5424,24 @@ class Canvas(
                         high = mid - 1
                 return best_font
 
-            def draw_text_in_rect(text, text_rect, fg_color=None, bg_color=None):
+            def _rotate_char(ch, shape_label):
+                """检查 char_render_rules，返回 (旋转角度, offset_x, offset_y, spacing)"""
+                for rule in self.char_render_rules:
+                    if rule.get("char") != ch:
+                        continue
+                    labels = rule.get("labels", [])
+                    if not labels and rule.get("label"):
+                        labels = [rule.get("label")]
+                    if not labels or shape_label in labels:
+                        return (
+                            rule.get("rotate", 0),
+                            rule.get("offset_x", 0),
+                            rule.get("offset_y", 0),
+                            rule.get("spacing", 0),
+                        )
+                return 0, 0, 0, 0
+
+            def draw_text_in_rect(text, text_rect, fg_color=None, bg_color=None, shape_label=""):
                 text_rect = QtCore.QRectF(text_rect).normalized()
                 if text_rect.width() <= 1 or text_rect.height() <= 1:
                     return
@@ -5451,21 +5470,90 @@ class Canvas(
 
                 p.setPen(QtGui.QPen(use_text_color))
 
-                is_vertical = inner_rect.height() > inner_rect.width() * 1.35 and len(display_text.replace(" ", "")) > 1
+                is_vertical = (
+                    inner_rect.height() > inner_rect.width() * 1.35
+                    and len(display_text.replace(" ", "")) > 1
+                )
                 if is_vertical:
-                    chars = [ch for ch in display_text if not ch.isspace()]
-                    if not chars:
-                        p.restore()
-                        return
-                    cell_h = inner_rect.height() / max(len(chars), 1)
-                    font = make_font(min(inner_rect.width() * 0.92, cell_h * 0.92))
-                    metrics = QtGui.QFontMetricsF(font)
-                    p.setFont(font)
-                    for idx, ch in enumerate(chars):
-                        char_w = max(1.0, metrics.horizontalAdvance(ch))
-                        x = inner_rect.x() + (inner_rect.width() - char_w) / 2.0
-                        y = inner_rect.y() + idx * cell_h + (cell_h - metrics.height()) / 2.0 + metrics.ascent()
-                        p.drawText(QtCore.QPointF(x, y), ch)
+                    if "\n" in display_text:
+                        # 日文竖排多栏：\n 分隔的每一行是一栏，栏从右向左排
+                        cols = [
+                            line.strip()
+                            for line in display_text.splitlines()
+                            if line.strip()
+                        ]
+                        if not cols:
+                            p.restore()
+                            return
+                        col_w = inner_rect.width() / len(cols)
+                        for col_idx, col_text in enumerate(cols):
+                            chars = [ch for ch in col_text if not ch.isspace()]
+                            if not chars:
+                                continue
+                            # cols[0] 是 OCR 排序中最右边的一栏
+                            col_rect = QtCore.QRectF(
+                                inner_rect.x() + (len(cols) - 1 - col_idx) * col_w,
+                                inner_rect.y(),
+                                col_w,
+                                inner_rect.height(),
+                            )
+                            cell_h = col_rect.height() / max(len(chars), 1)
+                            font = make_font(min(col_rect.width() * 0.92, cell_h * 0.92))
+                            metrics = QtGui.QFontMetricsF(font)
+                            p.setFont(font)
+                            prev_ch = None
+                            accumulated_spacing = 0
+                            for idx, ch in enumerate(chars):
+                                rot, ox, oy, sp = _rotate_char(ch, shape_label)
+                                if sp and prev_ch == ch:
+                                    accumulated_spacing += sp
+                                char_w = max(1.0, metrics.horizontalAdvance(ch))
+                                x = col_rect.x() + (col_rect.width() - char_w) / 2.0
+                                y = col_rect.y() + idx * cell_h + accumulated_spacing + (cell_h - metrics.height()) / 2.0 + metrics.ascent()
+                                if rot or ox or oy:
+                                    p.save()
+                                    p.translate(
+                                        x + char_w / 2.0 + ox,
+                                        y - metrics.ascent() + metrics.height() / 2.0 + oy
+                                    )
+                                    if rot:
+                                        p.rotate(rot)
+                                    p.drawText(QtCore.QPointF(-char_w / 2.0, metrics.ascent() - metrics.height() / 2.0), ch)
+                                    p.restore()
+                                else:
+                                    p.drawText(QtCore.QPointF(x, y), ch)
+                                prev_ch = ch
+                    else:
+                        chars = [ch for ch in display_text if not ch.isspace()]
+                        if not chars:
+                            p.restore()
+                            return
+                        cell_h = inner_rect.height() / max(len(chars), 1)
+                        font = make_font(min(inner_rect.width() * 0.92, cell_h * 0.92))
+                        metrics = QtGui.QFontMetricsF(font)
+                        p.setFont(font)
+                        prev_ch = None
+                        accumulated_spacing = 0
+                        for idx, ch in enumerate(chars):
+                            rot, ox, oy, sp = _rotate_char(ch, shape_label)
+                            if sp and prev_ch == ch:
+                                accumulated_spacing += sp
+                            char_w = max(1.0, metrics.horizontalAdvance(ch))
+                            x = inner_rect.x() + (inner_rect.width() - char_w) / 2.0
+                            y = inner_rect.y() + idx * cell_h + accumulated_spacing + (cell_h - metrics.height()) / 2.0 + metrics.ascent()
+                            if rot or ox or oy:
+                                p.save()
+                                p.translate(
+                                    x + char_w / 2.0 + ox,
+                                    y - metrics.ascent() + metrics.height() / 2.0 + oy
+                                )
+                                if rot:
+                                    p.rotate(rot)
+                                p.drawText(QtCore.QPointF(-char_w / 2.0, metrics.ascent() - metrics.height() / 2.0), ch)
+                                p.restore()
+                            else:
+                                p.drawText(QtCore.QPointF(x, y), ch)
+                            prev_ch = ch
                 else:
                     lines = [line.strip() for line in str(display_text).splitlines() if line.strip()]
                     if not lines:
@@ -5495,7 +5583,12 @@ class Canvas(
                 if not shape.visible:
                     continue
                 description = shape.description
-                if not description:
+                translation = getattr(shape, 'translation', '')
+                shape_label = shape.label or ""
+
+                show_desc = self.show_texts and bool(description)
+                show_trans = self.show_translations and bool(translation)
+                if not show_desc and not show_trans:
                     continue
 
                 # Extract fg/bg colors from shape attributes if available
@@ -5510,9 +5603,28 @@ class Canvas(
                         shape_bg.setAlpha(235)
 
                 if shape.shape_type in ["rotation", "rotation3"] and len(shape.points) == 4:
-                    p0, p1, _, p3 = shape.points
+                    # 用 minAreaRect 获取规范化角点，确保文字方向正确
+                    pts_np = np.array([[p.x(), p.y()] for p in shape.points], dtype=np.float32)
+                    rect = cv2.minAreaRect(pts_np)
+                    box = cv2.boxPoints(rect)  # 4个角点
+                    
+                    # 通过坐标排序找到正确的角点
+                    # x+y 最小 = 左上, 最大 = 右下
+                    # x-y 最大 = 右上, 最小 = 左下
+                    s = box[:,0] + box[:,1]
+                    d = box[:,0] - box[:,1]
+                    tl = box[np.argmin(s)]   # top-left (x+y最小)
+                    br = box[np.argmax(s)]   # bottom-right (x+y最大)
+                    tr = box[np.argmax(d)]   # top-right (x-y最大)
+                    bl = box[np.argmin(d)]   # bottom-left (x-y最小)
+                    
+                    p0 = QtCore.QPointF(tl[0], tl[1])
+                    p1 = QtCore.QPointF(tr[0], tr[1])
+                    p3 = QtCore.QPointF(bl[0], bl[1])
+                    
                     width = math.hypot(p1.x() - p0.x(), p1.y() - p0.y())
                     height = math.hypot(p3.x() - p0.x(), p3.y() - p0.y())
+                    
                     if width <= 1 or height <= 1:
                         continue
                     x_axis = QtCore.QPointF((p1.x() - p0.x()) / width, (p1.y() - p0.y()) / width)
@@ -5525,7 +5637,15 @@ class Canvas(
                     p.save()
                     p.setWorldTransform(transform, True)
                     text_rect = QtCore.QRectF(0, 0, width, height)
-                    draw_text_in_rect(description, text_rect, shape_fg, shape_bg)
+                    if show_desc and show_trans:
+                        desc_rect = QtCore.QRectF(0, 0, width, height / 2.0)
+                        trans_rect = QtCore.QRectF(0, height / 2.0, width, height / 2.0)
+                        draw_text_in_rect(description, desc_rect, shape_fg, shape_bg, shape_label)
+                        draw_text_in_rect(translation, trans_rect, shape_fg, shape_bg, shape_label)
+                    elif show_desc:
+                        draw_text_in_rect(description, text_rect, shape_fg, shape_bg, shape_label)
+                    else:
+                        draw_text_in_rect(translation, text_rect, shape_fg, shape_bg, shape_label)
                     p.restore()
                     continue
 
@@ -5534,7 +5654,16 @@ class Canvas(
                 except IndexError:
                     continue
                 text_rect = bbox.adjusted(padding, padding, -padding, -padding)
-                draw_text_in_rect(description, text_rect, shape_fg, shape_bg)
+                if show_desc and show_trans:
+                    mid_y = text_rect.top() + text_rect.height() / 2.0
+                    desc_rect = QtCore.QRectF(text_rect.left(), text_rect.top(), text_rect.width(), text_rect.height() / 2.0)
+                    trans_rect = QtCore.QRectF(text_rect.left(), mid_y, text_rect.width(), text_rect.height() / 2.0)
+                    draw_text_in_rect(description, desc_rect, shape_fg, shape_bg, shape_label)
+                    draw_text_in_rect(translation, trans_rect, shape_fg, shape_bg, shape_label)
+                elif show_desc:
+                    draw_text_in_rect(description, text_rect, shape_fg, shape_bg, shape_label)
+                else:
+                    draw_text_in_rect(translation, text_rect, shape_fg, shape_bg, shape_label)
             p.restore()
         # Draw labels
         if self.show_labels:

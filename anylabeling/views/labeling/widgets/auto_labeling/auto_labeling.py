@@ -769,6 +769,13 @@ class AutoLabelingWidget(QWidget):
                     shape.score = score
                     if attrs:
                         shape.attributes = attrs
+            # OCR 文本替换
+            for shape, _ in box_infos:
+                desc = shape.description
+                if desc:
+                    new_desc = self.parent.ocr_replace_dialog.apply(shape.label, str(desc))
+                    if new_desc != desc:
+                        shape.description = new_desc
             print(f"\n[选中OCR] 标签:{label}  {fname} → {timing_str}")
             print(out)
             sys.stdout.flush()
@@ -777,10 +784,16 @@ class AutoLabelingWidget(QWidget):
             self.parent.label_list.viewport().update()
             # Mark file as dirty so OCR results get saved
             self.parent.set_dirty(mark_as_manually_edited=False)
-            # 通过信号把描述文本传回主线程更新 UI
+            # 通过信号把描述文本传回主线程更新 UI（用替换后的文本）
             desc = ""
-            if box_infos and len(result.shapes) > 0:
-                desc = result.shapes[0].description or ""
+            p = self.parent
+            if box_infos and hasattr(p, "canvas"):
+                for shape, _ in box_infos:
+                    if shape in p.canvas.selected_shapes:
+                        desc = shape.description or ""
+                        break
+                if not desc and len(result.shapes) > 0:
+                    desc = result.shapes[0].description or ""
             self.recog_selected_finished.emit(desc)
             self.model_manager.new_model_status.emit(
                 self.tr("选中框识别完成。查看结果。")
@@ -854,6 +867,41 @@ class AutoLabelingWidget(QWidget):
                         shape.attributes = attrs
                     grouped[shape.label].append([boxes[i], (text, score), attrs])
 
+            # OCR 文本替换
+            for shape, _ in box_infos:
+                desc = shape.description
+                if desc:
+                    new_desc = self.parent.ocr_replace_dialog.apply(shape.label, str(desc))
+                    if new_desc != desc:
+                        shape.description = new_desc
+
+            # 刷新右侧文本框
+            if box_infos:
+                p = self.parent
+                if hasattr(p, "shape_text_edit") and p.canvas.editing() and p.canvas.selected_shapes:
+                    for shape, _ in box_infos:
+                        if shape in p.canvas.selected_shapes:
+                            try:
+                                p.shape_text_edit.textChanged.disconnect()
+                            except Exception:
+                                pass
+                            p.shape_text_edit.setPlainText(shape.description or "")
+                            try:
+                                p.shape_text_edit.textChanged.connect(p.shape_text_changed)
+                            except Exception:
+                                pass
+                            # 同步刷新译文框
+                            try:
+                                p.shape_translation_edit.textChanged.disconnect()
+                            except Exception:
+                                pass
+                            p.shape_translation_edit.setPlainText(getattr(shape, "translation", ""))
+                            try:
+                                p.shape_translation_edit.textChanged.connect(p.shape_translation_changed)
+                            except Exception:
+                                pass
+                            break
+
             fname = os.path.basename(self.parent.filename) if self.parent.filename else "image"
             print(f"\n[全图框OCR] {fname}  共{len(box_infos)}个框 → {timing_str}")
             for label, items in sorted(grouped.items()):
@@ -874,7 +922,7 @@ class AutoLabelingWidget(QWidget):
         QTimer.singleShot(0, _do_ocr)
 
     def _on_recog_selected_finished(self, description):
-        """主线程回调：更新右侧文本描述"""
+        """主线程回调：更新右侧原文描述"""
         try:
             self.parent.shape_text_edit.textChanged.disconnect()
         except Exception:

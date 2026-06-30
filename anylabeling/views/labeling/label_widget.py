@@ -98,6 +98,8 @@ from .widgets.horizontal_viewer_dialog import HorizontalViewerDialog
 from .widgets.vertical_viewer_dialog import VerticalViewerDialog
 from .widgets.thumbnail_viewer_dialog import MasonryThumbnailDialog
 from .widgets.containment_detection_dialog import ContainmentDetectionDialog
+from .ocr_text_replace import OCRTextReplaceDialog
+from .widgets.char_render_dialog import CharRenderDialog
 from .utils.image_category import read_image_category
 from ..mainwindow_widgets.traffic_light_dialog import TrafficLightDialog
 from ...services import merger, tag_sorting
@@ -628,6 +630,14 @@ class LabelingWidget(QtWidgets.QWidget):
         if config is None:
             config = get_config()
         self._config = config
+
+        # OCR 文本替换
+        self.ocr_replace_dialog = OCRTextReplaceDialog(
+            parent=self
+        )
+
+        # 字符渲染工具
+        self.char_render_dialog = CharRenderDialog(parent=self)
 
         if output is not None:
             logger.warning(
@@ -1467,6 +1477,9 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.shape_moved.connect(self.set_dirty)
         self.canvas.shape_rotated.connect(self.set_dirty)
         self.canvas.selection_changed.connect(self.shape_selection_changed)
+
+        # 初始化字符渲染规则
+        self.canvas.char_render_rules = self.char_render_dialog.get_rules()
 
         # Connect shape modifications to update navigator title
         self.canvas.shape_moved.connect(self._update_navigator_title_with_selection)
@@ -2568,6 +2581,16 @@ class LabelingWidget(QtWidgets.QWidget):
             enabled=True,
             auto_trigger=True,
         )
+        show_translations = action(
+            self.tr("显示译文"),
+            lambda x: self.set_canvas_params("show_translations", x),
+            tip=self.tr("在图形上方显示译文文本"),
+            icon=None,
+            checkable=True,
+            checked=self._config.get("show_translations", False),
+            enabled=True,
+            auto_trigger=True,
+        )
         show_labels = action(
             self.tr("&Show Labels"),
             lambda x: self.set_canvas_params("show_labels", x),
@@ -3031,6 +3054,20 @@ class LabelingWidget(QtWidgets.QWidget):
             icon="format_coco",
             tip=self.tr("导出标注框中的文本内容到TXT文件（每个图片一个TXT）"),
         )
+        ocr_text_replace_action = action(
+            self.tr("OCR文本替换"),
+            self.ocr_replace_dialog.show,
+            None,
+            icon="edit",
+            tip=self.tr("设置OCR识别后的关键词替换规则，分标签管理"),
+        )
+        char_render_action = action(
+            self.tr("字符渲染"),
+            self.char_render_dialog.show,
+            None,
+            icon="edit",
+            tip=self.tr("按标签设置字符旋转角度和偏移，用于竖排文字渲染调整"),
+        )
         export_ocr_srt = action(
             self.tr("导出 OCR 字幕 → SRT"),
             lambda: utils.export_ocr_subtitle(self, "srt"),
@@ -3253,6 +3290,8 @@ class LabelingWidget(QtWidgets.QWidget):
             export_image_category=export_image_category,
             image_category_manager=image_category_manager_tool,
             export_description_txt=export_description_txt,
+            ocr_text_replace=ocr_text_replace_action,
+            char_render=char_render_action,
             zoom=zoom,
             zoom_in=zoom_in,
             zoom_out=zoom_out,
@@ -3271,6 +3310,7 @@ class LabelingWidget(QtWidgets.QWidget):
             toggle_magnifier_auto_detect=toggle_magnifier_auto_detect,
             show_groups=show_groups,
             show_texts=show_texts,
+            show_translations=show_translations,
             show_labels=show_labels,
             show_scores=show_scores,
             show_degrees=show_degrees,
@@ -3454,6 +3494,9 @@ class LabelingWidget(QtWidgets.QWidget):
                 highlight_settings_tool,
                 toggle_ghost_paste,
                 None,
+                ocr_text_replace_action,
+                char_render_action,
+                None,
                 # === 管理器工具 ===
                 label_manager,
                 object_manager,
@@ -3620,6 +3663,7 @@ class LabelingWidget(QtWidgets.QWidget):
             QtWidgets.QMainWindow.AllowNestedDocks
             | QtWidgets.QMainWindow.AnimatedDocks
             | QtWidgets.QMainWindow.AllowTabbedDocks
+            | QtWidgets.QMainWindow.GroupedDragging
         )
         self.main_window.setCentralWidget(QtWidgets.QWidget())
         self.main_window.centralWidget().setLayout(QtWidgets.QVBoxLayout())
@@ -3683,10 +3727,16 @@ class LabelingWidget(QtWidgets.QWidget):
         self.thumbnail_dock.setStyleSheet(dock_title_style)
 
         # --- shape_text_dock ---
-        self.shape_text_dock = QtWidgets.QDockWidget(self.tr("文本框"), self)
+        self.shape_text_dock = QtWidgets.QDockWidget(self.tr("原文"), self)
         self.shape_text_dock.setObjectName("TextEditor")
         self.shape_text_dock.setFeatures(dock_features)
         self.shape_text_dock.setStyleSheet(dock_title_style)
+
+        # --- shape_translation_dock (独立的译文面板) ---
+        self.shape_translation_dock = QtWidgets.QDockWidget(self.tr("译文"), self)
+        self.shape_translation_dock.setObjectName("TranslationEditor")
+        self.shape_translation_dock.setFeatures(dock_features)
+        self.shape_translation_dock.setStyleSheet(dock_title_style)
 
         # --- navigator_dock — embed NavigatorDialog as a dockable panel ---
         self.navigator_dock = QtWidgets.QDockWidget(self.tr("导航器"), self)
@@ -3733,6 +3783,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.flag_dock.toggleViewAction(),
                 self.label_dock.toggleViewAction(),
                 self.shape_text_dock.toggleViewAction(),
+                self.shape_translation_dock.toggleViewAction(),
                 self.shape_dock.toggleViewAction(),
                 self.file_dock.toggleViewAction(),
                 reset_views,
@@ -3762,6 +3813,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 set_magnifier,
                 toggle_magnifier_auto_detect,
                 show_texts,
+                show_translations,
                 show_labels,
                 show_scores,
                 show_degrees,
@@ -3965,9 +4017,13 @@ class LabelingWidget(QtWidgets.QWidget):
         self.grid_layout_container.setLayout(self.grid_layout)
         self.attributes_scroll_area.setWidget(self.grid_layout_container)
 
-        self.shape_text_label = QLabel("Object Text")
+        self.shape_text_label = QLabel(self.tr("原文"))
         self.shape_text_edit = QPlainTextEdit()
         self.shape_text_edit.setMaximumHeight(60)
+        self.shape_translation_label = QLabel(self.tr("译文"))
+        self.shape_translation_edit = QPlainTextEdit()
+        self.shape_translation_edit.setMaximumHeight(60)
+        # --- 原文面板（含 attributes） ---
         shape_text_container = QtWidgets.QWidget()
         shape_text_dock_layout = QtWidgets.QVBoxLayout()
         shape_text_dock_layout.setContentsMargins(0, 0, 0, 0)
@@ -3978,6 +4034,16 @@ class LabelingWidget(QtWidgets.QWidget):
         shape_text_dock_layout.addStretch(1)
         shape_text_container.setLayout(shape_text_dock_layout)
         self.shape_text_dock.setWidget(shape_text_container)
+
+        # --- 译文面板（独立 dock） ---
+        translation_container = QtWidgets.QWidget()
+        translation_layout = QtWidgets.QVBoxLayout()
+        translation_layout.setContentsMargins(0, 0, 0, 0)
+        translation_layout.addWidget(self.shape_translation_label, 0, Qt.AlignCenter)
+        translation_layout.addWidget(self.shape_translation_edit)
+        translation_layout.addStretch(1)
+        translation_container.setLayout(translation_layout)
+        self.shape_translation_dock.setWidget(translation_container)
         if not self.attributes:
             self.shape_attributes.hide()
             self.attributes_scroll_area.hide()
@@ -3989,8 +4055,8 @@ class LabelingWidget(QtWidgets.QWidget):
         # which does setMinimumSize(0, minimumSize().height()). If the dock's
         # minimum height hasn't been explicitly set yet, Qt uses -1 → warning.
         # Setting setMinimumSize(0, 0) first prevents this.
-        for dock in [self.thumbnail_dock, self.shape_text_dock, self.flag_dock,
-                     self.label_dock, self.shape_dock, self.file_dock,
+        for dock in [self.thumbnail_dock, self.shape_text_dock, self.shape_translation_dock,
+                     self.flag_dock, self.label_dock, self.shape_dock, self.file_dock,
                      self.navigator_dock]:
             dock.setMinimumSize(0, 0)
             if dock.widget():
@@ -4000,6 +4066,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.tools_dock)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.thumbnail_dock)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.shape_text_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.shape_translation_dock)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.flag_dock)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.label_dock)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.shape_dock)
@@ -4007,8 +4074,8 @@ class LabelingWidget(QtWidgets.QWidget):
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.navigator_dock)
 
         # Recursively zero minimum width on all child widgets (buttons, comboboxes, lists)
-        for dock in [self.thumbnail_dock, self.shape_text_dock, self.flag_dock,
-                     self.label_dock, self.shape_dock, self.file_dock,
+        for dock in [self.thumbnail_dock, self.shape_text_dock, self.shape_translation_dock,
+                     self.flag_dock, self.label_dock, self.shape_dock, self.file_dock,
                      self.navigator_dock]:
             if dock.widget():
                 for child in dock.widget().findChildren(QtWidgets.QWidget):
@@ -4021,15 +4088,15 @@ class LabelingWidget(QtWidgets.QWidget):
                         child.setMinimumContentsLength(1)
 
         # Install event filters on docks for auto-collapse (drawer behavior)
-        for dock in [self.shape_text_dock, self.flag_dock, self.label_dock,
-                     self.shape_dock, self.file_dock, self.thumbnail_dock,
-                     self.navigator_dock]:
+        for dock in [self.shape_text_dock, self.shape_translation_dock, self.flag_dock,
+                     self.label_dock, self.shape_dock, self.file_dock,
+                     self.thumbnail_dock, self.navigator_dock]:
             dock.installEventFilter(self)
 
         # --- Connect dock signals for debounced state saving ---
-        for dock in [self.tools_dock, self.shape_text_dock, self.flag_dock,
-                     self.label_dock, self.shape_dock, self.file_dock,
-                     self.thumbnail_dock, self.navigator_dock]:
+        for dock in [self.tools_dock, self.shape_text_dock, self.shape_translation_dock,
+                     self.flag_dock, self.label_dock, self.shape_dock,
+                     self.file_dock, self.thumbnail_dock, self.navigator_dock]:
             dock.dockLocationChanged.connect(self._schedule_dock_save)
             dock.visibilityChanged.connect(self._schedule_dock_save)
             dock.visibilityChanged.connect(self._restore_dock_size)
@@ -4046,6 +4113,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # --- Connect shape text edit ---
         self.shape_text_edit.textChanged.connect(self.shape_text_changed)
+        self.shape_translation_edit.textChanged.connect(self.shape_translation_changed)
 
         # --- Add inner QMainWindow to outer layout ---
         layout.addWidget(self.main_window)
@@ -8116,9 +8184,14 @@ class LabelingWidget(QtWidgets.QWidget):
         if (self.canvas.editing() and
             len(self.canvas.selected_shapes) == 1 and
             self.canvas.shapes.index(self.canvas.selected_shapes[0]) == shape_index):
+            shape = self.canvas.selected_shapes[0]
             self.shape_text_edit.textChanged.disconnect()
-            self.shape_text_edit.setPlainText(new_description)
+            self.shape_text_edit.setPlainText(shape.description or "")
             self.shape_text_edit.textChanged.connect(self.shape_text_changed)
+            # 同步译文
+            self.shape_translation_edit.textChanged.disconnect()
+            self.shape_translation_edit.setPlainText(getattr(shape, "translation", ""))
+            self.shape_translation_edit.textChanged.connect(self.shape_translation_changed)
 
         # 标记为已修改
         self.set_dirty()
@@ -11913,6 +11986,14 @@ class LabelingWidget(QtWidgets.QWidget):
         else:
             self._refresh_label_side_panels()
 
+        # 若启动时已勾选显示文本，加载后算字号并自动保存
+        if self._config.get("show_texts"):
+            self._compute_shape_font_sizes()
+            if self.filename:
+                label_path = osp.splitext(self.filename)[0] + ".json"
+                if osp.exists(label_path):
+                    self._sync_attrs_to_file(label_path)
+
     def load_shapes_at_position(self, shapes, target_pos, replace=True, update_last_label=True):
         """
         Load shapes and move them to the target position (mouse cursor position).
@@ -12058,8 +12139,103 @@ class LabelingWidget(QtWidgets.QWidget):
         # 如果状态指示器是通过其他方式实现的（比如状态栏），在这里更新
         # 例如：self.parent.statusBar().setStyleSheet(f"background-color: {color.name()};")
 
+    def _compute_shape_font_sizes(self):
+        """用 Qt 字体度量精确计算每个 shape 的显示字号，写入 attributes.estimated_font_size。
+        与画布 render 逻辑完全一致。"""
+        import numpy as np
+        import cv2
+        import math
+
+        vertical_labels = {"balloon", "qipao", "shuqing"}
+
+        def make_font(pixel_size):
+            font = QtGui.QFont("Microsoft YaHei")
+            font.setPixelSize(max(1, int(round(pixel_size))))
+            return font
+
+        for item in self.label_list:
+            shape = item.shape()
+            desc = shape.description
+            if not desc:
+                continue
+            display_text = str(desc).strip()
+            if not display_text or not shape.points or len(shape.points) < 4:
+                continue
+            is_vert = shape.label in vertical_labels
+
+            # 获取 unrotated 矩形尺寸
+            if shape.shape_type in ("rotation", "rotation3") and len(shape.points) == 4:
+                pts_np = np.array([[p.x(), p.y()] for p in shape.points], dtype=np.float32)
+                box = cv2.boxPoints(cv2.minAreaRect(pts_np))
+                s = box[:, 0] + box[:, 1]
+                d = box[:, 0] - box[:, 1]
+                tl, bl = box[np.argmin(s)], box[np.argmin(d)]
+                tr = box[np.argmax(d)]
+                w = math.hypot(tr[0] - tl[0], tr[1] - tl[1])
+                h = math.hypot(bl[0] - tl[0], bl[1] - tl[1])
+            else:
+                xs = [p.x() for p in shape.points]
+                ys = [p.y() for p in shape.points]
+                w, h = max(xs) - min(xs), max(ys) - min(ys)
+
+            if w <= 1 or h <= 1:
+                continue
+
+            if is_vert:
+                chars = [ch for ch in display_text if not ch.isspace()]
+                cell_h = h / max(len(chars), 1)
+                font_px = min(w * 0.92, cell_h * 0.92)
+            else:
+                lines = [ln.strip() for ln in display_text.splitlines() if ln.strip()]
+                if not lines:
+                    lines = [" ".join(display_text.split())]
+                row_h = h / max(len(lines), 1)
+                lo, hi = 1, max(1, int(row_h * 0.96))
+                best_px = 1
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    font = make_font(mid)
+                    fm = QtGui.QFontMetricsF(font)
+                    if fm.height() <= row_h + 0.5 and all(
+                        fm.horizontalAdvance(ln) <= w + 0.5 for ln in lines
+                    ):
+                        best_px = mid
+                        lo = mid + 1
+                    else:
+                        hi = mid - 1
+                font_px = best_px
+
+            attrs = dict(getattr(shape, "attributes", {}) or {})
+            attrs["estimated_font_size"] = round(font_px, 1)
+            shape.attributes = attrs
+
+    def _sync_attrs_to_file(self, label_path):
+        """把内存中的 estimated_font_size 写回 JSON，按坐标匹配，不动其他字段"""
+        import json
+        try:
+            with open(label_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # 用坐标做 key 匹配，不管顺序
+            mem_by_pts = {}
+            for item in self.label_list:
+                shape = item.shape()
+                attrs = getattr(shape, "attributes", None)
+                if attrs and "estimated_font_size" in attrs:
+                    pts = [(p.x(), p.y()) for p in shape.points]
+                    mem_by_pts[json.dumps(pts)] = dict(attrs)
+            for sh in data.get("shapes", []):
+                pts_key = json.dumps(sh.get("points", []))
+                if pts_key in mem_by_pts:
+                    sh["attributes"] = mem_by_pts[pts_key]
+            with open(label_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     def save_labels(self, filename):
         label_file = LabelFile()
+        # 保存前用 Qt 真实计算字号，写入 attributes（必须在 shapes 序列化之前）
+        self._compute_shape_font_sizes()
         # Get current shapes
         # Excluding auto labeling special shapes
         shapes = [
@@ -15112,6 +15288,26 @@ class LabelingWidget(QtWidgets.QWidget):
         assert hasattr(self.canvas, key), f"Canvas has no attribute {key}"
         setattr(self.canvas, key, value)
         self.canvas.update()
+
+        # 显示文本 与 显示译文 互斥
+        if key == "show_texts" and value and self._config.get("show_translations"):
+            self._config["show_translations"] = False
+            self.canvas.show_translations = False
+            if hasattr(self, "actions") and hasattr(self.actions, "show_translations"):
+                self.actions.show_translations.setChecked(False)
+        elif key == "show_translations" and value and self._config.get("show_texts"):
+            self._config["show_texts"] = False
+            self.canvas.show_texts = False
+            if hasattr(self, "actions") and hasattr(self.actions, "show_texts"):
+                self.actions.show_texts.setChecked(False)
+
+        # 勾选"显示文本"时计算字号并自动保存
+        if key == "show_texts" and value:
+            self._compute_shape_font_sizes()
+            if self.filename:
+                label_path = osp.splitext(self.filename)[0] + ".json"
+                if osp.exists(label_path):
+                    self._sync_attrs_to_file(label_path)
         if key in ("show_labels", "show_scores", "show_order"):
             dialog = getattr(self, "region_batch_delete_dialog", None)
             if dialog is not None and dialog.isVisible():
@@ -15853,8 +16049,8 @@ class LabelingWidget(QtWidgets.QWidget):
         # code may call setMinimumWidth on docks, which does
         # setMinimumSize(0, minimumSize().height()); if height is -1 (unset),
         # this produces "Negative sizes" warnings.
-        for dock in [self.thumbnail_dock, self.shape_text_dock, self.flag_dock,
-                     self.label_dock, self.shape_dock, self.file_dock,
+        for dock in [self.thumbnail_dock, self.shape_text_dock, self.shape_translation_dock,
+                     self.flag_dock, self.label_dock, self.shape_dock, self.file_dock,
                      self.navigator_dock]:
             dock.setMinimumSize(0, 0)
         try:
@@ -15888,14 +16084,15 @@ class LabelingWidget(QtWidgets.QWidget):
         # removeDockWidget fully removes dock from layout (unlike close() which
         # only hides). This properly clears tab/nested configurations so
         # addDockWidget can place docks in default positions.
-        for dock in [self.shape_text_dock, self.flag_dock, self.label_dock,
-                     self.shape_dock, self.file_dock, self.tools_dock,
+        for dock in [self.shape_text_dock, self.shape_translation_dock, self.flag_dock,
+                     self.label_dock, self.shape_dock, self.file_dock, self.tools_dock,
                      self.thumbnail_dock, self.navigator_dock]:
             self.main_window.removeDockWidget(dock)
 
         self.main_window.addDockWidget(Qt.LeftDockWidgetArea, self.tools_dock)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.thumbnail_dock)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.shape_text_dock)
+        self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.shape_translation_dock)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.flag_dock)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.label_dock)
         self.main_window.addDockWidget(Qt.RightDockWidgetArea, self.shape_dock)
@@ -15904,6 +16101,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.tools_dock.show()
         self.shape_text_dock.show()
+        self.shape_translation_dock.show()
         self.label_dock.show()
         self.shape_dock.show()
         self.file_dock.show()
@@ -15916,9 +16114,9 @@ class LabelingWidget(QtWidgets.QWidget):
         self.tools_dock.raise_()
 
         self.main_window.resizeDocks(
-            [self.tools_dock, self.shape_text_dock, self.flag_dock,
-             self.label_dock, self.shape_dock, self.file_dock],
-            [40, 300, 300, 300, 300, 300],
+            [self.tools_dock, self.shape_text_dock, self.shape_translation_dock,
+             self.flag_dock, self.label_dock, self.shape_dock, self.file_dock],
+            [40, 300, 300, 300, 300, 300, 300],
             Qt.Horizontal,
         )
 
@@ -15946,7 +16144,8 @@ class LabelingWidget(QtWidgets.QWidget):
             )
         # Lock all docks EXCEPT navigator_dock (handled separately below)
         for dock in [self.tools_dock, self.thumbnail_dock, self.shape_text_dock,
-                     self.flag_dock, self.label_dock, self.shape_dock, self.file_dock]:
+                     self.shape_translation_dock, self.flag_dock, self.label_dock,
+                     self.shape_dock, self.file_dock]:
             if dock is self.tools_dock:
                 dock.setFeatures(tools_features)
             else:
@@ -16181,7 +16380,7 @@ class LabelingWidget(QtWidgets.QWidget):
         if QtWidgets.QApplication.mouseButtons() & (Qt.LeftButton | Qt.RightButton):
             return
         THRESHOLD = 8
-        collapsible = [self.shape_text_dock, self.flag_dock, self.label_dock,
+        collapsible = [self.shape_text_dock, self.shape_translation_dock, self.flag_dock, self.label_dock,
                        self.shape_dock, self.file_dock, self.thumbnail_dock]
         for dock in collapsible:
             if not dock.isVisible():
@@ -17492,7 +17691,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # Set image description
         if auto_labeling_result.description:
             description = auto_labeling_result.description
-            self.shape_text_label.setText(self.tr("Image Description"))
+            self.shape_text_label.setText(self.tr("原文"))
             self.shape_text_edit.setPlainText(description)
             self.other_data["description"] = description
             self.shape_text_edit.setDisabled(False)
@@ -17507,8 +17706,21 @@ class LabelingWidget(QtWidgets.QWidget):
         # Mark as dirty but not as manually edited (this is AI inference, not user edit)
         self.set_dirty(mark_as_manually_edited=False)
         
+        # OCR 文本替换
+        for shape in self.canvas.shapes:
+            desc = shape.description
+            if desc:
+                new_desc = self.ocr_replace_dialog.apply(shape.label, str(desc))
+                if new_desc != desc:
+                    shape.description = new_desc
+
         # 更新标签数量显示
         self.update_label_counts()
+
+    def _sync_char_render_rules(self):
+        """字符渲染工具保存后同步规则到画布"""
+        self.canvas.char_render_rules = self.char_render_dialog.get_rules()
+        self.canvas.update()
 
     def clear_auto_labeling_marks(self):
         """Clear auto labeling marks from the current image."""
@@ -17724,39 +17936,58 @@ class LabelingWidget(QtWidgets.QWidget):
             self.other_data["description"] = description
         self.set_dirty()
 
+    def shape_translation_changed(self):
+        translation = self.shape_translation_edit.toPlainText()
+        if self.canvas.current is not None:
+            self.canvas.current.translation = translation
+        elif self.canvas.editing() and len(self.canvas.selected_shapes) == 1:
+            self.canvas.selected_shapes[0].translation = translation
+        self.set_dirty()
+
     def set_text_editing(self, enable):
         """Set text editing."""
         if enable:
             # Enable text editing and set shape text from selected shape
             if len(self.canvas.selected_shapes) == 1:
-                self.shape_text_label.setText(self.tr("Object Description"))
+                shape = self.canvas.selected_shapes[0]
+                self.shape_text_label.setText(self.tr("原文"))
                 self.shape_text_edit.textChanged.disconnect()
-                self.shape_text_edit.setPlainText(
-                    self.canvas.selected_shapes[0].description
-                )
-                self.shape_text_edit.textChanged.connect(
-                    self.shape_text_changed
-                )
+                self.shape_text_edit.setPlainText(shape.description or "")
+                self.shape_text_edit.textChanged.connect(self.shape_text_changed)
+                # 译文
+                translation = getattr(shape, "translation", "")
+                self.shape_translation_edit.textChanged.disconnect()
+                self.shape_translation_edit.setPlainText(translation)
+                self.shape_translation_edit.textChanged.connect(self.shape_translation_changed)
             else:
-                self.shape_text_label.setText(self.tr("Image Description"))
+                self.shape_text_label.setText(self.tr("原文"))
                 self.shape_text_edit.textChanged.disconnect()
                 self.shape_text_edit.setPlainText(
                     self.other_data.get("description", "")
                 )
-                self.shape_text_edit.textChanged.connect(
-                    self.shape_text_changed
-                )
+                self.shape_text_edit.textChanged.connect(self.shape_text_changed)
+                # 未选中或选中多个 shape 时，译文框也清空
+                self.shape_translation_edit.textChanged.disconnect()
+                self.shape_translation_edit.setPlainText("")
+                self.shape_translation_edit.textChanged.connect(self.shape_translation_changed)
             self.shape_text_edit.setDisabled(False)
+            self.shape_translation_edit.setDisabled(False)
         else:
             self.shape_text_edit.setDisabled(True)
+            self.shape_translation_edit.setDisabled(True)
             self.shape_text_label.setText("")
             self.shape_text_edit.textChanged.disconnect()
             self.shape_text_edit.setPlainText("")
             self.shape_text_edit.textChanged.connect(self.shape_text_changed)
+            self.shape_translation_edit.textChanged.disconnect()
+            self.shape_translation_edit.setPlainText("")
+            self.shape_translation_edit.textChanged.connect(self.shape_translation_changed)
         font = QtGui.QFont()
         font.setPointSize(10)
         self.shape_text_edit.setFont(font)
         self.shape_text_label.setFont(font)
+        self.shape_translation_edit.setFont(font)
+        self.shape_translation_label.setFont(font)
 
     def group_selected_shapes(self):
         self.canvas.group_selected_shapes()

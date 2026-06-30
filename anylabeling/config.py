@@ -10,6 +10,14 @@ from anylabeling.views.labeling.logger import logger
 current_config_file = None
 
 
+def _app_dir():
+    """软件根目录（便携免安装，配置写这里而不是C盘）"""
+    return osp.dirname(osp.dirname(osp.abspath(__file__)))
+
+
+USER_CONFIG_FILE = osp.join(_app_dir(), ".YSGxanylabelingrc")
+
+
 def update_dict(target_dict, new_dict, validate_item=None):
     for key, value in new_dict.items():
         if validate_item:
@@ -40,7 +48,7 @@ def _merge_prefer_non_null(target: dict, source: dict) -> dict:
 
 
 def save_config(config):
-    user_config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
+    user_config_file = USER_CONFIG_FILE
     try:
         # Preserve existing non-null user values when saving
         existing = {}
@@ -85,7 +93,7 @@ def save_config(config):
 
 def get_default_config():
     old_cfg_file = osp.join(osp.expanduser("~"), ".anylabelingrc")
-    new_cfg_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
+    new_cfg_file = USER_CONFIG_FILE
     if osp.exists(old_cfg_file) and not osp.exists(new_cfg_file):
         shutil.copyfile(old_cfg_file, new_cfg_file)
 
@@ -93,8 +101,8 @@ def get_default_config():
     with pkg_resources.open_text(anylabeling_configs, config_file) as f:
         config = yaml.safe_load(f)
 
-    # Save default config to ~/.YSGxanylabelingrc
-    if not osp.exists(osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")):
+    # Save default config
+    if not osp.exists(USER_CONFIG_FILE):
         save_config(config)
 
     # Add show_order to the default config
@@ -142,7 +150,7 @@ def get_config(
             )
 
     # 3. Load user's config file and merge it.
-    user_config_file = osp.join(osp.expanduser("~"), ".YSGxanylabelingrc")
+    user_config_file = USER_CONFIG_FILE
     # Do not load the global config if a custom config file was provided
     is_custom_config = (
         config_file_or_yaml and

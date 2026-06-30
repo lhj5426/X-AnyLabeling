@@ -148,18 +148,16 @@ def convert_manga_translator_to_anylabel(mt_json_path, output_folder=None, text_
                 # 获取这一行的原文
                 source_text = texts[i] if i < len(texts) else ''
                 
-                # 根据 text_mode 构建 description
+                # 根据 text_mode 构建 description / translation
                 if text_mode == 'source':
                     description = source_text
+                    translation = ''
                 elif text_mode == 'target':
-                    description = full_target if i == 0 else ''
+                    description = source_text
+                    translation = full_target if i == 0 else ''
                 else:  # text_mode == 'both'
-                    if i == 0 and full_source and full_target:
-                        description = f"{full_source}/{full_target}"
-                    elif i == 0 and full_target:
-                        description = f"{source_text}/{full_target}"
-                    else:
-                        description = source_text
+                    description = source_text
+                    translation = full_target if i == 0 else ''
                 
                 # line 是四个角点，直接使用原始坐标
                 points = [[p[0], p[1]] for p in line]
@@ -170,6 +168,7 @@ def convert_manga_translator_to_anylabel(mt_json_path, output_folder=None, text_
                     "points": points,
                     "group_id": current_group_id,  # 同一 region 的框用相同 group_id
                     "description": description,
+                    "translation": translation,
                     "difficult": False,
                     "shape_type": "rectangle",
                     "flags": {},
@@ -370,16 +369,12 @@ def convert_anylabel_to_manga_translator(anylabel_json_path, output_folder=None,
         
         # 先从第一个框获取完整原文和译文
         first_desc = first_shape.get('description', '') or ''
-        if text_mode == 'both' and '/' in first_desc:
-            parts = first_desc.split('/', 1)
-            full_source = parts[0]
-            full_target = parts[1] if len(parts) > 1 else ''
-        elif text_mode == 'source':
-            full_source = first_desc
+        full_source = first_desc
+        full_target = first_shape.get('translation', '') or ''
+        if text_mode == 'source':
+            full_target = ''
         elif text_mode == 'target':
-            full_target = first_desc
-        else:
-            full_source = first_desc
+            full_source = ''
         
         for i, shape in enumerate(group):
             points = shape.get('points', [])
@@ -387,12 +382,9 @@ def convert_anylabel_to_manga_translator(anylabel_json_path, output_folder=None,
             
             description = shape.get('description', '') or ''
             
-            # 每行的原文：如果有 / 就取前面部分，否则取整个
+            # 每行的原文：直接取 description
             if description:
-                if '/' in description:
-                    texts.append(description.split('/')[0])
-                else:
-                    texts.append(description)
+                texts.append(description)
             else:
                 texts.append('')
         
@@ -433,19 +425,12 @@ def convert_anylabel_to_manga_translator(anylabel_json_path, output_folder=None,
         points = shape.get('points', [])
         description = shape.get('description', '') or ''
         
-        source_text = ''
-        target_text = ''
+        source_text = description
+        target_text = shape.get('translation', '') or ''
         if text_mode == 'source':
-            source_text = description
+            target_text = ''
         elif text_mode == 'target':
-            target_text = description
-        else:
-            if '/' in description:
-                parts = description.split('/', 1)
-                source_text = parts[0]
-                target_text = parts[1] if len(parts) > 1 else ''
-            else:
-                source_text = description
+            source_text = ''
         
         label = shape.get('label', '')
         if 'text_v' in label.lower():
@@ -558,20 +543,70 @@ def convert_itp_to_anylabel(itp_json_path, text_mode='both'):
             
             if text_mode == 'source':
                 description = source_text
+                translation = ''
             elif text_mode == 'target':
-                description = target_text
+                description = target_text if target_text else source_text
+                translation = ''
             else:  # text_mode == 'both'
-                if source_text and target_text:
-                    description = f"{source_text}/{target_text}"
-                elif source_text:
-                    description = source_text
-                elif target_text:
-                    description = target_text
-                else:
-                    description = ""
+                description = source_text
+                translation = target_text
             
             label = box.get("fontstyle", "unknown")
             degree = box.get("degree", 0)
+
+            # 读取颜色属性：localStyle.fontcolor → fg
+            attrs = {}
+            local_style = box.get("localStyle", None)
+            if local_style and isinstance(local_style, dict):
+                fontcolor_str = local_style.get("fontcolor", "")
+            else:
+                fontcolor_str = ""
+            if fontcolor_str and isinstance(fontcolor_str, str):
+                parts = [c.strip() for c in fontcolor_str.split(",")]
+                if len(parts) >= 3:
+                    try:
+                        fg = [int(p) for p in parts[:3]]
+                        attrs["fg"] = fg
+                    except (TypeError, ValueError):
+                        pass
+
+            # 字号：suitableSize → estimated_font_size
+            suitable_size = box.get("suitableSize", None)
+            if suitable_size is not None:
+                try:
+                    attrs["estimated_font_size"] = int(suitable_size)
+                except (TypeError, ValueError):
+                    pass
+
+            # 背景色：bgColor → bg
+            bg_color_str = box.get("bgColor", "")
+            if bg_color_str and isinstance(bg_color_str, str):
+                parts = [c.strip() for c in bg_color_str.split(",")]
+                if len(parts) >= 3:
+                    try:
+                        bg = [int(p) for p in parts[:3]]
+                        attrs["bg"] = bg
+                    except (TypeError, ValueError):
+                        pass
+
+            # 描边颜色：shadowColor → shadow_color
+            shadow_color_str = box.get("shadowColor", "")
+            if shadow_color_str and isinstance(shadow_color_str, str):
+                parts = [c.strip() for c in shadow_color_str.split(",")]
+                if len(parts) >= 3:
+                    try:
+                        sc = [int(p) for p in parts[:3]]
+                        attrs["shadow_color"] = sc
+                    except (TypeError, ValueError):
+                        pass
+
+            # 描边粗细：shadowRadius → shadow_radius
+            shadow_radius = box.get("shadowRadius", None)
+            if shadow_radius is not None:
+                try:
+                    attrs["shadow_radius"] = int(shadow_radius)
+                except (TypeError, ValueError):
+                    pass
 
             shape_type = "rectangle"
             points = []
@@ -617,10 +652,11 @@ def convert_itp_to_anylabel(itp_json_path, text_mode='both'):
                 "points": points,
                 "group_id": None,
                 "description": description,
+                "translation": translation,
                 "difficult": False,
                 "shape_type": shape_type,
                 "flags": {},
-                "attributes": {},
+                "attributes": attrs,
                 "kie_linking": []
             }
             if shape_type == "rotation":

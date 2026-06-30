@@ -312,6 +312,7 @@ class ExportMTUJsonThread(QThread):
             pts = pts[:4]
         label = str(shape.get("label", "") or "")
         text = str(shape.get("description", "") or "")
+        translation = str(shape.get("translation", "") or "")
         xa_direction = shape.get("direction", None)
         try:
             xa_direction = (
@@ -319,13 +320,31 @@ class ExportMTUJsonThread(QThread):
             )
         except Exception:
             xa_direction = None
+
+        # 读取颜色和字号
+        attrs = shape.get("attributes", {}) or {}
+        fg_color = attrs.get("fg", None)
+        bg_color = attrs.get("bg", None)
+        font_size_raw = attrs.get("estimated_font_size", None)
+        fg_colors = [int(c) for c in fg_color[:3]] if isinstance(fg_color, (list, tuple)) and len(fg_color) >= 3 else [0, 0, 0]
+        bg_colors = [int(c) for c in bg_color[:3]] if isinstance(bg_color, (list, tuple)) and len(bg_color) >= 3 else [255, 255, 255]
+        try:
+            font_size = int(font_size_raw) if font_size_raw is not None else 20
+        except (TypeError, ValueError):
+            font_size = 20
+
+        # 方向：竖排标签为 v，其他为 h
+        direction = "v" if label in ("balloon", "qipao", "shuqing") else "h"
+
         return {
             "pts": pts,
             "text": text,
+            "translation": translation,
             "prob": 1.0,
-            "fg_colors": [0, 0, 0],
-            "bg_colors": [255, 255, 255],
-            "direction": "v",
+            "fg_colors": fg_colors,
+            "bg_colors": bg_colors,
+            "font_size": font_size,
+            "direction": direction,
             "assigned_direction": None,
             "is_yolo_box": False,
             "imported_yolo_box": False,
@@ -367,20 +386,21 @@ class ExportMTUJsonThread(QThread):
             while angle <= -90.0:
                 angle += 180.0
         single_text = str(textline.get("text", "") or "")
+        translation = str(textline.get("translation", "") or "")
         return {
             "lines": [pts],
             "center": [float(cx), float(cy)],
             "texts": [single_text],
             "text": single_text,
-            "translation": "",
-            "font_size": 20,
+            "translation": translation,
+            "font_size": textline.get("font_size", 20),
             "angle": angle,
             "fg_colors": textline.get("fg_colors", [0, 0, 0]),
             "bg_colors": textline.get("bg_colors", [255, 255, 255]),
-            "direction": "v",
+            "direction": textline.get("direction", "v"),
             "alignment": "center",
-            "target_lang": "",
-            "source_lang": "",
+            "target_lang": "CHS",
+            "source_lang": "ja",
             "prob": float(textline.get("prob", 1.0) or 1.0),
             "line_spacing": 1.0,
             "letter_spacing": 1.0,
@@ -2824,7 +2844,7 @@ def export_ballontranslator_annotation(self):
     if not save_path:
         return
 
-    # 5. Proceed with export
+    # Proceed with export
     image_list = self.image_list if self.image_list else [self.filename]
     label_dir_path = osp.dirname(self.filename)
     if self.output_dir:
@@ -3411,25 +3431,15 @@ def export_description_txt(self):
     skipped_count = 0
     all_descriptions = []  # 用于单文件模式
 
-    def process_description(description, text_mode):
-        """根据文本模式处理description"""
+    def process_description(description, translation, text_mode):
+        """根据文本模式处理description和translation"""
         if text_mode == 'source':
-            # 只取 / 前的内容
-            if '/' in description:
-                return description.split('/', 1)[0].strip()
             return description
         elif text_mode == 'target':
-            # 只取 / 后的内容
-            if '/' in description:
-                parts = description.split('/', 1)
-                return parts[1].strip() if len(parts) > 1 else ''
-            return ''
+            return translation or ''
         # text_mode == 'all' 时，原文和译文用TAB分隔
-        if '/' in description:
-            parts = description.split('/', 1)
-            source_text = parts[0].strip()
-            target_text = parts[1].strip() if len(parts) > 1 else ''
-            return f"{source_text}\t{target_text}"
+        if translation:
+            return f"{description}\t{translation}"
         return description
 
     try:
@@ -3461,12 +3471,13 @@ def export_description_txt(self):
             descriptions = []
             for shape in data.get('shapes', []):
                 description = shape.get('description', '')
+                translation = shape.get('translation', '')
                 
-                if skip_empty and not description.strip():
+                if skip_empty and not description.strip() and not (translation or '').strip():
                     continue
                 
                 # 根据文本模式处理
-                description = process_description(description, text_mode)
+                description = process_description(description, translation, text_mode)
                 
                 if description or not skip_empty:
                     descriptions.append(description)

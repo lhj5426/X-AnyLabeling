@@ -13,6 +13,7 @@ auto_highlight_shape: true
 auto_switch_to_edit_mode: true
 show_groups: false
 show_texts: true
+show_translations: false
 show_labels: true
 show_scores: true
 show_degrees: false
