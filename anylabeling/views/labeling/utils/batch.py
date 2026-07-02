@@ -174,6 +174,7 @@ def finish_processing(self, progress_dialog):
 
     del self.text_prompt
     del self.run_tracker
+    del self.run_split_boxes
     del self.image_index
     del self.current_index
 
@@ -370,6 +371,119 @@ def _predict_with_existing_boxes(self, image_file):
     return True
 
 
+def _predict_split_boxes(self, image_file, keep_original=True):
+    """使用 DBNet 检测拆分已有大框为文本行小框，直接修改 JSON 文件"""
+    import json, os, cv2, numpy as np
+
+    label_file = os.path.splitext(image_file)[0] + ".json"
+    if not os.path.exists(label_file):
+        return False
+
+    try:
+        with open(label_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+
+    shapes = data.get("shapes", [])
+    if not shapes:
+        return False
+
+    # 读取过滤标签
+    filter_classes = self.auto_labeling_widget.model_manager.loaded_model_config.get(
+        "filter_classes", None
+    )
+
+    # 提取框坐标和标签（记录原下标）
+    boxes = []
+    labels = []
+    box_indices = []
+    for i, s in enumerate(shapes):
+        if filter_classes is not None and s.get("label") not in filter_classes:
+            continue
+        pts = s.get("points", [])
+        if len(pts) == 4:
+            boxes.append([[int(p[0]), int(p[1])] for p in pts])
+            labels.append(s.get("label", "OCR"))
+            box_indices.append(i)
+
+    if not boxes:
+        return False
+
+    img = cv2.imdecode(np.fromfile(image_file, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return False
+
+    model = self.auto_labeling_widget.model_manager.loaded_model_config.get("model")
+    if not model or not hasattr(model, "predict_shapes_split_boxes"):
+        return False
+
+    result, box_mapping, timing = model.predict_shapes_split_boxes(
+        img, boxes, labels, image_file, keep_original=keep_original
+    )
+    if result is None or not box_mapping:
+        return False
+
+    # 按 box_mapping 把新 shapes 对应回原始框
+    new_shapes_all = []
+    idx = 0
+    split_orig_indices = set()  # 被拆分的原框下标（sub_count > 0）
+    for orig_idx, sub_count in box_mapping:
+        if orig_idx >= len(box_indices):
+            idx += sub_count
+            continue
+        if sub_count > 0:
+            split_orig_indices.add(box_indices[orig_idx])
+        for j in range(sub_count):
+            if idx + j < len(result.shapes):
+                new_shape = result.shapes[idx + j]
+                # OCR 文本替换
+                desc = new_shape.description
+                if desc and hasattr(self, 'ocr_replace_dialog'):
+                    new_desc = self.ocr_replace_dialog.apply(
+                        new_shape.label, str(desc)
+                    )
+                    if new_desc != desc:
+                        new_shape.description = new_desc
+                new_shapes_all.append(new_shape.to_dict())
+        idx += sub_count
+
+    # 保留原框：keep_original=True 时保留所有原框；
+    # keep_original=False 时只保留未被拆分的原框（sub_count == 0）
+    kept_shapes = []
+    for i, s in enumerate(shapes):
+        if i not in split_orig_indices or keep_original:
+            kept_shapes.append(s)
+
+    data["shapes"] = kept_shapes + new_shapes_all
+    data["manually_edited"] = False
+
+    # 打印日志
+    import time, sys
+    from collections import defaultdict
+    t_total = time.time()
+    timing_str = f"[框拆分耗时] 读图={timing.get('读图',0):.3f}s  拆分={timing.get('拆分',0):.3f}s  总={timing.get('总',0):.3f}s" if timing else ""
+    grouped = defaultdict(list)
+    for new_s in new_shapes_all:
+        grouped[new_s.get("label", "")].append(new_s)
+    fname = os.path.basename(image_file)
+    print(f"\n[批量框拆分] {fname}  {len(box_indices)}个框 → 新增{len(new_shapes_all)}个小框  {timing_str}")
+    for label, items in sorted(grouped.items()):
+        print(f"标签:{label}  ({len(items)}个小框)")
+    sys.stdout.flush()
+
+    # 处理 output_dir
+    if self.output_dir:
+        output_label_file = osp.join(self.output_dir, osp.basename(label_file))
+    else:
+        output_label_file = label_file
+
+    with open(output_label_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    return True
+
+
 def save_auto_labeling_result(self, image_file, auto_labeling_result):
     try:
         label_file = osp.splitext(image_file)[0] + ".json"
@@ -475,23 +589,36 @@ def process_next_image(self, progress_dialog):
                     )
                 )
             else:
-                # 批量仅检测（最高优先，覆盖颜色模式）
+                # 仅检测模式（下拉菜单：_ocr_mode_current == "detect_only"）
                 detect_only = (
-                    hasattr(self.auto_labeling_widget, 'toggle_batch_detect_only')
-                    and self.auto_labeling_widget.toggle_batch_detect_only.isChecked()
+                    hasattr(self.auto_labeling_widget, '_ocr_mode_current')
+                    and self.auto_labeling_widget._ocr_mode_current == "detect_only"
                 )
 
-                # OCR/颜色切换（仅在非仅检测模式下生效）
-                has_color_toggle = hasattr(self.auto_labeling_widget, 'toggle_color_mode')
-                in_color_mode = has_color_toggle and self.auto_labeling_widget.toggle_color_mode.isChecked()
-
-                # 使用已有框
+                # 使用已有框（按钮菜单模式：_ocr_mode_current == "existing_ocr"）
                 use_existing = (
-                    hasattr(self.auto_labeling_widget, 'toggle_use_existing_boxes')
-                    and self.auto_labeling_widget.toggle_use_existing_boxes.isChecked()
+                    hasattr(self.auto_labeling_widget, '_ocr_mode_current')
+                    and self.auto_labeling_widget._ocr_mode_current == "existing_ocr"
                 )
 
-                if detect_only:
+                # 仅检测颜色（下拉菜单：_ocr_mode_current == "text_color"）
+                text_color = (
+                    hasattr(self.auto_labeling_widget, '_ocr_mode_current')
+                    and self.auto_labeling_widget._ocr_mode_current == "text_color"
+                )
+
+                # 拆分大框（按钮菜单模式：_ocr_mode_current == "split_boxes"）
+                split_boxes = getattr(self, 'run_split_boxes', False)
+
+                if split_boxes:
+                    # 拆分大框：使用 DBNet 检测框内文本行并拆分为小框
+                    keep_original = getattr(
+                        self.auto_labeling_widget, 'toggle_keep_original_boxes', None
+                    )
+                    keep = keep_original.isChecked() if keep_original is not None else True
+                    _predict_split_boxes(self, image_file, keep_original=keep)
+                    auto_labeling_result = None
+                elif detect_only:
                     # 仅检测：只跑检测器画框（覆盖一切）
                     model = self.auto_labeling_widget.model_manager.loaded_model_config["model"]
                     if hasattr(model, "predict_shapes_detect_only"):
@@ -504,8 +631,8 @@ def process_next_image(self, progress_dialog):
                                 self.image, image_file, batch=batch
                             )
                         )
-                elif in_color_mode:
-                    # 颜色模式：仅提取颜色（已有框，不检测不OCR）
+                elif text_color:
+                    # 仅检测颜色：读取已有 JSON 框 → 提取颜色（支持标签过滤）
                     _predict_color_mode(self, image_file)
                     auto_labeling_result = None
                 elif use_existing:
@@ -672,11 +799,26 @@ def run_all_images(self):
     start_num = current_index + 1  # 显示用的起始页码(从1开始)
     end_num = len(self.image_list)  # 显示用的结束页码
     total_to_process = end_num - current_index  # 要处理的图片数量
-    
+
+    # 根据下拉菜单显示当前模式
+    ocr_mode = getattr(
+        self.auto_labeling_widget, '_ocr_mode_current', 'detect_ocr'
+    )
+    mode_text = {
+        'detect_ocr': '检测+OCR',
+        'detect_only': '仅检测',
+        'existing_ocr': '已有框OCR',
+        'split_boxes': '拆分大框',
+        'text_color': '仅检测颜色',
+    }.get(ocr_mode, '检测+OCR')
+
     response = QtWidgets.QMessageBox()
     response.setIcon(QtWidgets.QMessageBox.Warning)
     response.setWindowTitle("确认")
-    response.setText(f"是否要处理第 {start_num}-{end_num} 张图片?\n(共 {total_to_process} 张)")
+    response.setText(
+        f"当前模式: {mode_text}\n"
+        f"是否要处理第 {start_num}-{end_num} 张图片?\n(共 {total_to_process} 张)"
+    )
     ok_button = response.addButton("确定", QtWidgets.QMessageBox.AcceptRole)
     response.addButton("取消", QtWidgets.QMessageBox.RejectRole)
     response.setStyleSheet(get_msg_box_style())
@@ -687,10 +829,31 @@ def run_all_images(self):
 
     logger.info("Start running all images...")
 
+    # 检查下拉菜单模式
+    ocr_mode = getattr(
+        self.auto_labeling_widget, '_ocr_mode_current', 'detect_ocr'
+    )
+
+    if ocr_mode == "split_boxes":
+        # 批量拆分大框模式：走批量处理流程，由 process_next_image 处理
+        self.current_index = self.fn_to_index[str(self.filename)]
+        self.image_index = self.current_index
+        self.run_split_boxes = True
+        show_progress_dialog_and_process(self)
+        return
+
+    if ocr_mode == "text_color":
+        # 批量仅检测颜色模式：直接走批量处理
+        self.current_index = self.fn_to_index[str(self.filename)]
+        self.image_index = self.current_index
+        show_progress_dialog_and_process(self)
+        return
+
     self.current_index = self.fn_to_index[str(self.filename)]
     self.image_index = self.current_index
     self.text_prompt = ""
     self.run_tracker = False
+    self.run_split_boxes = False
 
     if (
         self.auto_labeling_widget.model_manager.loaded_model_config["type"]

@@ -20,7 +20,7 @@ COL_CASE = 4
 
 SWATCH_SIZE = 12
 _BASE = osp.dirname(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__)))))
-OCR_REPLACE_CONFIG = osp.join(_BASE, ".ocr_text_replace.json")
+OCR_REPLACE_CONFIG = osp.join(_BASE, "ocr_text_replace.json")
 
 
 class OCRReplaceFilterProxy(QSortFilterProxyModel):

@@ -30,7 +30,7 @@ class PPOCRv6(PPOCRv4):
             "rec_model_path",
             "rec_char_dict_path",
         ]
-        widgets = ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes", "button_detect_only", "toggle_preserve_existing_annotations", "toggle_rotation", "toggle_filter_non_rotated", "toggle_batch_detect_only"]
+        widgets = ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes", "toggle_preserve_existing_annotations", "toggle_rotation", "toggle_filter_non_rotated", "input_conf", "edit_conf"]
         output_modes = PPOCRv4.Meta.output_modes
         default_output_mode = PPOCRv4.Meta.default_output_mode
 
@@ -529,6 +529,30 @@ class PPOCRv6(PPOCRv4):
             "总": t_rec - t0,
         }
         return AutoLabelingResult(shapes, replace=False), timing
+
+    def set_auto_labeling_conf(self, value):
+        """动态设置 OCR 置信度阈值 (drop_score)"""
+        self.drop_score = value
+        if hasattr(self, 'text_system') and hasattr(self.text_system, 'text_recognizer'):
+            self.text_system.text_recognizer.drop_score = value
+
+    def set_det_db_thresh(self, value):
+        """动态设置检测二值化阈值"""
+        self.config["det_db_thresh"] = value
+        if hasattr(self, 'text_system') and hasattr(self.text_system, 'text_detector'):
+            detector = self.text_system.text_detector
+            detector.args.det_db_thresh = value
+            if hasattr(detector, 'postprocess_op'):
+                detector.postprocess_op.thresh = value
+
+    def set_det_db_box_thresh(self, value):
+        """动态设置检测框阈值"""
+        self.config["det_db_box_thresh"] = value
+        if hasattr(self, 'text_system') and hasattr(self.text_system, 'text_detector'):
+            detector = self.text_system.text_detector
+            detector.args.det_db_box_thresh = value
+            if hasattr(detector, 'postprocess_op'):
+                detector.postprocess_op.box_thresh = value
 
     def unload(self):
         del self.text_system

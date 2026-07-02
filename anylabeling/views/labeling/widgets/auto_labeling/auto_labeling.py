@@ -8,6 +8,8 @@ from PyQt5.QtCore import pyqtSignal, pyqtSlot, QPoint, QTimer, Qt
 from PyQt5.QtWidgets import (
     QDialog,
     QFileDialog,
+    QPushButton,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -151,7 +153,7 @@ class AutoLabelingWidget(QWidget):
         # --- Configuration for: button_recog_selected ---
         self.button_recog_selected.setStyleSheet(get_highlight_button_style())
         self.button_recog_selected.clicked.connect(
-            self.run_recognition_on_selected
+            self.run_recognition_on_selected_with_mode
         )
         # 跨线程安全：子线程完成 OCR 后通过信号更新 UI
         self.recog_selected_finished.connect(
@@ -161,24 +163,93 @@ class AutoLabelingWidget(QWidget):
         # --- Configuration for: button_recog_all ---
         self.button_recog_all.setStyleSheet(get_highlight_button_style())
         self.button_recog_all.clicked.connect(
-            self.run_recognition_on_all
+            self.run_recognition_on_all_with_mode
         )
 
-        # --- Configuration for: toggle_use_existing_boxes ---
-        self.toggle_use_existing_boxes.setCheckable(True)
-        self.toggle_use_existing_boxes.setChecked(False)
+        # --- Configuration for: toggle_use_existing_boxes (按钮样式下拉菜单) ---
         self.toggle_use_existing_boxes.setStyleSheet(
             self._get_replace_button_style("#d9534f", "#c9302c")
         )
-        self.toggle_use_existing_boxes.toggled.connect(
-            self._on_toggle_use_existing_boxes
-        )
+        # 创建自定义弹出面板（QWidget，不是 QMenu）
+        self._ocr_mode_popup = QWidget(self)
+        self._ocr_mode_popup.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.Popup)
+        self._ocr_mode_popup.setStyleSheet("""
+            QWidget {
+                background-color: #f8f9fa;
+                border: 1px solid #d2d2d7;
+                border-radius: 8px;
+            }
+        """)
+        popup_layout = QVBoxLayout(self._ocr_mode_popup)
+        popup_layout.setContentsMargins(4, 4, 4, 4)
+        popup_layout.setSpacing(4)
 
-        # --- Configuration for: button_detect_only ---
-        self.button_detect_only.setStyleSheet(
+        # 检测+OCR 按钮（红色）
+        self._btn_popup_detect_ocr = QPushButton("检测+OCR")
+        self._btn_popup_detect_ocr.setStyleSheet(
+            self._get_replace_button_style("#d9534f", "#c9302c")
+        )
+        self._btn_popup_detect_ocr.clicked.connect(
+            lambda: self._on_ocr_mode_selected("检测+OCR", "#d9534f", "#c9302c")
+        )
+        popup_layout.addWidget(self._btn_popup_detect_ocr)
+
+        # 已有框OCR 按钮（绿色）
+        self._btn_popup_existing_ocr = QPushButton("已有框OCR")
+        self._btn_popup_existing_ocr.setStyleSheet(
+            self._get_replace_button_style("#5cb85c", "#4cae4c")
+        )
+        self._btn_popup_existing_ocr.clicked.connect(
+            lambda: self._on_ocr_mode_selected("已有框OCR", "#5cb85c", "#4cae4c")
+        )
+        popup_layout.addWidget(self._btn_popup_existing_ocr)
+
+        # 仅检测 按钮（橙色）
+        self._btn_popup_detect_only = QPushButton("仅检测")
+        self._btn_popup_detect_only.setStyleSheet(
             self._get_replace_button_style("#f0ad4e", "#ec971f")
         )
-        self.button_detect_only.clicked.connect(self.run_detect_only)
+        self._btn_popup_detect_only.clicked.connect(
+            lambda: self._on_ocr_mode_selected("仅检测", "#f0ad4e", "#ec971f")
+        )
+        popup_layout.addWidget(self._btn_popup_detect_only)
+
+        # 拆分大框 按钮（青色）
+        self._btn_popup_split_boxes = QPushButton("拆分大框")
+        self._btn_popup_split_boxes.setStyleSheet(
+            self._get_replace_button_style("#17a2b8", "#138496")
+        )
+        self._btn_popup_split_boxes.clicked.connect(
+            lambda: self._on_ocr_mode_selected("拆分大框", "#17a2b8", "#138496")
+        )
+        popup_layout.addWidget(self._btn_popup_split_boxes)
+
+        # 仅检测颜色 按钮（紫色，仅 Manga-OCR 显示）
+        self._btn_popup_text_color = QPushButton("仅检测颜色")
+        self._btn_popup_text_color.setStyleSheet(
+            self._get_replace_button_style("#8a2be2", "#6b1fa8")
+        )
+        self._btn_popup_text_color.clicked.connect(
+            lambda: self._on_ocr_mode_selected("仅检测颜色", "#8a2be2", "#6b1fa8")
+        )
+        self._btn_popup_text_color.setVisible(False)
+        popup_layout.addWidget(self._btn_popup_text_color)
+
+        self.toggle_use_existing_boxes.clicked.connect(self._show_ocr_mode_popup)
+        self._ocr_mode_current = "detect_ocr"  # 当前模式
+
+        # --- Configuration for: toggle_keep_original_boxes ---
+        self.toggle_keep_original_boxes.setCheckable(True)
+        self.toggle_keep_original_boxes.setChecked(True)
+        self.toggle_keep_original_boxes.setStyleSheet(
+            self._get_replace_button_style("#5cb85c", "#4cae4c")
+        )
+        self.toggle_keep_original_boxes.setText(self.tr("保留原框开"))
+        self.toggle_keep_original_boxes.clicked.connect(
+            self._on_toggle_keep_original_boxes
+        )
+        # 只在拆分大框模式显示
+        self.toggle_keep_original_boxes.setVisible(False)
 
         # --- Configuration for: button_color_only ---
         self.button_color_only.setStyleSheet(
@@ -223,6 +294,14 @@ class AutoLabelingWidget(QWidget):
         # --- Configuration for: edit_iou ---
         self.edit_iou.setStyleSheet(get_double_spinbox_style())
         self.edit_iou.valueChanged.connect(self.on_iou_value_changed)
+
+        # --- Configuration for: edit_det_thresh ---
+        self.edit_det_thresh.setStyleSheet(get_double_spinbox_style())
+        self.edit_det_thresh.valueChanged.connect(self.on_det_thresh_value_changed)
+
+        # --- Configuration for: edit_det_box_thresh ---
+        self.edit_det_box_thresh.setStyleSheet(get_double_spinbox_style())
+        self.edit_det_box_thresh.valueChanged.connect(self.on_det_box_thresh_value_changed)
 
         # --- Configuration for: edit_text ---
         self.edit_text.setStyleSheet(get_lineedit_style())
@@ -344,17 +423,6 @@ class AutoLabelingWidget(QWidget):
         )
         self.toggle_filter_non_rotated.toggled.connect(
             self.on_filter_non_rotated_state_changed
-        )
-
-        # --- Configuration for: toggle_batch_detect_only ---
-        self.toggle_batch_detect_only.setChecked(False)
-        self.toggle_batch_detect_only.setCheckable(True)
-        self.toggle_batch_detect_only.setStyleSheet(
-            self._get_replace_button_style("#e67e22", "#d35400")
-        )
-        self.toggle_batch_detect_only.setText(self.tr("批量仅检测关"))
-        self.toggle_batch_detect_only.clicked.connect(
-            self._update_batch_detect_only_state
         )
 
         # --- Configuration for: toggle_color_mode ---
@@ -712,6 +780,220 @@ class AutoLabelingWidget(QWidget):
                 text_prompt=self.edit_text.text(),
             )
 
+    def run_recognition_on_selected_with_mode(self):
+        """识别选中框 — 根据下拉菜单选择执行不同功能"""
+        if self.parent.filename is None:
+            return
+        mode = self._ocr_mode_current
+        if mode == "detect_ocr":
+            # 检测+OCR 对选中框 = 已有框OCR（框已存在）
+            self.run_recognition_on_selected()
+        elif mode == "detect_only":
+            # 仅检测 对选中框 = 提示不支持（检测是全图操作）
+            self.model_manager.new_model_status.emit(
+                self.tr("仅检测模式请使用识别全图框按钮")
+            )
+        elif mode == "existing_ocr":
+            self.run_recognition_on_selected()
+        elif mode == "split_boxes":
+            # 拆分大框 对选中框：使用 DBNet 检测框内文本行并拆分为小框
+            self.run_split_boxes_on_selected()
+        elif mode == "text_color":
+            # 仅检测颜色 对选中框：已有框颜色提取（不 OCR）
+            self.run_recog_color()
+        else:
+            self.run_recognition_on_selected()
+
+    def run_recognition_on_all_with_mode(self):
+        """识别全图框 — 根据下拉菜单选择执行不同功能"""
+        if self.parent.filename is None:
+            return
+        mode = self._ocr_mode_current
+        if mode == "detect_ocr":
+            self.run_prediction()
+        elif mode == "detect_only":
+            self.run_detect_only()
+        elif mode == "existing_ocr":
+            self.run_recognition_on_all()
+        elif mode == "split_boxes":
+            # 拆分大框 全图：使用 DBNet 检测所有已有框内的文本行并拆分
+            self.run_split_boxes_on_all()
+        elif mode == "text_color":
+            # 仅检测颜色 全图：对画布上已有框提取颜色（支持标签过滤）
+            self.run_recog_color()
+        else:
+            self.run_prediction()
+
+    def _prepare_split_box_infos(self, shapes):
+        """把 shape 列表转成 (shape, pts, label) 三元组，过滤掉非矩形/旋转框"""
+        box_infos = []
+        for shape in shapes:
+            if shape.shape_type not in ("rectangle", "rotation"):
+                continue
+            pts = [[int(p.x()), int(p.y())] for p in shape.points]
+            if len(pts) < 4:
+                continue
+            box_infos.append((shape, pts, shape.label))
+        return box_infos
+
+    def _apply_split_results(self, box_infos, result, box_mapping, keep_original=True):
+        """把 DBNet 拆分结果写回画布
+
+        Args:
+            box_infos: [(shape, pts, label), ...]
+            result: AutoLabelingResult，包含拆分后的新 shapes
+            box_mapping: [(orig_idx, sub_count), ...]
+            keep_original: True=保留原框；False=删除原框
+        """
+        if not result.shapes or not box_mapping:
+            return 0
+
+        # 建立原 shape -> 新 shapes 的映射
+        new_shapes_by_orig = {}
+        idx = 0
+        for orig_idx, sub_count in box_mapping:
+            if orig_idx >= len(box_infos):
+                idx += sub_count
+                continue
+            orig_shape = box_infos[orig_idx][0]
+            new_shapes_by_orig[orig_shape] = result.shapes[idx : idx + sub_count]
+            idx += sub_count
+
+        canvas = self.parent.canvas
+        # 如果不保留原框，删除被拆分的原框
+        if not keep_original:
+            for orig_shape in new_shapes_by_orig:
+                if orig_shape in canvas.shapes:
+                    canvas.shapes.remove(orig_shape)
+
+        # 添加新框
+        added = 0
+        for orig_shape, new_shapes in new_shapes_by_orig.items():
+            for new_shape in new_shapes:
+                # OCR 文本替换
+                desc = new_shape.description
+                if desc:
+                    new_desc = self.parent.ocr_replace_dialog.apply(
+                        new_shape.label, str(desc)
+                    )
+                    if new_desc != desc:
+                        new_shape.description = new_desc
+                canvas.shapes.append(new_shape)
+                added += 1
+
+        if added > 0:
+            canvas.update()
+            self.parent.load_shapes(canvas.shapes, replace=True)
+            self.parent.save_file()
+            self.parent.set_dirty(mark_as_manually_edited=False)
+        return added
+
+    def run_split_boxes_on_selected(self):
+        """使用 DBNet 检测拆分选中的大框为文本行小框"""
+        if self.parent.filename is None:
+            return
+
+        model = self.model_manager.loaded_model_config.get("model")
+        if not hasattr(model, "predict_shapes_split_boxes"):
+            self.model_manager.new_model_status.emit(
+                self.tr("当前模型不支持大框拆分")
+            )
+            return
+
+        selected = self.parent.canvas.selected_shapes
+        box_infos = self._prepare_split_box_infos(selected)
+        if not box_infos:
+            self.model_manager.new_model_status.emit(
+                self.tr("请先选中要拆分的矩形/旋转框")
+            )
+            return
+
+        self.model_manager.new_model_status.emit(
+            self.tr(f"正在拆分 {len(box_infos)} 个选中框...")
+        )
+
+        def _do_split():
+            import time
+            t0 = time.time()
+            boxes = [bi[1] for bi in box_infos]
+            labels = [bi[2] for bi in box_infos]
+            keep_original = self.toggle_keep_original_boxes.isChecked()
+            result, box_mapping, timing = model.predict_shapes_split_boxes(
+                self.parent.image, boxes, labels, self.parent.filename,
+                keep_original=keep_original
+            )
+            added = self._apply_split_results(
+                box_infos, result, box_mapping, keep_original=keep_original
+            )
+            timing_str = f"[框拆分耗时] 读图={timing.get('读图',0):.3f}s  拆分={timing.get('拆分',0):.3f}s  总={timing.get('总',0):.3f}s" if timing else f"耗时={time.time()-t0:.3f}s"
+            fname = os.path.basename(self.parent.filename) if self.parent.filename else "image"
+            print(f"\n[选中框拆分] {fname}  {len(box_infos)}个框 → 新增{added}个小框  保留原框={keep_original}  {timing_str}")
+            sys.stdout.flush()
+            self.model_manager.new_model_status.emit(
+                self.tr(f"选中框拆分完成，新增 {added} 个小框")
+            )
+
+        QTimer.singleShot(0, _do_split)
+
+    def run_split_boxes_on_all(self):
+        """使用 DBNet 检测拆分全图所有已有框为文本行小框"""
+        if self.parent.filename is None:
+            return
+
+        model = self.model_manager.loaded_model_config.get("model")
+        if not hasattr(model, "predict_shapes_split_boxes"):
+            self.model_manager.new_model_status.emit(
+                self.tr("当前模型不支持大框拆分")
+            )
+            return
+
+        all_shapes = list(self.parent.canvas.shapes)
+        if not all_shapes:
+            self.model_manager.new_model_status.emit(
+                self.tr("画布上没有检测框")
+            )
+            return
+
+        # 读取过滤标签设置
+        filter_classes = self.model_manager.loaded_model_config.get("filter_classes", None)
+        target_shapes = all_shapes
+        if filter_classes is not None:
+            target_shapes = [s for s in all_shapes if s.label in filter_classes]
+
+        box_infos = self._prepare_split_box_infos(target_shapes)
+        if not box_infos:
+            self.model_manager.new_model_status.emit(
+                self.tr("没有符合拆分条件的框")
+            )
+            return
+
+        self.model_manager.new_model_status.emit(
+            self.tr(f"正在拆分全图 {len(box_infos)} 个框...")
+        )
+
+        def _do_split():
+            import time
+            t0 = time.time()
+            boxes = [bi[1] for bi in box_infos]
+            labels = [bi[2] for bi in box_infos]
+            keep_original = self.toggle_keep_original_boxes.isChecked()
+            result, box_mapping, timing = model.predict_shapes_split_boxes(
+                self.parent.image, boxes, labels, self.parent.filename,
+                keep_original=keep_original
+            )
+            added = self._apply_split_results(
+                box_infos, result, box_mapping, keep_original=keep_original
+            )
+            timing_str = f"[框拆分耗时] 读图={timing.get('读图',0):.3f}s  拆分={timing.get('拆分',0):.3f}s  总={timing.get('总',0):.3f}s" if timing else f"耗时={time.time()-t0:.3f}s"
+            fname = os.path.basename(self.parent.filename) if self.parent.filename else "image"
+            print(f"\n[全图框拆分] {fname}  {len(box_infos)}个框 → 新增{added}个小框  保留原框={keep_original}  {timing_str}")
+            sys.stdout.flush()
+            self.model_manager.new_model_status.emit(
+                self.tr(f"全图框拆分完成，新增 {added} 个小框")
+            )
+
+        QTimer.singleShot(0, _do_split)
+
     def run_recognition_on_selected(self):
         """只对画布上选中的框进行 OCR 识别（跳过全图检测）"""
         if self.parent.filename is None:
@@ -962,13 +1244,20 @@ class AutoLabelingWidget(QWidget):
             self.edit_iou.setValue(initial_iou_value)
 
         try:
-            if (
-                self.model_manager.loaded_model_config["type"]
-                in _AUTO_LABELING_CONF_MODELS
-            ):
-                initial_conf_value = self.model_manager.loaded_model_config[
-                    "conf_threshold"
-                ]
+            model_type = self.model_manager.loaded_model_config["type"]
+            if model_type in _AUTO_LABELING_CONF_MODELS:
+                if model_type == "ppocr_v6":
+                    # PPOCRv6 使用 drop_score 作为 OCR 置信度阈值
+                    ppocr_model = self.model_manager.loaded_model_config.get("model")
+                    initial_conf_value = ppocr_model.drop_score if ppocr_model else 0.5
+                elif model_type == "manga_ocr":
+                    # Manga-OCR 使用 ocr_threshold 作为 OCR 置信度阈值
+                    manga_model = self.model_manager.loaded_model_config.get("model")
+                    initial_conf_value = manga_model.ocr_threshold if manga_model else 0.2
+                else:
+                    initial_conf_value = self.model_manager.loaded_model_config[
+                        "conf_threshold"
+                    ]
                 self.edit_conf.setValue(initial_conf_value)
             else:
                 initial_conf_value = 0.0
@@ -997,6 +1286,77 @@ class AutoLabelingWidget(QWidget):
             self.update_florence2_mode_ui()
         elif model_config.get("type") == "groundingdino":
             self.update_groundingdino_mode_ui()
+        elif model_config.get("type") == "ppocr_v6":
+            self._update_ppocr_v6_threshold_ui(model_config)
+        elif model_config.get("type") == "manga_ocr":
+            self._update_manga_ocr_ui(model_config)
+
+        # 通用：同步弹出菜单中的"仅检测颜色"按钮可见性
+        self._btn_popup_text_color.setVisible(
+            model_config.get("type") == "manga_ocr"
+        )
+
+        # 模型加载完成后，根据当前模式同步保留原框按钮可见性
+        # 只有检测能力强的模型（如 Manga-OCR）才支持大框拆分
+        model = model_config.get("model")
+        supports_split = hasattr(model, "predict_shapes_split_boxes") if model else False
+        self.toggle_keep_original_boxes.setVisible(
+            self._ocr_mode_current == "split_boxes" and supports_split
+        )
+
+    def _update_manga_ocr_ui(self, model_config):
+        """Show/hide and initialize Manga-OCR-specific threshold controls"""
+        model = model_config.get("model")
+        if not model:
+            return
+
+        # 显示检测阈值控件（复用 PPOCRv6 的 UI 控件）
+        self.input_det_thresh.setVisible(True)
+        self.edit_det_thresh.setVisible(True)
+        self.input_det_box_thresh.setVisible(True)
+        self.edit_det_box_thresh.setVisible(True)
+
+        # 初始化 Manga-OCR 检测阈值
+        text_threshold = model.config.get("text_threshold", 0.5)
+        box_threshold = model.config.get("box_threshold", 0.7)
+
+        self.edit_det_thresh.blockSignals(True)
+        self.edit_det_box_thresh.blockSignals(True)
+        self.edit_det_thresh.setValue(text_threshold)
+        self.edit_det_box_thresh.setValue(box_threshold)
+        self.edit_det_thresh.blockSignals(False)
+        self.edit_det_box_thresh.blockSignals(False)
+
+        self.on_det_thresh_value_changed(text_threshold)
+        self.on_det_box_thresh_value_changed(box_threshold)
+
+    def _update_ppocr_v6_threshold_ui(self, model_config):
+        """Show/hide and initialize PPOCRv6-specific threshold controls"""
+        model = model_config.get("model")
+        if not model:
+            return
+
+        # 显示检测阈值控件
+        self.input_det_thresh.setVisible(True)
+        self.edit_det_thresh.setVisible(True)
+        self.input_det_box_thresh.setVisible(True)
+        self.edit_det_box_thresh.setVisible(True)
+
+        # 初始化检测阈值
+        det_db_thresh = model.config.get("det_db_thresh", 0.1)
+        det_db_box_thresh = model.config.get("det_db_box_thresh", 0.05)
+
+        # 先断开信号，避免初始化触发 on_xxx_changed
+        self.edit_det_thresh.blockSignals(True)
+        self.edit_det_box_thresh.blockSignals(True)
+        self.edit_det_thresh.setValue(det_db_thresh)
+        self.edit_det_box_thresh.setValue(det_db_box_thresh)
+        self.edit_det_thresh.blockSignals(False)
+        self.edit_det_box_thresh.blockSignals(False)
+
+        # 同步到模型
+        self.on_det_thresh_value_changed(det_db_thresh)
+        self.on_det_box_thresh_value_changed(det_db_box_thresh)
 
     def update_upn_mode_ui(self):
         """Update UPN mode combobox to reflect current backend state"""
@@ -1088,17 +1448,20 @@ class AutoLabelingWidget(QWidget):
             "button_reset_tracker",
             "button_filter_classes",
             "toggle_use_existing_boxes",
-            "button_detect_only",
+            "toggle_keep_original_boxes",
             "button_color_only",
             "button_recog_color",
             "toggle_rotation",
             "toggle_filter_non_rotated",
-            "toggle_batch_detect_only",
             "toggle_color_mode",
             "upn_select_combobox",
             "gd_select_combobox",
             "florence2_select_combobox",
             "button_auto_decode",
+            "input_det_thresh",
+            "edit_det_thresh",
+            "input_det_box_thresh",
+            "edit_det_box_thresh",
         ]
         for widget in widgets:
             getattr(self, widget).hide()
@@ -1124,6 +1487,14 @@ class AutoLabelingWidget(QWidget):
         """Handle iou value changed"""
         self.model_manager.set_auto_labeling_iou(value)
 
+    def on_det_thresh_value_changed(self, value):
+        """Handle detection threshold value changed (PPOCRv6)"""
+        self.model_manager.set_det_db_thresh(value)
+
+    def on_det_box_thresh_value_changed(self, value):
+        """Handle detection box threshold value changed (PPOCRv6)"""
+        self.model_manager.set_det_db_box_thresh(value)
+
     def on_preserve_existing_annotations_state_changed(self, state):
         """Handle preserve existing annotations state changed"""
         self.initial_preserve_annotations_state = state
@@ -1139,18 +1510,66 @@ class AutoLabelingWidget(QWidget):
             state, self._rotation_tooltip_on, self._rotation_tooltip_off
         )
 
-    def _on_toggle_use_existing_boxes(self, checked):
-        """切换OCR模式：检测+OCR / 使用已有框OCR"""
+    def _show_ocr_mode_popup(self):
+        """弹出OCR模式选择面板（按钮下方）"""
+        if self._ocr_mode_popup.isVisible():
+            self._ocr_mode_popup.hide()
+            return
+        # 仅支持 predict_shapes_split_boxes 的模型显示"拆分大框"
+        model = self.model_manager.loaded_model_config.get("model") \
+            if self.model_manager.loaded_model_config else None
+        supports_split = hasattr(model, "predict_shapes_split_boxes") if model else False
+        self._btn_popup_split_boxes.setVisible(supports_split)
+        button = self.toggle_use_existing_boxes
+        pos = button.mapToGlobal(QPoint(0, button.height()))
+        self._ocr_mode_popup.move(pos)
+        self._ocr_mode_popup.show()
+
+    def _on_ocr_mode_selected(self, text, bg_color, hover_color):
+        """OCR模式选择后更新按钮"""
+        self.toggle_use_existing_boxes.setText(text)
+        self.toggle_use_existing_boxes.setStyleSheet(
+            self._get_replace_button_style(bg_color, hover_color)
+        )
+        if text == "已有框OCR":
+            self._ocr_mode_current = "existing_ocr"
+            self.toggle_keep_original_boxes.setVisible(False)
+        elif text == "仅检测":
+            self._ocr_mode_current = "detect_only"
+            self.toggle_keep_original_boxes.setVisible(False)
+        elif text == "拆分大框":
+            self._ocr_mode_current = "split_boxes"
+            # 只有模型加载完成后才显示该按钮
+            self.toggle_keep_original_boxes.setVisible(
+                bool(self.model_manager.loaded_model_config)
+            )
+        elif text == "仅检测颜色":
+            self._ocr_mode_current = "text_color"
+            self.toggle_keep_original_boxes.setVisible(False)
+        else:
+            self._ocr_mode_current = "detect_ocr"
+            self.toggle_keep_original_boxes.setVisible(False)
+        self._ocr_mode_popup.hide()
+
+    def _on_toggle_keep_original_boxes(self, checked):
+        """切换保留原框开关"""
         if checked:
-            self.toggle_use_existing_boxes.setText(self.tr("已有框OCR"))
-            self.toggle_use_existing_boxes.setStyleSheet(
+            self.toggle_keep_original_boxes.setText(self.tr("保留原框开"))
+            self.toggle_keep_original_boxes.setStyleSheet(
                 self._get_replace_button_style("#5cb85c", "#4cae4c")
             )
         else:
-            self.toggle_use_existing_boxes.setText(self.tr("检测+OCR"))
-            self.toggle_use_existing_boxes.setStyleSheet(
+            self.toggle_keep_original_boxes.setText(self.tr("保留原框关"))
+            self.toggle_keep_original_boxes.setStyleSheet(
                 self._get_replace_button_style("#d9534f", "#c9302c")
             )
+
+    def _get_split_options(self):
+        """读取分割对话框当前选项（target_labels 等），对话框未打开则使用默认空选项"""
+        dialog = getattr(self.parent, 'segmentation_dialog', None)
+        if dialog is not None:
+            return dialog.get_options()
+        return {}
 
     def run_detect_only(self):
         """仅检测按钮：只跑检测器画框，不做 OCR"""
@@ -1402,18 +1821,6 @@ class AutoLabelingWidget(QWidget):
         self.initial_filter_non_rotated_state = state
         self.model_manager.set_auto_labeling_filter_non_rotated(state)
 
-    def _update_batch_detect_only_state(self, checked):
-        if checked:
-            self.toggle_batch_detect_only.setText(self.tr("批量仅检测开"))
-            self.toggle_batch_detect_only.setStyleSheet(
-                self._get_replace_button_style("#5cb85c", "#4cae4c")
-            )
-        else:
-            self.toggle_batch_detect_only.setText(self.tr("批量仅检测关"))
-            self.toggle_batch_detect_only.setStyleSheet(
-                self._get_replace_button_style("#e67e22", "#d35400")
-            )
-
     def _update_color_mode_state(self, checked):
         model = self.model_manager.loaded_model_config.get("model")
         if hasattr(model, "color_mode"):
@@ -1614,7 +2021,7 @@ class AutoLabelingWidget(QWidget):
             "caption": ["button_run"],
             "detailed_cap": ["button_run"],
             "more_detailed_cap": ["button_run"],
-            "ocr": ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes", "button_detect_only"],
+            "ocr": ["button_run", "button_recog_selected", "button_recog_all", "button_filter_classes", "toggle_use_existing_boxes"],
             "ocr_with_region": ["button_run"],
             "od": ["button_run"],
             "region_proposal": ["button_run"],

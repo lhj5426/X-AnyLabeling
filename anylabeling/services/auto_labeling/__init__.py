@@ -182,6 +182,8 @@ _AUTO_LABELING_CONF_MODELS = [
     "yolo26_pose",
     "u_rtdetr",
     "yoloe",
+    "ppocr_v6",
+    "manga_ocr",
 ]
 
 
@@ -262,7 +264,6 @@ _AUTO_LABELING_PRESERVE_EXISTING_ANNOTATIONS_STATE_MODELS = [
     "yolox",
     "doclayout_yolo",
     "florence2",
-    "ppocr_v6",
     "rfdetr",
     "dfine",
     "yolo12",

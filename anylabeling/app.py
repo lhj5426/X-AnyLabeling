@@ -96,7 +96,7 @@ def main():
         ),
     )
     default_config_file = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".YSGxanylabelingrc"
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "xanylabeling_config.ini"
     )
     parser.add_argument(
         "--config",
@@ -284,7 +284,31 @@ def main():
 
         QtCore.QTimer.singleShot(2000, delayed_update_check)
 
-    win.showMaximized()
+    # 根据窗口配置文件决定启动行为：有配置按配置来，无配置默认全屏
+    # 删除 xanylabeling_window.ini 即可恢复全屏
+    window_ini = os.path.join(anylabeling_config._app_dir(), "xanylabeling_window.ini")
+    win_settings = QtCore.QSettings(window_ini, QtCore.QSettings.IniFormat)
+    was_maximized = win_settings.value("window/maximized", True)
+    if isinstance(was_maximized, str):
+        was_maximized = was_maximized.lower() in ("true", "1")
+
+    if was_maximized:
+        # 强制在系统默认屏幕全屏，不跟随鼠标
+        # showMaximized() 会跟随鼠标所在屏幕，所以先 move 到默认屏幕
+        screen = QtWidgets.QApplication.primaryScreen()
+        if screen:
+            geo = screen.availableGeometry()
+            win.move(geo.x() + 100, geo.y() + 100)
+        win.showMaximized()
+    else:
+        win_w = int(win_settings.value("window/width", 1200) or 1200)
+        win_h = int(win_settings.value("window/height", 800) or 800)
+        win_x = int(win_settings.value("window/x", 0) or 0)
+        win_y = int(win_settings.value("window/y", 0) or 0)
+        # 不做屏幕边界验证：允许窗口部分飞出屏幕外
+        win.resize(win_w, win_h)
+        win.move(win_x, win_y)
+        win.show()
     win.raise_()
 
     # Force fit-window after layout settles (first image may have loaded

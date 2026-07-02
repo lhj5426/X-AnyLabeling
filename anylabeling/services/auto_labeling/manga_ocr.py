@@ -47,14 +47,12 @@ class MangaOCR(Model):
             "button_recog_all",
             "button_filter_classes",
             "toggle_use_existing_boxes",
-            "button_detect_only",
-            "button_color_only",
-            "button_recog_color",
+            "toggle_keep_original_boxes",
             "toggle_preserve_existing_annotations",
             "toggle_rotation",
             "toggle_filter_non_rotated",
-            "toggle_batch_detect_only",
-            "toggle_color_mode",
+            "input_conf",
+            "edit_conf",
         ]
         output_modes = {
             "rectangle": "Rectangle",
@@ -737,6 +735,93 @@ class MangaOCR(Model):
         }
         return AutoLabelingResult(shapes, replace=False), timing
 
+    def predict_shapes_split_boxes(self, image, boxes, labels=None, image_path=None, keep_original=True):
+        """对给定框区域进行 DBNet 检测拆分（仅拆分，不做 OCR）。
+        全图跑 DBNet，收集每个大框内部的文本行，每个文本行创建一个新小框。
+
+        Args:
+            image: numpy array 或 QImage
+            boxes: 列表，每个元素为 4 个点的坐标 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+            labels: 可选，与 boxes 一一对应的标签名列表
+            image_path: 可选，图片文件路径
+            keep_original: 保留参数，由 UI 层处理
+        返回: (AutoLabelingResult, box_mapping, timing)
+              box_mapping: [(orig_idx, sub_count), ...]
+        """
+        if image is None or not boxes:
+            return AutoLabelingResult([], replace=False), [], {}
+
+        t0 = time.time()
+        image = self._load_image(image, image_path)
+        t_load = time.time()
+
+        np_boxes = []
+        for box in boxes:
+            if isinstance(box, (list, np.ndarray)):
+                pts = np.array(box, dtype=np.float32)
+                if pts.shape == (4, 2):
+                    np_boxes.append(pts)
+                elif pts.shape == (4, 1, 2):
+                    np_boxes.append(pts.reshape(-1, 2))
+
+        if len(np_boxes) == 0:
+            return AutoLabelingResult([], replace=False), [], {}
+
+        # 全图 DBNet 检测文本行
+        all_det_boxes, _ = self._run_detection(image)
+
+        if labels is None:
+            labels = ["OCR"] * len(np_boxes)
+
+        # 按用户框收集内部 DBNet 行
+        final_boxes = []      # 每个检测到的文本行 (pts, orig_idx)
+        box_mapping = []      # (orig_idx, sub_count)
+        for i, user_box in enumerate(np_boxes):
+            ux1 = user_box[:, 0].min(); uy1 = user_box[:, 1].min()
+            ux2 = user_box[:, 0].max(); uy2 = user_box[:, 1].max()
+            box_w = ux2 - ux1; box_h = uy2 - uy1
+            is_vertical = box_h > box_w
+
+            lines = []
+            for db_pts in all_det_boxes:
+                if len(db_pts) < 4:
+                    continue
+                dbx1 = db_pts[:, 0].min(); dby1 = db_pts[:, 1].min()
+                dbx2 = db_pts[:, 0].max(); dby2 = db_pts[:, 1].max()
+                if dbx1 >= ux1 and dbx2 <= ux2 and dby1 >= uy1 and dby2 <= uy2:
+                    lines.append(np.array(db_pts, dtype=np.float32))
+
+            if len(lines) > 1:
+                if is_vertical:
+                    lines.sort(key=lambda b: (-b[:, 0].min(), b[:, 1].min()))
+                else:
+                    lines.sort(key=lambda b: b[:, 1].min())
+                for pts in lines:
+                    final_boxes.append((pts, i))
+                box_mapping.append((i, len(lines)))
+            elif len(lines) == 1:
+                final_boxes.append((lines[0], i))
+                box_mapping.append((i, 1))
+            else:
+                box_mapping.append((i, 0))
+
+        # 从 DBNet 检测到的文本行构建 shapes（仅拆分，不做 OCR）
+        shapes = []
+        for pts, orig_idx in final_boxes:
+            label = labels[orig_idx] if orig_idx < len(labels) else "OCR"
+            shape = self._create_shape(pts, 0.0, "", None)
+            # Override label with the user's label
+            shape.label = label
+            shapes.append(shape)
+
+        t_end = time.time()
+        timing = {
+            "读图": t_load - t0,
+            "拆分": t_end - t_load,
+            "总": t_end - t0,
+        }
+        return AutoLabelingResult(shapes, replace=False), box_mapping, timing
+
     def set_auto_labeling_preserve_existing_annotations_state(self, state):
         self.replace = not state
 
@@ -762,6 +847,20 @@ class MangaOCR(Model):
         if angle_mod > 45:
             angle_mod = 90 - angle_mod
         return angle_mod > 0
+
+    def set_auto_labeling_conf(self, value):
+        """动态设置 OCR 置信度阈值"""
+        self.ocr_threshold = value
+
+    def set_det_db_thresh(self, value):
+        """动态设置检测二值化阈值"""
+        self.text_threshold = value
+        self.config["text_threshold"] = value
+
+    def set_det_db_box_thresh(self, value):
+        """动态设置检测框阈值"""
+        self.box_threshold = value
+        self.config["box_threshold"] = value
 
     def unload(self):
         del self.det_model

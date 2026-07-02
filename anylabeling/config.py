@@ -15,7 +15,7 @@ def _app_dir():
     return osp.dirname(osp.dirname(osp.abspath(__file__)))
 
 
-USER_CONFIG_FILE = osp.join(_app_dir(), ".YSGxanylabelingrc")
+USER_CONFIG_FILE = osp.join(_app_dir(), "xanylabeling_config.ini")
 
 
 def update_dict(target_dict, new_dict, validate_item=None):

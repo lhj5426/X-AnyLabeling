@@ -19,8 +19,8 @@ COL_OFFSET_Y = 4
 COL_SPACING = 5
 
 SWATCH_SIZE = 12
-_BASE = osp.dirname(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__)))))
-RENDER_RULES_CONFIG = osp.join(_BASE, ".char_render_rules.json")
+_BASE = osp.dirname(osp.dirname(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))))
+RENDER_RULES_CONFIG = osp.join(_BASE, "char_render_rules.json")
 
 
 class LabelDelegate(QStyledItemDelegate):

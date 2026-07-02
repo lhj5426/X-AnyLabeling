@@ -2054,6 +2054,18 @@ class ModelManager(QObject):
             return
         self.loaded_model_config["model"].set_auto_labeling_iou(value)
 
+    def set_det_db_thresh(self, value):
+        """Set PPOCRv6 detection threshold"""
+        model = self.loaded_model_config.get("model") if self.loaded_model_config else None
+        if model and hasattr(model, "set_det_db_thresh"):
+            model.set_det_db_thresh(value)
+
+    def set_det_db_box_thresh(self, value):
+        """Set PPOCRv6 detection box threshold"""
+        model = self.loaded_model_config.get("model") if self.loaded_model_config else None
+        if model and hasattr(model, "set_det_db_box_thresh"):
+            model.set_det_db_box_thresh(value)
+
     def set_auto_labeling_preserve_existing_annotations_state(self, state):
         if (
             self.loaded_model_config is not None

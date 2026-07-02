@@ -869,7 +869,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.label_list.item_double_clicked.connect(self.edit_label)
         self.label_list.item_changed.connect(self.label_item_changed)
         self.label_list.item_dropped.connect(self.label_order_changed)
-        self.shape_dock = QtWidgets.QDockWidget(self.tr("Objects"), self)
+        self.shape_dock = QtWidgets.QDockWidget(self.tr("对象列表"), self)
         self.shape_dock.setObjectName("Objects")
         # Pre-set minimum size before setWidget — Qt's internal code may call
         # setMinimumWidth(0) during setWidget, which does
@@ -1248,6 +1248,10 @@ class LabelingWidget(QtWidgets.QWidget):
         )
 
         self.unique_label_list = UniqueLabelQListWidget(self)
+        # 让标签列表在垂直方向优先收缩（Ignored），按钮区域不会先被压缩
+        self.unique_label_list.setSizePolicy(
+            QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Ignored
+        )
         # 连接标签可见性变化信号
         self.unique_label_list.label_visibility_changed.connect(
             self.update_label_visibility
@@ -1311,7 +1315,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # 创建标签控制按钮
         self.create_label_control_buttons()
 
-        self.label_dock = QtWidgets.QDockWidget(self.tr("Labels"), self)
+        self.label_dock = QtWidgets.QDockWidget(self.tr("标签列表"), self)
         self.label_dock.setObjectName("Labels")
         # Pre-set minimum size before setWidget — same reason as shape_dock above
         self.label_dock.setMinimumSize(0, 0)
@@ -3762,7 +3766,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Reset Views action for dock layout
         reset_views = action(
-            self.tr("&Reset Views"),
+            self.tr("重置布局"),
             self.reset_dock_layout,
             "Ctrl+Shift+V",
             "refresh",
@@ -4121,7 +4125,8 @@ class LabelingWidget(QtWidgets.QWidget):
         self.setLayout(layout)
 
         # --- Load dock state with delay to ensure UI is ready ---
-        QtCore.QTimer.singleShot(100, self.load_dock_state)
+        self._dock_state_loaded = False
+        QtCore.QTimer.singleShot(500, self.load_dock_state)
 
         if output_file is not None and self._config["auto_save"]:
             logger.warning(
@@ -4159,23 +4164,13 @@ class LabelingWidget(QtWidgets.QWidget):
             self.file_search_changed()
 
         # XXX: Could be completely declarative.
-        # Restore application settings.
+        # 从配置文件恢复窗口位置/大小（不用注册表，避免乱跳屏幕）
         self.settings = QtCore.QSettings("anylabeling", "anylabeling")
         self.recent_files = self.settings.value("recent_files", []) or []
         self.recent_folders = self.settings.value("recent_folders", []) or []
-        size = self.settings.value("window/size", QtCore.QSize(600, 500))
-        position = self.settings.value("window/position", QtCore.QPoint(0, 0))
-        was_maximized = self.settings.value("window/maximized", 0)
-        if isinstance(was_maximized, str):
-            was_maximized = was_maximized.lower() in ("true", "1")
-        else:
-            was_maximized = bool(was_maximized)
-        # Only restore geometry if not maximized — showMaximized() in app.py handles the rest
-        if not was_maximized:
-            self.resize(size)
-            self.move(position)
-        # or simply:
-        # self.restoreGeometry(settings['window/geometry']
+
+        # 窗口位置/大小的恢复由 app.py 统一处理
+        # （避免 __init__ 阶段 self.window() 返回的对象不准确）
 
         # Restore dock lock state
         dock_locked = self.settings.value("dock/locked", 0)
@@ -8344,32 +8339,36 @@ class LabelingWidget(QtWidgets.QWidget):
             if btn and hasattr(btn, 'setShortcut'):
                 btn.setShortcut(shortcuts.get(shortcut_key, ""))
 
+    def _create_segmentation_dialog(self):
+        """创建并连接 segmentation_dialog（不显示）"""
+        # Get shortcut key from config
+        shortcut_key = self._config.get("shortcuts", {}).get("segmentation_tool", "Ctrl+Shift+X")
+        self.segmentation_dialog = SegmentationDialog(parent=self, shortcut_key=shortcut_key)
+        self.segmentation_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
+        # Connect signals
+        self.segmentation_dialog.enter_vertical_cut_mode.connect(self.on_enter_vertical_cut_mode)
+        self.segmentation_dialog.enter_horizontal_cut_mode.connect(self.on_enter_horizontal_cut_mode)
+        self.segmentation_dialog.exit_segmentation_mode.connect(self.on_exit_segmentation_mode)
+        self.segmentation_dialog.closing.connect(self.on_segmentation_dialog_closed)
+        # Connect crosshair length adjustment signals
+        self.segmentation_dialog.horizontal_length_changed.connect(self.canvas.set_crosshair_horizontal_length)
+        self.segmentation_dialog.vertical_length_changed.connect(self.canvas.set_crosshair_vertical_length)
+        # Connect canvas signal for split execution
+        self.canvas.split_requested.connect(self.on_split_requested)
+        # Connect canvas signal for middle-click exit
+        self.canvas.segmentation_mode_exit_requested.connect(self.on_segmentation_mode_exit_requested)
+        # Connect auto-split signals
+        self.segmentation_dialog.auto_split_selected.connect(
+            lambda opts: self._on_text_split_selected("selected", opts))
+        self.segmentation_dialog.auto_split_page.connect(
+            lambda opts: self._on_text_split_page("page", opts))
+        self.segmentation_dialog.auto_split_range.connect(
+            lambda s, e, opts: self._on_text_split_range(s, e, "range", opts))
+
     def open_segmentation_dialog(self):
         """Open the segmentation tool dialog (for menu action)."""
         if self.segmentation_dialog is None:
-            # Get shortcut key from config
-            shortcut_key = self._config.get("shortcuts", {}).get("segmentation_tool", "Ctrl+Shift+X")
-            self.segmentation_dialog = SegmentationDialog(parent=self, shortcut_key=shortcut_key)
-            self.segmentation_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
-            # Connect signals
-            self.segmentation_dialog.enter_vertical_cut_mode.connect(self.on_enter_vertical_cut_mode)
-            self.segmentation_dialog.enter_horizontal_cut_mode.connect(self.on_enter_horizontal_cut_mode)
-            self.segmentation_dialog.exit_segmentation_mode.connect(self.on_exit_segmentation_mode)
-            self.segmentation_dialog.closing.connect(self.on_segmentation_dialog_closed)
-            # Connect crosshair length adjustment signals
-            self.segmentation_dialog.horizontal_length_changed.connect(self.canvas.set_crosshair_horizontal_length)
-            self.segmentation_dialog.vertical_length_changed.connect(self.canvas.set_crosshair_vertical_length)
-            # Connect canvas signal for split execution
-            self.canvas.split_requested.connect(self.on_split_requested)
-            # Connect canvas signal for middle-click exit
-            self.canvas.segmentation_mode_exit_requested.connect(self.on_segmentation_mode_exit_requested)
-            # Connect auto-split signals
-            self.segmentation_dialog.auto_split_selected.connect(
-                lambda opts: self._on_text_split_selected("selected", opts))
-            self.segmentation_dialog.auto_split_page.connect(
-                lambda opts: self._on_text_split_page("page", opts))
-            self.segmentation_dialog.auto_split_range.connect(
-                lambda s, e, opts: self._on_text_split_range(s, e, "range", opts))
+            self._create_segmentation_dialog()
 
         if self.segmentation_dialog.isVisible():
             self.segmentation_dialog.raise_()
@@ -8384,8 +8383,14 @@ class LabelingWidget(QtWidgets.QWidget):
         total_pages = len(self.image_list) if self.image_list else 1
         self.segmentation_dialog.update_page_range(current_page, total_pages)
 
+    def _ensure_segmentation_dialog(self):
+        """确保 segmentation_dialog 已创建（用于非菜单入口自动调用，不显示）"""
+        if self.segmentation_dialog is None:
+            self._create_segmentation_dialog()
+
     def _text_split_current_image(self, options):
         """对当前图片执行文本分割"""
+        self._ensure_segmentation_dialog()
         import cv2
         import numpy as np
         canvas = self.canvas
@@ -8407,6 +8412,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def _on_text_split_selected(self, mode, options):
         """分割选中框"""
+        self._ensure_segmentation_dialog()
         import cv2
         import numpy as np
         from anylabeling.services.text_splitter.geometry import _is_polygon_line
@@ -8464,11 +8470,13 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def _on_text_split_page(self, mode, options):
         """分割本页所有矩形"""
+        self._ensure_segmentation_dialog()
         total = self._text_split_current_image(options)
         self.segmentation_dialog.log(self.tr(f"分割本页: {total} 行"))
 
     def _on_text_split_range(self, start, end, mode, options):
         """批量分割范围页 — 后台线程 + 进度条"""
+        self._ensure_segmentation_dialog()
         file_list = self.image_list if hasattr(self, 'image_list') and self.image_list else []
         if not file_list:
             self.segmentation_dialog.log(self.tr("没有文件列表"))
@@ -11544,6 +11552,10 @@ class LabelingWidget(QtWidgets.QWidget):
     def create_label_control_buttons(self):
         """创建标签控制按钮"""
         self.label_control_widget = ShrinkableWidget()
+        # 按钮区域高度固定，缩小 dock 时不会被优先压缩
+        self.label_control_widget.setSizePolicy(
+            QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed
+        )
         control_layout = QtWidgets.QHBoxLayout()
         control_layout.setContentsMargins(2, 2, 2, 2)
         control_layout.setSpacing(2)
@@ -16022,62 +16034,145 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def _schedule_dock_save(self):
         """Debounced dock state save - only saves 500ms after last change."""
+        if not getattr(self, '_dock_state_loaded', False):
+            return
         if not hasattr(self, '_dock_save_debounce'):
             self._dock_save_debounce = QtCore.QTimer()
             self._dock_save_debounce.setSingleShot(True)
             self._dock_save_debounce.timeout.connect(lambda: self.save_dock_state(force=True))
         self._dock_save_debounce.start(500)
 
+    def _dock_settings(self):
+        """获取 dock 状态专用的 QSettings，使用项目目录下的文件而非注册表"""
+        project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        dock_ini = os.path.join(project_dir, "xanylabeling_dock.ini")
+        return QtCore.QSettings(dock_ini, QtCore.QSettings.IniFormat)
+
+    def _window_settings(self):
+        """获取窗口状态专用的 QSettings（独立文件，不污染 config.ini）"""
+        project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        window_ini = os.path.join(project_dir, "xanylabeling_window.ini")
+        return QtCore.QSettings(window_ini, QtCore.QSettings.IniFormat)
+
     def save_dock_state(self, force=False):
-        """Save dock state to QSettings."""
+        """Save dock state to local file (not registry)."""
         try:
             if not hasattr(self, 'main_window'):
                 return
+            self._remove_orphan_docks()
             byte_state = self.main_window.saveState()
             if byte_state.isEmpty():
                 return
-            if not hasattr(self, 'settings'):
-                self.settings = QtCore.QSettings("anylabeling", "anylabeling")
-            self.settings.setValue("dock/state", byte_state)
+            settings = self._dock_settings()
+            settings.setValue("dock/state", byte_state)
+            # Also save per-dock sizes explicitly.
+            # saveState()/restoreState() preserves positions and tabbing well,
+            # but internal splitter proportions between vertically stacked docks
+            # can drift on restore (especially when a dock is collapsed to near
+            # minimum). Saving explicit heights and restoring them after
+            # restoreState() fixes this.
+            dock_sizes = {}
+            for dock in [self.thumbnail_dock, self.shape_text_dock, self.shape_translation_dock,
+                         self.flag_dock, self.label_dock, self.shape_dock, self.file_dock,
+                         self.navigator_dock]:
+                if dock.isVisible():
+                    dock_sizes[dock.objectName()] = dock.height()
+            settings.setValue("dock/sizes", json.dumps(dock_sizes))
         except Exception as e:
             logger.error(f"Error saving dock state: {e}")
 
     def load_dock_state(self):
-        """Load dock state from QSettings."""
+        """Load dock state from local file (not registry)."""
         was_maximized = self.window().isMaximized()
-        # Re-assert minimum sizes before restoreState — Qt's internal restore
-        # code may call setMinimumWidth on docks, which does
-        # setMinimumSize(0, minimumSize().height()); if height is -1 (unset),
-        # this produces "Negative sizes" warnings.
         for dock in [self.thumbnail_dock, self.shape_text_dock, self.shape_translation_dock,
                      self.flag_dock, self.label_dock, self.shape_dock, self.file_dock,
                      self.navigator_dock]:
             dock.setMinimumSize(0, 0)
         try:
-            if not hasattr(self, 'settings'):
-                self.settings = QtCore.QSettings("anylabeling", "anylabeling")
-            byte_state = self.settings.value("dock/state", QtCore.QByteArray())
+            settings = self._dock_settings()
+            byte_state = settings.value("dock/state", QtCore.QByteArray())
             if not byte_state or (isinstance(byte_state, QtCore.QByteArray) and byte_state.isEmpty()):
                 return
-            # restoreState can un-maximize the outer window — re-maximize in finally
             if self.main_window.restoreState(byte_state):
-                pass  # restoreState already restores dock sizes
+                # Explicitly restore per-dock heights that saveState() may not
+                # perfectly preserve (especially collapsed docks).
+                # _dock_state_loaded is set inside the deferred callback to
+                # prevent resizeEvent from saving wrong sizes before apply.
+                self._apply_saved_dock_sizes(settings)
             else:
                 self.reset_dock_layout()
+            # 清理 restoreState 创建的没有 objectName 的临时 dock
+            self._remove_orphan_docks()
         except Exception as e:
             logger.warning(f"Error restoring dock state: {e}")
             try:
-                if not hasattr(self, 'settings'):
-                    self.settings = QtCore.QSettings("anylabeling", "anylabeling")
-                self.settings.remove("dock/state")
+                self._dock_settings().remove("dock/state")
             except Exception:
                 pass
         finally:
-            # Always re-maximize if the window was maximized before restoreState.
-            # Deferred to next event loop so any async layout side effects from
-            # restoreState (posted resize/show events) are processed first.
             if was_maximized:
                 QtCore.QTimer.singleShot(0, lambda: self.window().showMaximized())
+
+    def _apply_saved_dock_sizes(self, settings):
+        """Apply per-dock heights saved alongside saveState().
+
+        Qt's internal QDockAreaLayout uses QSplitter to manage dock sizes.
+        After restoreState(), subsequent layout passes recalculate splitter
+        positions based on sizeHint(), overriding any resizeDocks() call.
+        To work around this, we temporarily lock each dock's height (min=max)
+        so the splitter cannot move them, then release the lock after the
+        layout stabilizes. The splitter positions stay locked in place.
+        """
+        try:
+            sizes_json = settings.value("dock/sizes")
+            if not sizes_json:
+                self._dock_state_loaded = True
+                self.save_dock_state(force=True)
+                return
+            dock_sizes = json.loads(sizes_json)
+            right_docks = [self.thumbnail_dock, self.shape_text_dock,
+                           self.shape_translation_dock, self.flag_dock,
+                           self.label_dock, self.shape_dock, self.file_dock,
+                           self.navigator_dock]
+            locked_docks = []
+            for dock in right_docks:
+                if dock.isVisible() and dock.objectName() in dock_sizes:
+                    h = dock_sizes[dock.objectName()]
+                    # Lock height so Qt's layout pass cannot resize this dock.
+                    dock.setMinimumHeight(h)
+                    dock.setMaximumHeight(h)
+                    locked_docks.append(dock)
+            if not locked_docks:
+                self._dock_state_loaded = True
+                self.save_dock_state(force=True)
+                return
+            # Release the height lock after layout has fully settled.
+            # At this point the splitter has accepted the forced positions
+            # and subsequent layout passes will respect them.
+            def _unlock():
+                try:
+                    for dock in locked_docks:
+                        if dock.isVisible():
+                            dock.setMinimumHeight(0)
+                            dock.setMaximumHeight(16777215)
+                except Exception:
+                    pass
+                finally:
+                    self._dock_state_loaded = True
+                    self.save_dock_state(force=True)
+            QtCore.QTimer.singleShot(800, _unlock)
+        except Exception:
+            pass
+
+    def _remove_orphan_docks(self):
+        """删除 restoreState 产生的没有 objectName 的临时 QDockWidget"""
+        known = {self.shape_text_dock, self.shape_translation_dock, self.flag_dock,
+                 self.label_dock, self.shape_dock, self.file_dock, self.tools_dock,
+                 self.thumbnail_dock, self.navigator_dock}
+        for dock in self.main_window.findChildren(QtWidgets.QDockWidget):
+            if dock not in known and not dock.objectName():
+                self.main_window.removeDockWidget(dock)
+                dock.close()
 
     def reset_dock_layout(self):
         """Reset dock widget layout to default positions."""
@@ -16219,14 +16314,15 @@ class LabelingWidget(QtWidgets.QWidget):
         ):
             self.adjust_scale()
         self.update_thumbnail_pixmap()
-        # Debounced dock state save on resize
-        if hasattr(self, "_resize_timer"):
-            self._resize_timer.stop()
-        else:
-            self._resize_timer = QtCore.QTimer()
-            self._resize_timer.setSingleShot(True)
-            self._resize_timer.timeout.connect(self.save_dock_state)
-        self._resize_timer.start(100)
+        # Debounced dock state save on resize (only after initial restore)
+        if getattr(self, "_dock_state_loaded", False):
+            if hasattr(self, "_resize_timer"):
+                self._resize_timer.stop()
+            else:
+                self._resize_timer = QtCore.QTimer()
+                self._resize_timer.setSingleShot(True)
+                self._resize_timer.timeout.connect(self.save_dock_state)
+            self._resize_timer.start(100)
 
     def paint_canvas(self, center_scrollbars=True):
         """Paint the canvas with current zoom level.
@@ -16318,14 +16414,20 @@ class LabelingWidget(QtWidgets.QWidget):
         self.settings.setValue(
             "filename", self.filename if self.filename else ""
         )
-        # Only save geometry when not maximized, otherwise the saved size
-        # would be the screen size at (0,0) causing a "fake maximized" state.
-        if self.window().isMaximized():
-            self.settings.setValue("window/maximized", 1)
+        # 保存窗口位置/大小到独立配置文件（不污染 xanylabeling_config.ini）
+        # 注意：必须用 self.window() 获取顶层窗口的全局坐标，不能直接用 self
+        # self.x()/self.y() 是 central widget 在窗口内的相对坐标（始终接近 0,0）
+        win = self._window_settings()
+        top_win = self.window()
+        if top_win.isMaximized():
+            win.setValue("window/maximized", True)
         else:
-            self.settings.setValue("window/maximized", 0)
-            self.settings.setValue("window/size", self.size())
-            self.settings.setValue("window/position", self.pos())
+            win.setValue("window/maximized", False)
+            win.setValue("window/width", top_win.width())
+            win.setValue("window/height", top_win.height())
+            win.setValue("window/x", top_win.x())
+            win.setValue("window/y", top_win.y())
+        win.sync()
         self.settings.setValue("window/state", self.parent.parent.saveState())
         self.save_dock_state(force=True)
         self.settings.setValue("recent_files", self.recent_files)
@@ -17975,7 +18077,7 @@ class LabelingWidget(QtWidgets.QWidget):
         else:
             self.shape_text_edit.setDisabled(True)
             self.shape_translation_edit.setDisabled(True)
-            self.shape_text_label.setText("")
+            self.shape_text_label.setText(self.tr("原文"))
             self.shape_text_edit.textChanged.disconnect()
             self.shape_text_edit.setPlainText("")
             self.shape_text_edit.textChanged.connect(self.shape_text_changed)

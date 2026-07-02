@@ -252,7 +252,7 @@
      <item>
       <widget class="QLabel" name="input_conf">
        <property name="text">
-        <string>Confidence</string>
+        <string>置信度</string>
        </property>
       </widget>
      </item>
@@ -284,6 +284,52 @@
      </item>
      <item>
       <widget class="QDoubleSpinBox" name="edit_iou">
+       <property name="decimals">
+        <number>2</number>
+       </property>
+       <property name="minimum">
+        <double>0.000000000000000</double>
+       </property>
+       <property name="maximum">
+        <double>1.000000000000000</double>
+       </property>
+       <property name="singleStep">
+        <double>0.010000000000000</double>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="input_det_thresh">
+       <property name="text">
+        <string>检测阈值</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QDoubleSpinBox" name="edit_det_thresh">
+       <property name="decimals">
+        <number>2</number>
+       </property>
+       <property name="minimum">
+        <double>0.000000000000000</double>
+       </property>
+       <property name="maximum">
+        <double>1.000000000000000</double>
+       </property>
+       <property name="singleStep">
+        <double>0.010000000000000</double>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="input_det_box_thresh">
+       <property name="text">
+        <string>检测框阈值</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QDoubleSpinBox" name="edit_det_box_thresh">
        <property name="decimals">
         <number>2</number>
        </property>
@@ -389,24 +435,24 @@
        <property name="text">
         <string>检测+OCR</string>
        </property>
-       <property name="checkable">
-        <bool>true</bool>
-       </property>
-       <property name="checked">
-        <bool>false</bool>
-       </property>
        <property name="toolTip">
         <string>切换OCR模式：检测+OCR / 使用已有框OCR</string>
        </property>
       </widget>
      </item>
      <item>
-      <widget class="QPushButton" name="button_detect_only">
+      <widget class="QPushButton" name="toggle_keep_original_boxes">
        <property name="text">
-        <string>仅检测</string>
+        <string>保留原框开</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
+       </property>
+       <property name="checked">
+        <bool>true</bool>
        </property>
        <property name="toolTip">
-        <string>仅运行文字检测，不进行OCR识别</string>
+        <string>拆分大框时是否保留原始框：开=保留，关=删除</string>
        </property>
       </widget>
      </item>
@@ -475,22 +521,6 @@
        </property>
        <property name="toolTip">
         <string>切换运行模式：OCR识别文字 / 颜色提取</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="toggle_batch_detect_only">
-       <property name="text">
-        <string>批量仅检测</string>
-       </property>
-       <property name="checkable">
-        <bool>true</bool>
-       </property>
-       <property name="checked">
-        <bool>false</bool>
-       </property>
-       <property name="toolTip">
-        <string>开启：批量执行时仅做文字检测，不进行OCR</string>
        </property>
       </widget>
      </item>

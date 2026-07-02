@@ -472,6 +472,10 @@ class SegmentationDialog(QtWidgets.QDialog):
             "target_labels": self.split_label_filter.text(),
         }
 
+    def get_options(self):
+        """公开方法：供外部自动调用时读取当前分割选项（target_labels 等）"""
+        return self._options()
+
     def _on_auto_selected(self):
         self.auto_split_selected.emit(self._options())
 
