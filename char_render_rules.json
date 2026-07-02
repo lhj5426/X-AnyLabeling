@@ -1,0 +1,18 @@
+[
+  {
+    "char": "傻",
+    "label": "OCR",
+    "rotate": 90,
+    "offset_x": 0,
+    "offset_y": 0,
+    "spacing": 0
+  },
+  {
+    "char": "逼",
+    "label": "OCR",
+    "rotate": 0,
+    "offset_x": 15,
+    "offset_y": 0,
+    "spacing": 0
+  }
+]
