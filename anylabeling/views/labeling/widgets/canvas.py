@@ -133,6 +133,7 @@ class Canvas(
     split_requested = QtCore.pyqtSignal(object, tuple, str)  # (shape, cut_pos, cut_mode)
     segmentation_mode_exit_requested = QtCore.pyqtSignal()  # Request to exit segmentation mode
     hide_shapes_requested = QtCore.pyqtSignal(list)  # Request to hide shapes (Shift+RightButton path selection)
+    batch_label_changed = QtCore.pyqtSignal(list)  # Path/box selection label mode: shapes whose label was changed
     delete_shapes_requested = QtCore.pyqtSignal(list)  # Request to delete shapes (Alt+RightButton path selection)
     mouse_pos_changed = QtCore.pyqtSignal(object)  # 鼠标位置变化信号（图像坐标），用于导航器显示
     animation_toggle_requested = QtCore.pyqtSignal()
@@ -2234,6 +2235,28 @@ class Canvas(
 
         # Polygon drawing.
         if self.drawing():
+            # Shift+左键拖拽：画布平移（所有标注模式通用）
+            if (QtCore.Qt.ShiftModifier & int(ev.modifiers())) and (
+                QtCore.Qt.LeftButton & ev.buttons()
+            ):
+                self.override_cursor(CURSOR_MOVE)
+                if (
+                    self.pixmap
+                    and self.pixmap.width()
+                    and self.pixmap.height()
+                ):
+                    delta = ev.localPos() - self.prev_pan_point
+                    self.scroll_request.emit(
+                        delta.x() / (self.pixmap.width() * self.scale),
+                        Qt.Horizontal,
+                        1,
+                    )
+                    self.scroll_request.emit(
+                        delta.y() / (self.pixmap.height() * self.scale),
+                        Qt.Vertical,
+                        1,
+                    )
+                return
             line_color = utils.hex_to_rgb(self.cross_line_color)
             self.line.line_color = QtGui.QColor(*line_color)
             # For rotation3, keep line as line type, not rotation3
@@ -2789,6 +2812,10 @@ class Canvas(
 
         if ev.button() == QtCore.Qt.LeftButton:
             if self.drawing():
+                # Shift+左键：画布拖拽，不触发标注绘制（所有标注模式通用）
+                if ev.modifiers() & QtCore.Qt.ShiftModifier:
+                    self.prev_pan_point = ev.localPos()
+                    return
                 if self.current:
                     # Add point to existing shape.
                     if self.create_mode == "polygon":
@@ -3119,6 +3146,45 @@ class Canvas(
 
         self.store_moving_shape()
 
+    def _try_apply_batch_label(self, selected_shapes):
+        """如果路径线设置中启用了标签模式，则将选中图形的标签统一改为目标标签"""
+        if not selected_shapes:
+            return
+
+        # 纯内存字典查找，无 I/O 无 import
+        ps = self._config.get("path_selection_settings")
+        if not ps or not ps.get("label_mode"):
+            return
+
+        target_label = ps.get("target_label")
+        if not target_label:
+            return
+
+        labels = self._config.get("labels", [])
+        changed = False
+        for shape in selected_shapes:
+            if shape.label == target_label:
+                continue
+            shape.label = target_label
+            # 更新颜色：自动模式下重新计算颜色
+            if self._config.get("shape_color", "auto") == "auto":
+                try:
+                    label_id = labels.index(target_label) + 1
+                    label_id += self._config.get("shift_auto_shape_color", 0)
+                except ValueError:
+                    label_id = 0
+                colormap = label_colormap()
+                r, g, b = colormap[label_id % len(colormap)]
+                shape.line_color = QtGui.QColor(r, g, b)
+                shape.fill_color = QtGui.QColor(r, g, b, 128)
+                shape.select_line_color = QtGui.QColor(r, g, b)
+                shape.select_fill_color = QtGui.QColor(r, g, b, 155)
+            changed = True
+
+        if changed:
+            self.store_shapes()
+            self.batch_label_changed.emit(selected_shapes)
+
     def complete_selection_box(self):
         """Complete Alt+drag selection box and select shapes within the box"""
         if not self.selection_box_mode:
@@ -3154,7 +3220,10 @@ class Canvas(
         else:
             # Normal replacement mode
             self.selected_shapes = newly_selected
-        
+
+        # 标签模式：批量替换选中形状的标签
+        self._try_apply_batch_label(self.selected_shapes)
+
         self.selection_changed.emit(self.selected_shapes)
 
         # Reset selection box mode
@@ -3333,7 +3402,10 @@ class Canvas(
         for shape in self.selected_shapes:
             if shape.is_label_locked():
                 shape.is_session_unlocked = True
-        
+
+        # 标签模式：批量替换选中形状的标签
+        self._try_apply_batch_label(self.selected_shapes)
+
         self.selection_changed.emit(self.selected_shapes)
 
         # Reset path selection mode
@@ -7371,6 +7443,19 @@ class Canvas(
                 self.update()
                 ev.accept()
                 return
+
+        # Shift+滚轮：所有标注模式下缩放画布
+        if self.drawing() and (QtCore.Qt.ShiftModifier & int(mods)):
+            if self.pan_ps_style:
+                scroll_area = self._get_scroll_area()
+                if scroll_area:
+                    self.zoom_request.emit(delta.y(), ev.pos())
+                else:
+                    self.zoom_request.emit(delta.y(), ev.pos())
+            else:
+                self.zoom_request.emit(delta.y(), ev.pos())
+            ev.accept()
+            return
 
         if self.drawing() and self.create_mode == "rectangle3":
             wheel_up = delta.y() > 0

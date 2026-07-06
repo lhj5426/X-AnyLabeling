@@ -100,6 +100,7 @@ from .widgets.thumbnail_viewer_dialog import MasonryThumbnailDialog
 from .widgets.containment_detection_dialog import ContainmentDetectionDialog
 from .ocr_text_replace import OCRTextReplaceDialog
 from .widgets.char_render_dialog import CharRenderDialog
+from .widgets.path_selection_settings_dialog import PathSelectionSettingsDialog
 from .utils.image_category import read_image_category
 from ..mainwindow_widgets.traffic_light_dialog import TrafficLightDialog
 from ...services import merger, tag_sorting
@@ -708,6 +709,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.animated_webp_end_action_pending = False
         self.object_manager_dialog = None
         self.highlight_settings_dialog = HighlightSettingsDialog(parent=self, config=self._config)
+        self.path_selection_settings_dialog = None
         self.expand_margins_dialog = None
         self.merge_tool_dialog = None
         self.merge_progress_dialog = None
@@ -1481,6 +1483,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.canvas.shape_moved.connect(self.set_dirty)
         self.canvas.shape_rotated.connect(self.set_dirty)
         self.canvas.selection_changed.connect(self.shape_selection_changed)
+        self.canvas.batch_label_changed.connect(self._on_canvas_batch_label_changed)
 
         # 初始化字符渲染规则
         self.canvas.char_render_rules = self.char_render_dialog.get_rules()
@@ -2359,6 +2362,14 @@ class LabelingWidget(QtWidgets.QWidget):
             shortcuts.get("highlight_settings_tool"),
             icon="color",
             tip=self.tr("配置高亮显示行为和标签"),
+        )
+
+        path_selection_settings_tool = action(
+            self.tr("路径线/框选设置"),
+            self.toggle_path_selection_settings_dialog,
+            shortcuts.get("path_selection_settings_tool"),
+            icon="color",
+            tip=self.tr("设置路径线和矩形框多选的模式：默认多选 / 自动改标签"),
         )
 
         toggle_ghost_paste = action(
@@ -3496,6 +3507,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 label_sync_tool,
                 containment_detection_tool,
                 highlight_settings_tool,
+                path_selection_settings_tool,
                 toggle_ghost_paste,
                 None,
                 ocr_text_replace_action,
@@ -9193,6 +9205,23 @@ class LabelingWidget(QtWidgets.QWidget):
         """切换高亮设置窗口"""
         self._toggle_dialog('highlight_settings_dialog', self.open_highlight_settings_dialog)
 
+    def toggle_path_selection_settings_dialog(self):
+        """切换路径线/框选设置窗口（非阻塞，可最小化）"""
+        if (
+            hasattr(self, "path_selection_settings_dialog")
+            and self.path_selection_settings_dialog
+            and self.path_selection_settings_dialog.isVisible()
+        ):
+            self.path_selection_settings_dialog.close()
+            return
+
+        self.path_selection_settings_dialog = PathSelectionSettingsDialog(
+            parent=self
+        )
+        self.path_selection_settings_dialog.show()
+        self.path_selection_settings_dialog.raise_()
+        self.path_selection_settings_dialog.activateWindow()
+
     def toggle_label_toggle_shortcut_manager(self):
         """切换标签切换快捷键管理器窗口"""
         # 这个对话框是模态的，每次都创建新的
@@ -11330,6 +11359,33 @@ class LabelingWidget(QtWidgets.QWidget):
         self.update_navigator_shapes()  # 更新导航器以同步点击选中效果
         self._update_navigator_title_with_selection()
 
+    def _on_canvas_batch_label_changed(self, changed_shapes):
+        """路径线/框选标签模式：批量修改标签后刷新UI"""
+        if not changed_shapes:
+            return
+        # 阻止标签列表频繁刷新
+        self.label_list.setUpdatesEnabled(False)
+        try:
+            for shape in changed_shapes:
+                self._update_shape_color(shape)
+                item = self.label_list.find_item_by_shape(shape)
+                if item is not None:
+                    color = shape.fill_color.getRgb()[:3]
+                    item.setBackground(QtGui.QColor(*color, LABEL_OPACITY))
+                    item.setText(shape.label)
+        finally:
+            self.label_list.setUpdatesEnabled(True)
+        # 记录标签历史
+        target_label = changed_shapes[0].label
+        self.label_dialog.add_label_history(target_label)
+        self.set_dirty()
+        self._update_all_item_orders()
+        self._update_expand_margins_colors()
+        self.update_combo_box()
+        self.update_gid_box()
+        self.update_label_counts()
+        self.shape_list_changed.emit()
+
     def _update_navigator_title_with_selection(self):
         """Update navigator title with the size of the currently selected shape."""
         selected_shapes = self.canvas.selected_shapes
@@ -12453,40 +12509,66 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.disable_paste_preview()
 
     def refresh_canvas(self):
-        """刷新画布，重置所有图形的会话解锁状态，并取消所有选中"""
+        """刷新画布：从磁盘重新加载JSON标注数据，并重置所有图形的会话解锁状态"""
         # 取消所有选中的图形
         self.canvas.deselect_shape()
-        
+
+        # 如果有已保存的JSON标注文件，从磁盘重新加载
+        if self.label_file is not None:
+            try:
+                label_path = self.label_file.filename
+                if label_path and QtCore.QFile.exists(label_path):
+                    image_dir = self.label_file.image_dir
+                    self.label_file = LabelFile(label_path, image_dir)
+                    # 加载形状到画布
+                    if self.label_file.shapes:
+                        self.load_shapes(
+                            self.label_file.shapes,
+                            update_last_label=False,
+                            defer_widget_updates=True,
+                        )
+                    # 加载标志
+                    flags = {k: False for k in self.image_flags or []}
+                    if self.label_file.flags is not None:
+                        flags.update(self.label_file.flags)
+                    self.load_flags(flags)
+                    # 更新 other_data（含 description、manually_edited 等）
+                    if hasattr(self.label_file, 'other_data'):
+                        self.other_data = self.label_file.other_data
+                    self.set_clean()
+            except Exception:
+                pass  # JSON 重新加载失败时静默回退，至少会重置锁定状态
+
         # 重置所有图形的会话解锁状态
         for shape in self.canvas.shapes:
             shape.is_session_unlocked = False
-        
+
         # 取消锁定标签的高亮
         from ...config import get_config
         current_config = get_config()
         locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
         locked_can_highlight = current_config.get("locked_can_highlight", False)
-        
+
         # 如果没有勾选"锁定后仍可高亮"，则取消锁定标签的高亮
         if not locked_can_highlight and locked_labels:
             for item in self.label_list:
                 shape = item.shape()
                 if shape and shape.label in locked_labels:
                     shape.selected = False
-        
+
         # 更新画布
         self.canvas.update()
-        
+
         # 更新右侧对象列表显示
         self.label_list.viewport().update()
-        
+
         # 更新标签页管理器显示（如果打开的话）
         if hasattr(self, 'object_manager_dialog') and self.object_manager_dialog:
             self.object_manager_dialog.list_widget.viewport().update()
-        
+
         # 显示Popup提示
         popup = Popup(
-            "✅ " + self.tr("画布已刷新，锁定状态已重置"),
+            "✅ " + self.tr("画布已刷新，已从JSON重新加载"),
             self,
             msec=2000
         )
