@@ -31,7 +31,7 @@ class TextSplitDialog(QDialog):
     def _init_ui(self):
         layout = QVBoxLayout(self)
 
-        info = QLabel(self.tr("将选中/全部矩形框内的文字逐行分割为 line 标签"))
+        info = QLabel(self.tr("将选中/全部矩形框内的文字逐行分割，分割结果继承原矩形标签"))
         info.setWordWrap(True)
         layout.addWidget(info)
 
@@ -169,10 +169,10 @@ class TextSplitDialog(QDialog):
             lines = TextSplitDialog._split_rect_static(image_np, x1, y1, x2, y2)
             for line in lines:
                 if _is_polygon_line(line):
-                    new_shape = TextSplitDialog._make_rotation_shape("line", line)
+                    new_shape = TextSplitDialog._make_rotation_shape(shape.label, line)
                 else:
                     lx1, ly1, lx2, ly2 = map(int, line)
-                    new_shape = Shape(label="line", shape_type="rectangle")
+                    new_shape = Shape(label=shape.label, shape_type="rectangle")
                     new_shape.add_point(QtCore.QPointF(lx1, ly1))
                     new_shape.add_point(QtCore.QPointF(lx2, ly1))
                     new_shape.add_point(QtCore.QPointF(lx2, ly2))

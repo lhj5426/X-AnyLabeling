@@ -8415,6 +8415,8 @@ class LabelingWidget(QtWidgets.QWidget):
         ptr.setsize(image.byteCount())
         arr = np.array(ptr).reshape(image.height(), image.width(), 4)
         img_np = cv2.cvtColor(arr, cv2.COLOR_BGRA2RGB)
+        # 先保存当前状态到撤销栈，保证 Ctrl+Z 可回退
+        canvas.store_shapes()
         total = TextSplitDialog.split_canvas_shapes(canvas, img_np, options)
         if total > 0:
             self.load_shapes(self.canvas.shapes, replace=True)
@@ -8429,7 +8431,7 @@ class LabelingWidget(QtWidgets.QWidget):
         import numpy as np
         from anylabeling.services.text_splitter.geometry import _is_polygon_line
         canvas = self.canvas
-        selected = [s for s in canvas.shapes if s.selected and s.shape_type in ("rectangle", "rotation")]
+        selected = [s for s in canvas.selected_shapes if s.shape_type in ("rectangle", "rotation")]
         if not selected:
             self.segmentation_dialog.log(self.tr("没有选中的矩形框"))
             return
@@ -8452,20 +8454,22 @@ class LabelingWidget(QtWidgets.QWidget):
 
         keep = options.get("keep_original", True)
         total = 0
+        # 先保存当前状态到撤销栈，保证 Ctrl+Z 可回退
+        canvas.store_shapes()
         for shape in selected:
             # 如果指定了标签，只处理匹配的标签
             if target_labels and shape.label not in target_labels:
                 continue
             x1, y1, x2, y2 = TextSplitDialog._shape_to_rect(shape)
-            # 先删除此矩形范围内的旧 line 形状，避免重复生成
+            # 先删除此矩形范围内的旧自动分割结果，避免重复生成
             TextSplitDialog._remove_lines_in_rect(canvas.shapes, x1-4, y1-4, x2+4, y2+4)
             lines = TextSplitDialog._split_rect_static(img_np, x1, y1, x2, y2)
             for line in lines:
                 if _is_polygon_line(line):
-                    new_shape = TextSplitDialog._make_rotation_shape("line", line)
+                    new_shape = TextSplitDialog._make_rotation_shape(shape.label, line)
                 else:
                     lx1, ly1, lx2, ly2 = map(int, line)
-                    new_shape = Shape(label="line", shape_type="rectangle")
+                    new_shape = Shape(label=shape.label, shape_type="rectangle")
                     new_shape.add_point(QtCore.QPointF(lx1, ly1))
                     new_shape.add_point(QtCore.QPointF(lx2, ly1))
                     new_shape.add_point(QtCore.QPointF(lx2, ly2))
