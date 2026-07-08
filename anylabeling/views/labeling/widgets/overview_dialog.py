@@ -213,13 +213,15 @@ class OverviewDialog(QtWidgets.QDialog):
             self.tr("类型"),
             self.tr("组ID"),
             self.tr("困难"),
+            self.tr("宽度"),
+            self.tr("高度"),
         ])
         self.field_combo.currentIndexChanged.connect(self.on_field_changed)
         self.field_combo.setFixedWidth(100)
         
         # 条件选择下拉框 - 固定宽度
         self.condition_combo = QComboBox()
-        self.condition_combo.addItems([
+        self.text_conditions = [
             self.tr("包含"),
             self.tr("等于"),
             self.tr("不包含"),
@@ -227,7 +229,17 @@ class OverviewDialog(QtWidgets.QDialog):
             self.tr("正则匹配"),
             self.tr("为空"),
             self.tr("不为空"),
-        ])
+        ]
+        self.numeric_conditions = [
+            self.tr("小于"),
+            self.tr("大于"),
+            self.tr("等于"),
+            self.tr("小于等于"),
+            self.tr("大于等于"),
+            self.tr("为空"),
+            self.tr("不为空"),
+        ]
+        self.condition_combo.addItems(self.text_conditions)
         self.condition_combo.currentIndexChanged.connect(self.on_condition_changed)
         self.condition_combo.setFixedWidth(100)
         
@@ -545,6 +557,8 @@ class OverviewDialog(QtWidgets.QDialog):
             self.tr("文件名"),
             self.tr("标签"),
             self.tr("类型"),
+            self.tr("宽度"),
+            self.tr("高度"),
             self.tr("关联"),
             self.tr("组ID"),
             self.tr("困难"),
@@ -554,10 +568,21 @@ class OverviewDialog(QtWidgets.QDialog):
         ]
         table_data = []
         for shape in shape_infos:
+            points = shape.get("points", [])
+            if len(points) >= 2:
+                x_coords = [p[0] for p in points]
+                y_coords = [p[1] for p in points]
+                w = max(x_coords) - min(x_coords)
+                h = max(y_coords) - min(y_coords)
+            else:
+                w = 0
+                h = 0
             row = [
                 shape["filename"],
                 shape["label"],
                 shape["shape_type"],
+                str(round(w, 1)),
+                str(round(h, 1)),
                 str(shape["kie_linking"]),
                 str(shape["group_id"]),
                 str(shape["difficult"]),
@@ -774,12 +799,23 @@ class OverviewDialog(QtWidgets.QDialog):
         """
         # 获取当前条件
         condition = self.condition_combo.currentText()
+        current_field_name = self.field_combo.currentText()
+        numeric_fields = [self.tr("宽度"), self.tr("高度")]
+        is_numeric_field = current_field_name in numeric_fields
         
         # "为空"和"不为空"条件不需要搜索文本
         if condition in [self.tr("为空"), self.tr("不为空")]:
             pass  # 这些条件不需要搜索文本
         elif not search_text:
             return shape_infos
+        
+        # 数值条件需要转换搜索文本为数字
+        search_num = None
+        if is_numeric_field and search_text:
+            try:
+                search_num = float(search_text)
+            except ValueError:
+                return shape_infos  # 输入不是数字，不过滤
         
         filtered = []
         
@@ -791,56 +827,93 @@ class OverviewDialog(QtWidgets.QDialog):
             self.tr("类型"): "shape_type",
             self.tr("组ID"): "group_id",
             self.tr("困难"): "difficult",
+            self.tr("宽度"): "width",
+            self.tr("高度"): "height",
         }
         
-        current_field_name = self.field_combo.currentText()
         search_field = field_map.get(current_field_name, "filename")
         
         logger.info(f"搜索条件: 字段={current_field_name}, 条件={condition}, 搜索文本='{search_text}'")
         
         for shape in shape_infos:
-            # 获取原始字段值
-            raw_value = shape.get(search_field, "")
-            
-            # 对于困难字段，特殊处理布尔值
-            if search_field == "difficult":
-                # 布尔值转字符串: True -> "True", False -> "False"
-                field_value = str(raw_value)
+            # 宽度/高度字段从points计算
+            if search_field in ("width", "height"):
+                points = shape.get("points", [])
+                if len(points) < 2:
+                    field_value = 0
+                else:
+                    x_coords = [p[0] for p in points]
+                    y_coords = [p[1] for p in points]
+                    width = max(x_coords) - min(x_coords)
+                    height = max(y_coords) - min(y_coords)
+                    field_value = width if search_field == "width" else height
+                field_value_str = str(field_value)
             else:
-                field_value = str(raw_value)
+                # 获取原始字段值
+                raw_value = shape.get(search_field, "")
+                
+                # 对于困难字段，特殊处理布尔值
+                if search_field == "difficult":
+                    # 布尔值转字符串: True -> "True", False -> "False"
+                    field_value = str(raw_value)
+                else:
+                    field_value = str(raw_value)
+                field_value_str = field_value
             
             match = False
             
-            # 根据条件进行匹配
-            if condition == self.tr("包含"):
-                match = search_text.lower() in field_value.lower()
-            elif condition == self.tr("等于"):
-                match = search_text.lower() == field_value.lower()
-            elif condition == self.tr("不包含"):
-                match = search_text.lower() not in field_value.lower()
-            elif condition == self.tr("不等于"):
-                match = search_text.lower() != field_value.lower()
-            elif condition == self.tr("正则匹配"):
+            if is_numeric_field and search_num is not None:
+                # 数值字段用数字比较
                 try:
-                    pattern = re.compile(search_text, re.IGNORECASE)
-                    match = pattern.search(field_value) is not None
-                except re.error:
-                    # 正则表达式错误，使用普通包含匹配
-                    match = search_text.lower() in field_value.lower()
-            elif condition == self.tr("为空"):
-                # 判断为空：空字符串、"None"字符串、null、或者只有空白字符
-                match = (not field_value or 
-                        field_value.strip() == "" or 
-                        field_value == "None" or
-                        field_value == "null" or
-                        field_value == "{}")
-            elif condition == self.tr("不为空"):
-                # 判断不为空：有实际内容的字符串（排除None、null、空字符串等）
-                match = (field_value and 
-                        field_value.strip() != "" and 
-                        field_value != "None" and
-                        field_value != "null" and
-                        field_value != "{}")
+                    val = float(field_value_str)
+                except ValueError:
+                    val = 0
+                
+                if condition == self.tr("小于"):
+                    match = val < search_num
+                elif condition == self.tr("大于"):
+                    match = val > search_num
+                elif condition == self.tr("等于"):
+                    match = val == search_num
+                elif condition == self.tr("小于等于"):
+                    match = val <= search_num
+                elif condition == self.tr("大于等于"):
+                    match = val >= search_num
+                elif condition == self.tr("为空"):
+                    match = val == 0
+                elif condition == self.tr("不为空"):
+                    match = val > 0
+            else:
+                # 文本字段用字符串匹配
+                if condition == self.tr("包含"):
+                    match = search_text.lower() in field_value_str.lower()
+                elif condition == self.tr("等于"):
+                    match = search_text.lower() == field_value_str.lower()
+                elif condition == self.tr("不包含"):
+                    match = search_text.lower() not in field_value_str.lower()
+                elif condition == self.tr("不等于"):
+                    match = search_text.lower() != field_value_str.lower()
+                elif condition == self.tr("正则匹配"):
+                    try:
+                        pattern = re.compile(search_text, re.IGNORECASE)
+                        match = pattern.search(field_value_str) is not None
+                    except re.error:
+                        # 正则表达式错误，使用普通包含匹配
+                        match = search_text.lower() in field_value_str.lower()
+                elif condition == self.tr("为空"):
+                    # 判断为空：空字符串、"None"字符串、null、或者只有空白字符
+                    match = (not field_value_str or 
+                            field_value_str.strip() == "" or 
+                            field_value_str == "None" or
+                            field_value_str == "null" or
+                            field_value_str == "{}")
+                elif condition == self.tr("不为空"):
+                    # 判断不为空：有实际内容的字符串（排除None、null、空字符串等）
+                    match = (field_value_str and 
+                            field_value_str.strip() != "" and 
+                            field_value_str != "None" and
+                            field_value_str != "null" and
+                            field_value_str != "{}")
             
             if match:
                 filtered.append(shape)
@@ -875,10 +948,22 @@ class OverviewDialog(QtWidgets.QDialog):
     
     def on_field_changed(self, index):
         """
-        字段选择改变时的处理
+        字段选择改变时的处理：宽度/高度字段切换为数字条件，其他字段保持文本条件
         """
-        # 字段改变时不自动搜索，需要用户按回车
-    
+        field = self.field_combo.currentText()
+        numeric_fields = [self.tr("宽度"), self.tr("高度")]
+
+        self.condition_combo.blockSignals(True)
+        self.condition_combo.clear()
+        if field in numeric_fields:
+            self.condition_combo.addItems(self.numeric_conditions)
+        else:
+            self.condition_combo.addItems(self.text_conditions)
+        self.condition_combo.blockSignals(False)
+
+        # 重新触发一次条件改变的处理
+        self.on_condition_changed(0)
+
     def on_condition_changed(self, index):
         """
         条件选择改变时的处理
