@@ -3249,6 +3249,7 @@ class LabelingWidget(QtWidgets.QWidget):
             rectangle_scale_tool=rectangle_scale_tool,
             page_text_tool=page_text_tool,
             highlight_settings_tool=highlight_settings_tool,
+            path_selection_settings_tool=path_selection_settings_tool,
             toggle_ghost_paste=toggle_ghost_paste,
             toggle_continuous_drawing=toggle_continuous_drawing,
             label_manager=label_manager,
@@ -6810,6 +6811,33 @@ class LabelingWidget(QtWidgets.QWidget):
         else:
             self.alignment_dialog.log(self.tr("保持对齐模式，可继续执行其他操作"))
 
+        # 🔔 对齐完成后自动恢复高亮，方便观察结果
+        self._restore_highlight_after_alignment(processed_count)
+
+    def _restore_highlight_after_alignment(self, processed_count):
+        """对齐操作后自动恢复高亮状态，无需用户手动点击高亮按钮"""
+        if processed_count <= 0:
+            return
+        self._highlight_on = True
+        self.btn_highlight.setChecked(True)
+        locked_labels = set()
+        locked_can_highlight = False
+        try:
+            current_config = self._config
+            if current_config:
+                locked_labels = {label.strip() for label in current_config.get("locked_labels", "").split(',') if label.strip()}
+                locked_can_highlight = current_config.get("locked_can_highlight", False)
+        except Exception:
+            pass
+        for shape in self.canvas.shapes:
+            if not shape.visible:
+                continue
+            if not locked_can_highlight and shape.label in locked_labels and not getattr(shape, 'is_session_unlocked', False):
+                continue
+            shape.selected = True
+            shape.fill = True
+        self.canvas.update()
+
     def _fix_shape_direction(self, scope="selected"):
         """修复旋转矩形的方向。
         
@@ -8283,6 +8311,7 @@ class LabelingWidget(QtWidgets.QWidget):
             "label_sync_tool": "label_sync_tool",
             "page_text_tool": "page_text_tool",
             "highlight_settings_tool": "highlight_settings_tool",
+            "path_selection_settings_tool": "path_selection_settings_tool",
             "rectangle_scale_tool": "rectangle_scale_tool",
             "expand_margins": "expand_margins",
             "tag_sort_tool": "tag_sort_tool",
@@ -8581,48 +8610,64 @@ class LabelingWidget(QtWidgets.QWidget):
         """Enter vertical cut mode."""
         self.segmentation_mode = 'vertical'
         self.canvas.set_segmentation_mode('vertical')
-        # 保存原来的十字线状态
         if not hasattr(self, '_saved_crosshair_state'):
             self._saved_crosshair_state = self.canvas.cross_line_show
-        # 开启十字线并设置为仅垂直线
         self.canvas.cross_line_show = True
         self.canvas.set_crosshair_style('vertical_only')
-        # 禁用数字快捷键1和2，让分割模式优先
         self._disable_digit_shortcuts_for_segmentation()
 
     def on_enter_horizontal_cut_mode(self):
         """Enter horizontal cut mode."""
         self.segmentation_mode = 'horizontal'
         self.canvas.set_segmentation_mode('horizontal')
-        # 保存原来的十字线状态
         if not hasattr(self, '_saved_crosshair_state'):
             self._saved_crosshair_state = self.canvas.cross_line_show
-        # 开启十字线并设置为仅水平线
         self.canvas.cross_line_show = True
         self.canvas.set_crosshair_style('horizontal_only')
-        # 禁用数字快捷键1和2，让分割模式优先
         self._disable_digit_shortcuts_for_segmentation()
 
     def _disable_digit_shortcuts_for_segmentation(self):
-        """禁用数字快捷键1和2，让分割模式可以使用这些键"""
-        if hasattr(self, 'actions') and hasattr(self.actions, 'digit_shortcut_1'):
-            # 保存原来的快捷键
-            if not hasattr(self, '_saved_digit_shortcuts'):
-                self._saved_digit_shortcuts = {
-                    '1': self.actions.digit_shortcut_1.shortcut(),
-                    '2': self.actions.digit_shortcut_2.shortcut(),
-                }
-            # 清空快捷键
-            self.actions.digit_shortcut_1.setShortcut('')
-            self.actions.digit_shortcut_2.setShortcut('')
+        """分割模式下替换数字键 QAction slot——不依赖清 shortcut，稳稳拦截"""
+        if not hasattr(self, 'actions'):
+            return
+        self._seg_saved_slots = {}
+        for i in [1, 2, 3]:
+            action = getattr(self.actions, f'digit_shortcut_{i}', None)
+            if action:
+                try:
+                    action.triggered.disconnect()
+                except Exception:
+                    pass
+                self._seg_saved_slots[i] = True
+                action.triggered.connect(
+                    lambda checked=False, d=i: self._on_seg_digit(d))
 
     def _restore_digit_shortcuts(self):
-        """恢复数字快捷键1和2"""
-        if hasattr(self, '_saved_digit_shortcuts') and hasattr(self, 'actions'):
-            if hasattr(self.actions, 'digit_shortcut_1'):
-                self.actions.digit_shortcut_1.setShortcut(self._saved_digit_shortcuts.get('1', '1'))
-                self.actions.digit_shortcut_2.setShortcut(self._saved_digit_shortcuts.get('2', '2'))
-            delattr(self, '_saved_digit_shortcuts')
+        """恢复数字快捷键原始 slot"""
+        if not hasattr(self, '_seg_saved_slots'):
+            return
+        for i in [1, 2, 3]:
+            action = getattr(self.actions, f'digit_shortcut_{i}', None)
+            if action and i in self._seg_saved_slots:
+                try:
+                    action.triggered.disconnect()
+                except Exception:
+                    pass
+                action.triggered.connect(
+                    lambda checked=False, d=i: self.create_digit_mode(d))
+        del self._seg_saved_slots
+
+    def _on_seg_digit(self, digit):
+        """分割模式下数字键处理：1=垂直 2=水平 3=退出"""
+        if digit == 1:
+            self.on_enter_vertical_cut_mode()
+        elif digit == 2:
+            self.on_enter_horizontal_cut_mode()
+        elif digit == 3:
+            if self.segmentation_dialog:
+                self.segmentation_dialog.log_message(
+                    self.tr("已退出分割模式（按键3）"))
+            self.on_exit_segmentation_mode()
 
     def on_exit_segmentation_mode(self):
         """Exit segmentation mode."""
@@ -8643,9 +8688,8 @@ class LabelingWidget(QtWidgets.QWidget):
         self.on_exit_segmentation_mode()
 
     def on_segmentation_mode_exit_requested(self):
-        """Handle middle-click exit request from canvas."""
+        """Handle exit request from canvas."""
         if self.segmentation_dialog:
-            # Trigger the exit button in the dialog to keep UI in sync
             self.segmentation_dialog.on_exit_mode()
     def _toggle_dialog(self, dialog_attr, open_method):
         """通用的对话框切换方法
@@ -9980,6 +10024,7 @@ class LabelingWidget(QtWidgets.QWidget):
             ("页文本工具",): "page_text_tool",
             ("包围检测",): "containment_detection_tool",
             ("高亮设置",): "highlight_settings_tool",
+            ("路径线/框选设置",): "path_selection_settings_tool",
             ("标签管理器",): "label_manager",
             ("标签切换快捷键管理器",): "label_toggle_shortcut_manager",
             ("颜色管理工具",): "color_manager_tool",
@@ -10391,6 +10436,9 @@ class LabelingWidget(QtWidgets.QWidget):
         self.actions.union_selection.setEnabled(not drawing)
 
     def create_digit_mode(self, digit_num):
+        # 分割模式下数字键用于切换/退出分割，不触发标签创建
+        if self.canvas.segmentation_mode is not None:
+            return
         if self.drawing_digit_shortcuts is None:
             return
 
@@ -17680,6 +17728,39 @@ class LabelingWidget(QtWidgets.QWidget):
                 # "包含任一标签"模式：文件包含任何一个选中的标签即可
                 return bool(file_labels.intersection(selected_labels_set))
         
+        # 图像尺寸过滤（过滤包含小矩形的文件）
+        if mode == 'dimension':
+            if not isinstance(value, dict):
+                return True
+            filter_width = value.get('filter_width', True)
+            max_width = value.get('max_width', 0)
+            filter_height = value.get('filter_height', True)
+            max_height = value.get('max_height', 0)
+
+            if not filter_width and not filter_height:
+                return True
+
+            shapes = data.get("shapes", [])
+            if not shapes:
+                return False
+
+            for shape in shapes:
+                points = shape.get("points", [])
+                if len(points) < 2:
+                    continue
+                # 计算矩形宽高
+                x_coords = [p[0] for p in points]
+                y_coords = [p[1] for p in points]
+                w = max(x_coords) - min(x_coords)
+                h = max(y_coords) - min(y_coords)
+
+                width_ok = (not filter_width) or (w < max_width)
+                height_ok = (not filter_height) or (h < max_height)
+                if width_ok and height_ok:
+                    return True  # 至少有一个矩形满足条件
+
+            return False
+        
         return True
 
     def _file_has_overlapping_shapes(self, label_data, overlap_config):
@@ -18849,6 +18930,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.error_message("无当前文件", "没有打开任何文件。")
                 return
             files_to_process = [self.filename]
+            self._is_current_file_merge = True  # 本页合并标记，完成后只需重载形状
             # 获取当前文件的页码
             if self.filename in self.image_list:
                 start_page = self.image_list.index(self.filename) + 1
@@ -18899,12 +18981,18 @@ class LabelingWidget(QtWidgets.QWidget):
             
             # 在最后显示失败页面列表（不带时间戳，带序号）
             if hasattr(self.merge_thread, 'failed_pages') and self.merge_thread.failed_pages:
-                # 直接添加到文本框，不通过log方法（避免时间戳）
                 self.merge_tool_dialog.log_text.append("未处理的页数如下:")
                 for idx, (page_num, reason) in enumerate(self.merge_thread.failed_pages, 1):
                     self.merge_tool_dialog.log_text.append(f"{idx:02d}.第{page_num}页 原因: {reason}")
         
-        self.load_file(self.filename)
+        # 本页合并：只重载形状，不重载画布，无闪烁
+        if getattr(self, '_is_current_file_merge', False):
+            self._is_current_file_merge = False
+            self._reload_shapes_only()
+        else:
+            # 批量合并：需要完整重载文件
+            self.load_file(self.filename)
+        
         if self.merge_thread.files and len(self.merge_thread.files) > 1:
             popup = Popup(
                 message,
@@ -18912,6 +19000,20 @@ class LabelingWidget(QtWidgets.QWidget):
                 icon=utils.new_icon_path("copy-green", "svg"),
             )
             popup.show_popup(self, popup_height=65, position="center")
+
+    def _reload_shapes_only(self):
+        """仅从 JSON 文件重载形状到画布，不重载图像 —— 避免画布闪烁"""
+        label_path = os.path.splitext(self.filename)[0] + '.json'
+        if not os.path.exists(label_path):
+            return
+        try:
+            label_file = LabelFile(label_path, osp.dirname(self.filename))
+            if not label_file.shapes:
+                return
+            # load_shapes 内部已处理：clear label_list → add_label → canvas替换 → update
+            self.load_shapes(label_file.shapes, replace=True)
+        except Exception:
+            pass  # 静默失败，用户可手动刷新
 
     def open_label_tool(self):
         if not self.last_open_dir:

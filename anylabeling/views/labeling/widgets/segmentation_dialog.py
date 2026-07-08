@@ -164,7 +164,7 @@ class SegmentationDialog(QtWidgets.QDialog):
         # Exit button
         self.exit_button = QtWidgets.QPushButton(self.tr("3. 退出分割模式"))
         self.exit_button.setStyleSheet(exit_button_style)
-        self.exit_button.clicked.connect(self.on_exit_mode)
+        self.exit_button.clicked.connect(self._exit_button_clicked)
         mode_layout.addWidget(self.exit_button)
 
         mode_group.setLayout(mode_layout)
@@ -327,7 +327,7 @@ class SegmentationDialog(QtWidgets.QDialog):
                 "padding: 8px; background-color: #d4edda; "
                 "border-radius: 5px; font-weight: bold; font-size: 12px; color: #155724;"
             )
-            self.log_message(self.tr("已进入垂直分割模式。请选择一个矩形，然后在其内部点击确定切割位置。"))
+            self.log_message(self.tr("垂直分割模式"))
             self.enter_vertical_cut_mode.emit()
         else:
             self.current_mode = None
@@ -349,7 +349,7 @@ class SegmentationDialog(QtWidgets.QDialog):
                 "padding: 8px; background-color: #d1ecf1; "
                 "border-radius: 5px; font-weight: bold; font-size: 12px; color: #0c5460;"
             )
-            self.log_message(self.tr("已进入水平分割模式。请选择一个矩形，然后在其内部点击确定切割位置。"))
+            self.log_message(self.tr("水平分割模式"))
             self.enter_horizontal_cut_mode.emit()
         else:
             self.current_mode = None
@@ -371,8 +371,12 @@ class SegmentationDialog(QtWidgets.QDialog):
             "padding: 8px; background-color: #e9ecef; "
             "border-radius: 5px; font-weight: bold; font-size: 12px;"
         )
-        self.log_message(self.tr("已退出分割模式。"))
         self.exit_segmentation_mode.emit()
+
+    def _exit_button_clicked(self):
+        """退出按钮：打日志后退出"""
+        self.log_message(self.tr("已退出分割模式。"))
+        self.on_exit_mode()
 
     def on_horizontal_length_changed(self, value):
         """Handle horizontal line length change."""

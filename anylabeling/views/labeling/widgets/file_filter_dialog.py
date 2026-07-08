@@ -1,7 +1,7 @@
 """文件过滤对话框"""
 
 from PyQt5 import QtWidgets, QtCore, QtGui
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QSettings
 from PyQt5.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -26,8 +26,9 @@ class FileFilterDialog(QDialog):
     def __init__(self, parent=None, available_labels=None):
         super().__init__(parent)
         self.setWindowTitle("文件过滤")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(300)
         self.setMinimumHeight(500)
+        self.resize(380, 650)
         
         # 添加最小化按钮
         self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint)
@@ -35,6 +36,9 @@ class FileFilterDialog(QDialog):
         self.label_widget = parent  # 保存label_widget的引用
         self.available_labels = available_labels or []
         self.init_ui()
+
+        # 恢复上次窗口大小
+        self._restore_size()
 
         # 监听标签库变化，自动刷新标签列表
         if self.label_widget and hasattr(self.label_widget, 'unique_label_list'):
@@ -168,6 +172,46 @@ class FileFilterDialog(QDialog):
 
         overlap_group.setLayout(overlap_layout)
         layout.addWidget(overlap_group)
+
+        # 矩形尺寸过滤
+        dimension_group = QGroupBox("矩形尺寸")
+        dimension_layout = QVBoxLayout()
+
+        self.dimension_filter = QRadioButton("按矩形尺寸过滤")
+        self.filter_group.addButton(self.dimension_filter)
+        dimension_layout.addWidget(self.dimension_filter)
+
+        dimension_hint = QLabel("过滤包含小矩形的文件（检查标注中的矩形宽高）")
+        dimension_hint.setStyleSheet("color: gray; font-size: 11px;")
+        dimension_layout.addWidget(dimension_hint)
+
+        # 宽高横向并排
+        wh_layout = QHBoxLayout()
+        self.dimension_width_check = QCheckBox("宽度小于")
+        self.dimension_width_check.setChecked(True)
+        self.dimension_width_spin = QSpinBox()
+        self.dimension_width_spin.setRange(1, 99)
+        self.dimension_width_spin.setValue(10)
+        self.dimension_width_spin.setFixedWidth(45)
+        self.dimension_width_check.toggled.connect(self.dimension_width_spin.setEnabled)
+        wh_layout.addWidget(self.dimension_width_check)
+        wh_layout.addWidget(self.dimension_width_spin)
+        wh_layout.addSpacing(20)
+
+        self.dimension_height_check = QCheckBox("高度小于")
+        self.dimension_height_check.setChecked(True)
+        self.dimension_height_spin = QSpinBox()
+        self.dimension_height_spin.setRange(1, 99)
+        self.dimension_height_spin.setValue(10)
+        self.dimension_height_spin.setFixedWidth(45)
+        self.dimension_height_check.toggled.connect(self.dimension_height_spin.setEnabled)
+        wh_layout.addWidget(self.dimension_height_check)
+        wh_layout.addWidget(self.dimension_height_spin)
+        wh_layout.addStretch()
+        dimension_layout.addLayout(wh_layout)
+
+        dimension_group.setLayout(dimension_layout)
+        layout.addWidget(dimension_group)
         
         # 标签过滤
         label_group = QGroupBox("标签过滤")
@@ -195,6 +239,8 @@ class FileFilterDialog(QDialog):
         self.label_list = QListWidget()
         # 不使用MultiSelection，而是使用复选框
         self.label_list.setSelectionMode(QListWidget.NoSelection)
+        self.label_list.setMinimumHeight(150)
+        self.label_list.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.update_label_list(self.available_labels)
         label_layout.addWidget(self.label_list)
         
@@ -209,6 +255,7 @@ class FileFilterDialog(QDialog):
         label_layout.addLayout(label_btn_layout)
         
         label_group.setLayout(label_layout)
+        label_group.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
         layout.addWidget(label_group)
         
         # 连接信号：当勾选标签时，自动选中"按标签过滤"；重叠检测时保留为联动标签
@@ -397,6 +444,14 @@ class FileFilterDialog(QDialog):
                 'labels': checked_labels,
                 'match_mode': match_mode
             }
+        elif self.dimension_filter.isChecked():
+            config['mode'] = 'dimension'
+            config['value'] = {
+                'filter_width': self.dimension_width_check.isChecked(),
+                'max_width': self.dimension_width_spin.value(),
+                'filter_height': self.dimension_height_check.isChecked(),
+                'max_height': self.dimension_height_spin.value(),
+            }
         
         return config
     
@@ -406,17 +461,37 @@ class FileFilterDialog(QDialog):
         self.filter_applied.emit(config)
     
     def reset_filter(self):
-        """重置过滤条件"""
-        # 取消所有选中的单选按钮
-        self.filter_group.setExclusive(False)
-        for button in self.filter_group.buttons():
-            button.setChecked(False)
-        self.filter_group.setExclusive(True)
-        
-        # 取消所有标签的勾选
-        for i in range(self.label_list.count()):
-            self.label_list.item(i).setCheckState(Qt.Unchecked)
-        
-        # 发送重置信号（mode='none'表示无过滤）
-        config = {'mode': 'none', 'value': None}
-        self.filter_applied.emit(config)
+        """重置：恢复显示全部文件，对话框界面选择不变"""
+        self.filter_applied.emit({'mode': 'none', 'value': None})
+
+    def _get_window_settings(self):
+        """获取窗口 INI 配置（复用 label_widget 的 _window_settings）"""
+        if self.label_widget and hasattr(self.label_widget, '_window_settings'):
+            return self.label_widget._window_settings()
+        # fallback
+        import os
+        ini_path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
+            "xanylabeling_window.ini")
+        return QSettings(ini_path, QSettings.IniFormat)
+
+    def _restore_size(self):
+        """从 INI 恢复上次窗口大小"""
+        try:
+            settings = self._get_window_settings()
+            w = settings.value("file_filter/width")
+            h = settings.value("file_filter/height")
+            if w is not None and h is not None:
+                self.resize(int(w), int(h))
+        except Exception:
+            pass
+
+    def closeEvent(self, event):
+        """保存窗口大小到 INI"""
+        try:
+            settings = self._get_window_settings()
+            settings.setValue("file_filter/width", self.width())
+            settings.setValue("file_filter/height", self.height())
+        except Exception:
+            pass
+        super().closeEvent(event)

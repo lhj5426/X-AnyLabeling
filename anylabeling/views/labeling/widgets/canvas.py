@@ -2720,6 +2720,9 @@ class Canvas(
             shape = None
             for s in reversed(self.shapes):
                 if self.is_visible(s) and s.contains_point(pos) and s.shape_type in ["rectangle", "rotation"]:
+                    # 排除被锁定的标签
+                    if s.is_label_locked():
+                        continue
                     shape = s
                     break
             if shape:
@@ -2733,6 +2736,9 @@ class Canvas(
                 shape = None
                 for s in reversed(self.shapes):
                     if self.is_visible(s) and s.contains_point(pos) and s.shape_type in ["rectangle", "rotation"]:
+                        # 排除被锁定的标签
+                        if s.is_label_locked():
+                            continue
                         shape = s
                         break
 
@@ -2770,7 +2776,10 @@ class Canvas(
                 return  # Intercept click
 
             elif ev.button() == QtCore.Qt.MiddleButton:
-                # Middle click: exit segmentation mode
+                # 中键：退出分割模式
+                if self.parent and self.parent.segmentation_dialog:
+                    self.parent.segmentation_dialog.log_message(
+                        self.parent.segmentation_dialog.tr("已退出分割模式（鼠标中键）"))
                 self.segmentation_mode_exit_requested.emit()
                 return  # Intercept click
 
@@ -3222,7 +3231,9 @@ class Canvas(
             self.selected_shapes = newly_selected
 
         # 标签模式：批量替换选中形状的标签
-        self._try_apply_batch_label(self.selected_shapes)
+        # 对齐工具选择目标对象时不触发自动改标签
+        if not self.is_alignment_target_mode:
+            self._try_apply_batch_label(self.selected_shapes)
 
         self.selection_changed.emit(self.selected_shapes)
 
@@ -3379,11 +3390,14 @@ class Canvas(
         if not self.path_selection_mode:
             return
 
-        # Select all highlighted shapes
+        # Select all highlighted shapes (alignment mode excludes locked shapes)
         newly_selected = []
         for shape in self.path_highlighted_shapes:
-            if shape.visible:
-                newly_selected.append(shape)
+            if not shape.visible:
+                continue
+            if self.is_alignment_target_mode and shape.is_label_locked():
+                continue
+            newly_selected.append(shape)
 
         # Update selected shapes
         if self.is_alignment_target_mode:
@@ -3399,12 +3413,19 @@ class Canvas(
 
         # --- Label Lock Override ---
         # If a locked shape is selected with the path tool, unlock it for the session.
+        # 记录本次新解锁的形状，标签模式下不修改这些形状的标签
+        freshly_unlocked = []
         for shape in self.selected_shapes:
             if shape.is_label_locked():
                 shape.is_session_unlocked = True
+                freshly_unlocked.append(shape)
 
         # 标签模式：批量替换选中形状的标签
-        self._try_apply_batch_label(self.selected_shapes)
+        # 对齐工具选择目标对象时不触发自动改标签
+        # 新解锁的形状不修改标签，仅解锁；下次路径线再选到才会修改标签
+        if not self.is_alignment_target_mode:
+            shapes_to_relabel = [s for s in self.selected_shapes if s not in freshly_unlocked]
+            self._try_apply_batch_label(shapes_to_relabel)
 
         self.selection_changed.emit(self.selected_shapes)
 
@@ -7922,18 +7943,50 @@ class Canvas(
         方向键移动时禁用吸附，只显示辅助线，让用户可以自由移动
         支持连接的形状同步移动
         """
-        if self.selected_shapes:
-            # 直接移动选中的形状
-            for shape in self.selected_shapes:
-                shape.move_by(offset)
-                shape.is_edited = True
-            
-            # 🎯 同步移动连接的形状（链式传递）
-            if self.edge_connections:
-                self._sync_connected_shapes_on_keyboard_move(self.selected_shapes, offset)
-            
-            self.repaint()
-            self.moving_shape = True
+        if not self.selected_shapes:
+            return
+
+        # 收集所有将被移动的形状（包括边缘连接的）
+        all_shapes = set(self.selected_shapes)
+        if self.edge_connections:
+            all_shapes.update(self._collect_connected_for_move(self.selected_shapes))
+
+        # 🔒 防越界：移动前预判，任何形状会越界则不动（撞墙无反应）
+        if self.pixmap and not self.pixmap.isNull():
+            img_w, img_h = self.pixmap.width(), self.pixmap.height()
+            for shape in all_shapes:
+                for pt in shape.points:
+                    nx, ny = pt.x() + offset.x(), pt.y() + offset.y()
+                    if nx < 0 or nx > img_w or ny < 0 or ny > img_h:
+                        return  # 会越界，放弃本次移动
+
+        # 实际移动
+        for shape in self.selected_shapes:
+            shape.move_by(offset)
+            shape.is_edited = True
+
+        if self.edge_connections:
+            self._sync_connected_shapes_on_keyboard_move(self.selected_shapes, offset)
+
+        self.repaint()
+        self.moving_shape = True
+
+    def _collect_connected_for_move(self, shapes):
+        """收集所有通过边缘连接关联的形状（不移动，仅收集）"""
+        connected = set()
+        visited = set(id(s) for s in shapes)
+        stack = list(shapes)
+        while stack:
+            shape = stack.pop()
+            for edge in ['left', 'right', 'top', 'bottom']:
+                key = (id(shape), edge)
+                if key in self.edge_connections:
+                    cs, _ = self.edge_connections[key]
+                    if id(cs) not in visited:
+                        visited.add(id(cs))
+                        connected.add(cs)
+                        stack.append(cs)
+        return connected
 
     def _sync_connected_shapes_on_keyboard_move(self, moved_shapes, offset):
         """键盘移动时同步连接的形状（链式传递）
@@ -7941,9 +7994,12 @@ class Canvas(
         Args:
             moved_shapes: 被移动的形状列表
             offset: 移动偏移量
+        
+        Returns:
+            set: 本次被同步移动的连接形状集合（用于后续防越界钳制）
         """
         if not self.edge_connections:
-            return
+            return set()
         
         # 使用递归收集所有需要同步移动的形状
         shapes_to_move = set()
@@ -7966,6 +8022,8 @@ class Canvas(
         for connected_shape in shapes_to_move:
             connected_shape.move_by(offset)
             connected_shape.is_edited = True
+        
+        return shapes_to_move
 
     def rotate_by_keyboard(self, theta):
         """Rotate selected shapes by an theta (using keyboard)"""
@@ -8051,40 +8109,45 @@ class Canvas(
             if self._brush_key_press(event):
                 return
 
-        # 分割模式下，按1切换垂直分割，按2切换水平分割
+        # 分割模式下，按1切换垂直，按2切换水平，按3退出
         if self.segmentation_mode is not None:
             if event.key() == Qt.Key_1:
-                # 切换到垂直分割模式
                 if self.segmentation_mode != 'vertical':
                     self.parent.on_enter_vertical_cut_mode()
-                    # 同步更新对话框按钮状态
                     if self.parent.segmentation_dialog:
-                        self.parent.segmentation_dialog.vertical_button.setChecked(True)
-                        self.parent.segmentation_dialog.horizontal_button.setChecked(False)
-                        self.parent.segmentation_dialog.current_mode = 'vertical'
-                        self.parent.segmentation_dialog.mode_label.setText(self.parent.segmentation_dialog.tr("当前模式: 垂直分割"))
-                        self.parent.segmentation_dialog.mode_label.setStyleSheet(
+                        dlg = self.parent.segmentation_dialog
+                        dlg.vertical_button.setChecked(True)
+                        dlg.horizontal_button.setChecked(False)
+                        dlg.current_mode = 'vertical'
+                        dlg.mode_label.setText(dlg.tr("当前模式: 垂直分割"))
+                        dlg.mode_label.setStyleSheet(
                             "padding: 8px; background-color: #d4edda; "
                             "border-radius: 5px; font-weight: bold; font-size: 12px; color: #155724;"
                         )
-                        self.parent.segmentation_dialog.log_message(self.parent.segmentation_dialog.tr("已切换到垂直分割模式（按键1）"))
+                        dlg.log_message(dlg.tr("垂直分割（按键1）"))
                 event.accept()
                 return
             elif event.key() == Qt.Key_2:
-                # 切换到水平分割模式
                 if self.segmentation_mode != 'horizontal':
                     self.parent.on_enter_horizontal_cut_mode()
-                    # 同步更新对话框按钮状态
                     if self.parent.segmentation_dialog:
-                        self.parent.segmentation_dialog.horizontal_button.setChecked(True)
-                        self.parent.segmentation_dialog.vertical_button.setChecked(False)
-                        self.parent.segmentation_dialog.current_mode = 'horizontal'
-                        self.parent.segmentation_dialog.mode_label.setText(self.parent.segmentation_dialog.tr("当前模式: 水平分割"))
-                        self.parent.segmentation_dialog.mode_label.setStyleSheet(
+                        dlg = self.parent.segmentation_dialog
+                        dlg.horizontal_button.setChecked(True)
+                        dlg.vertical_button.setChecked(False)
+                        dlg.current_mode = 'horizontal'
+                        dlg.mode_label.setText(dlg.tr("当前模式: 水平分割"))
+                        dlg.mode_label.setStyleSheet(
                             "padding: 8px; background-color: #d1ecf1; "
                             "border-radius: 5px; font-weight: bold; font-size: 12px; color: #0c5460;"
                         )
-                        self.parent.segmentation_dialog.log_message(self.parent.segmentation_dialog.tr("已切换到水平分割模式（按键2）"))
+                        dlg.log_message(dlg.tr("水平分割（按键2）"))
+                event.accept()
+                return
+            elif event.key() == Qt.Key_3:
+                if self.parent and self.parent.segmentation_dialog:
+                    self.parent.segmentation_dialog.log_message(
+                        self.parent.segmentation_dialog.tr("已退出分割模式（按键3）"))
+                self.segmentation_mode_exit_requested.emit()
                 event.accept()
                 return
 

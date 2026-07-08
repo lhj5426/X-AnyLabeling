@@ -159,6 +159,7 @@ class ShortcutManagerDialog(QtWidgets.QDialog):
                 ("label_sync_tool", self.tr("标签同步工具")),
                 ("containment_detection_tool", self.tr("包围检测")),
                 ("highlight_settings_tool", self.tr("高亮设置")),
+                ("path_selection_settings_tool", self.tr("路径线/框选设置")),
                 ("label_manager", self.tr("标签管理器")),
                 ("object_manager", self.tr("标签页管理器")),
                 ("edit_group_id", self.tr("群组编号管理器")),
