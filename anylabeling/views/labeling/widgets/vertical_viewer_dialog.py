@@ -478,6 +478,9 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         """)
         self.thumbnail_list.setItemDelegate(ThumbnailDelegate(self.thumbnail_list))
         self.thumbnail_list.itemClicked.connect(self.on_thumbnail_clicked)
+        self.thumbnail_list.verticalScrollBar().valueChanged.connect(
+            self._load_thumbnail_icons
+        )
         self.thumbnail_list.setVisible(False) # Default hidden
         
         # Main content layout
@@ -512,6 +515,12 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         layout.addLayout(main_h_layout) # Add the horizontal layout to the main vertical layout
         
         self.view.verticalScrollBar().valueChanged.connect(self.on_scroll)
+        self.view.verticalScrollBar().sliderPressed.connect(
+            self._begin_scrollbar_drag
+        )
+        self.view.verticalScrollBar().sliderReleased.connect(
+            self._finish_scrollbar_drag
+        )
         self.view.installEventFilter(self)
         
         self.populated = False
@@ -527,10 +536,13 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.fill_annotations = False
         self.sync_scroll_enabled = False
         self.show_dividers = True  # 显示分隔符
+        self._scrollbar_dragging = False
 
         # Thread pool for loading images
         self.thread_pool = QtCore.QThreadPool()
         self.thread_pool.setMaxThreadCount(4)
+        self.thumbnail_pool = QtCore.QThreadPool()
+        self.thumbnail_pool.setMaxThreadCount(2)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -595,11 +607,6 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             item.setTextAlignment(QtCore.Qt.AlignCenter)
             self.thumbnail_list.addItem(item)
             
-            loader = ThumbnailLoader(path, 100)
-            # Correctly handle all signal arguments to prevent 'item' from being overwritten by 'shapes' list
-            # Signal: loaded(str, QImage, float, list, float) -> p, img, r, s, sc
-            loader.signals.loaded.connect(lambda p, img, r, s, sc, it=item: self.on_thumbnail_loaded(p, img, it))
-            self.thread_pool.start(loader)
         
         self._populate_batch = 0
         self._populate_total_batches = total
@@ -646,6 +653,14 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             self.scene.addItem(item)
             self.items_map[path] = item
             self.items_list.append(item)
+
+            # 当前图片一加入场景便立即进入加载队列，不必等待整个
+            # 文件夹的占位项创建完成。
+            if path == self.current_filename and not item.loading:
+                item.loading = True
+                loader = ImageLoader(item.path, SCENE_BASE_WIDTH)
+                loader.signals.loaded.connect(self.on_image_loaded)
+                self.thread_pool.start(loader, 20)
             
             y_offset += item.get_height()
         
@@ -672,7 +687,12 @@ class VerticalViewerDialog(QtWidgets.QDialog):
                     current_item.loading = True
                     loader = ImageLoader(current_item.path, SCENE_BASE_WIDTH)
                     loader.signals.loaded.connect(self.on_image_loaded)
-                    self.thread_pool.start(loader)
+                    self.thread_pool.start(loader, 20)
+
+            # 缩略图面板默认隐藏；延迟到实际显示时再加载，避免整批
+            # 缩略图占用线程池，拖慢当前图片及可见图片的加载。
+            if self.thumbnails_visible:
+                self._load_thumbnail_icons()
             
             # 延迟检查可见项（会加载可见区域的图片）
             QtCore.QTimer.singleShot(150, self.check_visible_items)
@@ -686,6 +706,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
              pixmap = QtGui.QPixmap.fromImage(image)
              if isinstance(item, QtWidgets.QListWidgetItem):
                  item.setIcon(QtGui.QIcon(pixmap))
+                 item.setData(QtCore.Qt.UserRole + 1, "loaded")
                  
                  # Calculate size hint for variable height
                  # Target width approx 100 (tight fit for 100px icons)
@@ -702,6 +723,31 @@ class VerticalViewerDialog(QtWidgets.QDialog):
              
         except RuntimeError:
              pass
+
+    def _load_thumbnail_icons(self):
+        """仅在缩略图面板显示时加载其图标，主图片加载优先。"""
+        viewport_rect = self.thumbnail_list.viewport().rect().adjusted(
+            -200, -200, 200, 200
+        )
+        for index in range(self.thumbnail_list.count()):
+            item = self.thumbnail_list.item(index)
+            if item is None or item.data(QtCore.Qt.UserRole + 1):
+                continue
+            if not self.thumbnail_list.visualItemRect(item).intersects(
+                viewport_rect
+            ):
+                continue
+            path = item.data(QtCore.Qt.UserRole)
+            if not path:
+                continue
+            item.setData(QtCore.Qt.UserRole + 1, "loading")
+            loader = ThumbnailLoader(path, 100)
+            loader.signals.loaded.connect(
+                lambda p, img, r, s, sc, it=item: self.on_thumbnail_loaded(
+                    p, img, it
+                )
+            )
+            self.thumbnail_pool.start(loader)
 
     def _center_on_item(self, item):
         """将指定图片的中心点对齐到视口中心"""
@@ -857,9 +903,40 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             return self.items_list[closest_idx]
         return None
 
+    def _reset_cancelled_loading_flags(self):
+        """让被清除的排队任务可在最终位置重新进入加载队列。"""
+        for item in self.items_list:
+            if not item.loaded:
+                item.loading = False
+
+    def _begin_scrollbar_drag(self):
+        """拖动滑块时丢弃中间位置的预读任务。"""
+        self._scrollbar_dragging = True
+        self.thread_pool.clear()
+        self._reset_cancelled_loading_flags()
+
+    def _finish_scrollbar_drag(self):
+        """松开滑块后只加载最终可见位置的图片。"""
+        self._scrollbar_dragging = False
+        self.thread_pool.clear()
+        self._reset_cancelled_loading_flags()
+        # sliderReleased 触发时，QGraphicsView 的可见区域可能仍是旧位置；
+        # 延迟到本轮事件处理结束后再读取最终视口坐标。
+        QtCore.QTimer.singleShot(0, self._load_final_scroll_position)
+
+    def _load_final_scroll_position(self):
+        """在滚动条最终位置稳定后加载可见图片。"""
+        if self.closing or self._scrollbar_dragging:
+            return
+        self.check_visible_items()
+        self.on_scroll()
+
     def on_scroll(self):
         if self.closing: return
-        self.check_visible_items()
+        # 拖动过程中会持续经过大量中间位置；这些图片不值得入队。
+        # 在 sliderReleased 时再为最终位置统一加载。
+        if not self._scrollbar_dragging:
+            self.check_visible_items()
         center_item = self.get_center_item()
         if center_item:
              idx = self.items_list.index(center_item)
@@ -914,13 +991,13 @@ class VerticalViewerDialog(QtWidgets.QDialog):
                         item.loading = True
                         loader = ImageLoader(item.path, SCENE_BASE_WIDTH)
                         loader.signals.loaded.connect(self.on_image_loaded)
-                        self.thread_pool.start(loader)
+                        self.thread_pool.start(loader, 10)
             except RuntimeError:
                 continue
         
-        # 预加载前后各5张图片
+        # 预加载前后各 10 张图片，快速滚动时减少灰色占位图。
         if visible_indices:
-            preload_count = 5
+            preload_count = 10
             min_idx = max(0, min(visible_indices) - preload_count)
             max_idx = min(len(self.items_list) - 1, max(visible_indices) + preload_count)
             
@@ -932,7 +1009,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
                             item.loading = True
                             loader = ImageLoader(item.path, SCENE_BASE_WIDTH)
                             loader.signals.loaded.connect(self.on_image_loaded)
-                            self.thread_pool.start(loader)
+                            self.thread_pool.start(loader, -10)
                     except RuntimeError:
                         continue
 
@@ -1065,6 +1142,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
         self.thumbnails_visible = not self.thumbnails_visible
         self.thumbnail_list.setVisible(self.thumbnails_visible)
         if self.thumbnails_visible:
+            self._load_thumbnail_icons()
             # Sync selection
             center_item = self.get_center_item()
             if center_item:
@@ -1215,7 +1293,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
             item.loading = True
             loader = ImageLoader(item.path, SCENE_BASE_WIDTH)
             loader.signals.loaded.connect(self.on_image_loaded)
-            self.thread_pool.start(loader)
+            self.thread_pool.start(loader, 10)
 
     def go_to_next_image(self):
         """翻到下一张图片"""
@@ -1407,6 +1485,7 @@ class VerticalViewerDialog(QtWidgets.QDialog):
     def closeEvent(self, event):
         self.closing = True
         self.thread_pool.waitForDone(1000)
+        self.thumbnail_pool.waitForDone(1000)
         self.items_map.clear()
         self.items_list.clear()
         self.dividers_list.clear()

@@ -326,6 +326,8 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.fit_height_mode = True
         self.thread_pool = QtCore.QThreadPool()
         self.thread_pool.setMaxThreadCount(4) 
+        self.thumbnail_pool = QtCore.QThreadPool()
+        self.thumbnail_pool.setMaxThreadCount(2)
 
         # Enable dropping image folders/files onto this viewer, matching the
         # vertical viewer and masonry thumbnail viewer behavior.
@@ -425,6 +427,9 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         
         self.view.horizontalScrollBar().valueChanged.connect(self.on_scroll)
         self.view.horizontalScrollBar().valueChanged.connect(self.on_scroll)
+        self.thumbnail_list.horizontalScrollBar().valueChanged.connect(
+            self._load_thumbnail_icons
+        )
         self.view.installEventFilter(self)
         self.thumbnail_list.installEventFilter(self)
         self.thumbnail_list.viewport().installEventFilter(self)
@@ -561,9 +566,6 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             item.setTextAlignment(QtCore.Qt.AlignCenter)
             self.thumbnail_list.addItem(item)
             
-            loader = ThumbnailLoader(path, 100)
-            loader.signals.loaded.connect(lambda p, img, r, s, sc, it=item: self.on_thumbnail_loaded(p, img, it))
-            self.thread_pool.start(loader)
         
         for path in self.image_list:
             item = HorizontalThumbnailItem(path, SCENE_BASE_HEIGHT, labeling_widget=self.labeling_widget)
@@ -588,7 +590,12 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         if self.current_filename and self.current_filename in self.items_map:
             current_item = self.items_map[self.current_filename]
             if not current_item.loaded and not current_item.loading:
-                self.load_image(current_item)
+                self.load_image(current_item, priority=20)
+
+        # 缩略图面板默认隐藏。不要让整批缩略图任务占满线程池，
+        # 以免当前图片和可见图片的大图加载被阻塞。
+        if self.thumbnails_visible:
+            self._load_thumbnail_icons()
         
         # 延迟检查可见项
         QtCore.QTimer.singleShot(150, self.check_visible_items)
@@ -633,6 +640,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         if self.closing: return
         try:
              item.setIcon(QtGui.QIcon(QtGui.QPixmap.fromImage(image)))
+             item.setData(QtCore.Qt.UserRole + 1, "loaded")
              # 缩略图加载后，延迟更新区域高度（避免频繁更新）
              if self.thumbnails_visible and not hasattr(self, '_thumb_height_timer'):
                  self._thumb_height_timer = QtCore.QTimer()
@@ -643,6 +651,31 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
                  self._thumb_height_timer.start()
         except RuntimeError:
              pass
+
+    def _load_thumbnail_icons(self):
+        """在需要显示缩略图时再加载，避免阻塞主图片加载队列。"""
+        viewport_rect = self.thumbnail_list.viewport().rect().adjusted(
+            -200, -200, 200, 200
+        )
+        for index in range(self.thumbnail_list.count()):
+            item = self.thumbnail_list.item(index)
+            if item is None or item.data(QtCore.Qt.UserRole + 1):
+                continue
+            if not self.thumbnail_list.visualItemRect(item).intersects(
+                viewport_rect
+            ):
+                continue
+            path = item.data(QtCore.Qt.UserRole)
+            if not path:
+                continue
+            item.setData(QtCore.Qt.UserRole + 1, "loading")
+            loader = ThumbnailLoader(path, 100)
+            loader.signals.loaded.connect(
+                lambda p, img, r, s, sc, it=item: self.on_thumbnail_loaded(
+                    p, img, it
+                )
+            )
+            self.thumbnail_pool.start(loader)
 
     def jump_to_image(self, filename):
         if filename in self.items_map:
@@ -835,6 +868,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
         self.thumbnails_visible = not self.thumbnails_visible
         self.thumbnail_list.setVisible(self.thumbnails_visible)
         if self.thumbnails_visible:
+            self._load_thumbnail_icons()
             # 动态计算缩略图区域高度
             self._update_thumbnail_area_height()
             
@@ -1129,13 +1163,13 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
                 
                 visible_indices.append(i)
                 if not item.loaded and not item.loading:
-                    self.load_image(item)
+                    self.load_image(item, priority=10)
             except RuntimeError:
                 continue
         
-        # 预加载前后各5张图片
+        # 预加载前后各 10 张图片，快速滚动时减少灰色占位图。
         if visible_indices:
-            preload_count = 5
+            preload_count = 10
             min_idx = max(0, min(visible_indices) - preload_count)
             max_idx = min(len(self.items_list) - 1, max(visible_indices) + preload_count)
             
@@ -1144,15 +1178,15 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
                     item = self.items_list[i]
                     try:
                         if not item.loaded and not item.loading:
-                            self.load_image(item)
+                            self.load_image(item, priority=-10)
                     except RuntimeError:
                         continue
 
-    def load_image(self, item):
+    def load_image(self, item, priority=0):
         item.loading = True
         loader = ImageLoader(item.path, SCENE_BASE_HEIGHT)
         loader.signals.loaded.connect(lambda p, i, r, s, sc: self.on_image_loaded(p, i, r, s, sc, item))
-        self.thread_pool.start(loader)
+        self.thread_pool.start(loader, priority)
 
     def on_image_loaded(self, path, image, aspect_ratio, shapes, scale_factor, item):
         if self.closing: return
@@ -1234,7 +1268,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
             item.loading = True
             loader = ImageLoader(item.path, SCENE_BASE_HEIGHT)
             loader.signals.loaded.connect(lambda p, i, r, s, sc: self.on_image_loaded(p, i, r, s, sc, item))
-            self.thread_pool.start(loader)
+            self.thread_pool.start(loader, 10)
 
     def go_to_next_image(self):
         """翻到下一张图片"""
@@ -1372,6 +1406,7 @@ class HorizontalViewerDialog(QtWidgets.QDialog):
     def closeEvent(self, event):
         self.closing = True
         self.thread_pool.waitForDone(1000)
+        self.thumbnail_pool.waitForDone(1000)
         self.items_map.clear()
         self.items_list.clear()
         super().closeEvent(event)

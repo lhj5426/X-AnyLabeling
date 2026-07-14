@@ -2028,6 +2028,14 @@ class LabelingWidget(QtWidgets.QWidget):
             self.tr("重新加载当前页面，重置解锁状态"),
             enabled=True,
         )
+        refresh_folder = action(
+            self.tr("刷新文件夹"),
+            self.refresh_image_folder,
+            None,
+            "resetall",
+            self.tr("重新扫描当前文件夹中的图片"),
+            enabled=True,
+        )
         undo_last_point = action(
             self.tr("Undo last point"),
             self.canvas.undo_last_point,
@@ -3201,6 +3209,7 @@ class LabelingWidget(QtWidgets.QWidget):
             toggle_lock=toggle_lock,
             cancel_paste_preview=cancel_paste_preview,
             refresh_canvas=refresh_canvas,
+            refresh_folder=refresh_folder,
             undo_last_point=undo_last_point,
             undo=undo,
             remove_point=remove_point,
@@ -3377,6 +3386,7 @@ class LabelingWidget(QtWidgets.QWidget):
             # menu shown at right click
             menu=(
                 refresh_canvas,
+                refresh_folder,
                 None,
                 create_mode,
                 create_rectangle_mode,
@@ -12459,9 +12469,29 @@ class LabelingWidget(QtWidgets.QWidget):
         self.set_dirty()
 
     def paste_selected_shape(self):
-        # 先检查剪贴板是否有图片或图片文件
+        # 先检查剪贴板是否有文件夹路径。文件夹路径不能继续按标注 JSON
+        # 解析，否则会因普通路径不是 JSON 而提示“粘贴对象失败”。
         clipboard = QtWidgets.QApplication.clipboard()
         mime_data = clipboard.mimeData()
+
+        folder_path = None
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                local_path = url.toLocalFile()
+                if local_path and osp.isdir(local_path):
+                    folder_path = local_path
+                    break
+
+        if folder_path is None and mime_data.hasText():
+            text_path = mime_data.text().strip().strip('"')
+            if osp.isdir(text_path):
+                folder_path = text_path
+
+        if folder_path:
+            self.import_image_folder(folder_path, load=True)
+            return
+
+        # 再检查剪贴板是否有图片或图片文件
         
         has_image = mime_data.hasImage()
         has_image_file = False
@@ -12561,7 +12591,7 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.disable_paste_preview()
 
     def refresh_canvas(self):
-        """刷新画布：从磁盘重新加载JSON标注数据，并重置所有图形的会话解锁状态"""
+        """从磁盘重新加载当前图片的标注，并重置图形的会话解锁状态。"""
         # 取消所有选中的图形
         self.canvas.deselect_shape()
 
@@ -12626,6 +12656,42 @@ class LabelingWidget(QtWidgets.QWidget):
         )
         popup.show_popup(self, position="center")
 
+    def refresh_image_folder(self):
+        """重新扫描当前文件夹，并更新左侧图片路径列表。"""
+        if not self.last_open_dir or not osp.isdir(self.last_open_dir):
+            self.status(self.tr("没有可刷新的已打开文件夹"))
+            return
+
+        current_filename = self.filename
+        current_index = self._get_file_index(current_filename)
+        if current_index is None:
+            current_index = 0
+
+        # 与切换图片保持相同的未保存标注保护行为。
+        if not self.may_continue():
+            return
+        self.set_clean()
+        self.import_image_folder(
+            self.last_open_dir, load=False, check_continue=False
+        )
+
+        image_count = self.file_list_widget.count()
+        if image_count:
+            target_index = self.fn_to_index.get(
+                current_filename, min(current_index, image_count - 1)
+            )
+            self._programmatic_selection_change = True
+            self.file_list_widget.setCurrentRow(target_index)
+            self._programmatic_selection_change = False
+            self.load_file(self._filename_at_index(target_index))
+        else:
+            self.reset_state()
+
+        popup = Popup(
+            "✅ " + self.tr("文件夹已刷新"), self, msec=2000
+        )
+        popup.show_popup(self, position="center")
+
     def toggle_system_clipboard(self, system_clipboard):
         self._config["system_clipboard"] = system_clipboard
         self.actions.paste.setEnabled(
@@ -12651,7 +12717,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.canvas.enable_paste_preview(self._copied_shapes)
 
     def paste_image_from_clipboard(self):
-        """从剪贴板粘贴图片并保存到时间戳命名的文件夹"""
+        """从剪贴板粘贴图片并保存到固定根目录下的时间戳文件夹。"""
         clipboard = QtWidgets.QApplication.clipboard()
         mime_data = clipboard.mimeData()
         
@@ -12705,23 +12771,24 @@ class LabelingWidget(QtWidgets.QWidget):
         import time
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # 确定保存文件夹
-        if self.last_open_dir:
-            # 如果已经打开了文件夹，直接使用当前文件夹
-            folder_path = self.last_open_dir
+        # 剪贴板图片始终单独保存，避免混入当前已打开的图片目录。
+        # 根目录是 anylabeling 程序目录的上一级：
+        # <上一级>\来自剪贴板\<YYYYMMDD_HHMMSS>\<图片文件>
+        import sys
+        if getattr(sys, 'frozen', False):
+            # 打包后的可执行文件
+            application_dir = osp.dirname(sys.executable)
         else:
-            # 如果没有打开文件夹，在软件执行目录下创建时间戳文件夹
-            import sys
-            if getattr(sys, 'frozen', False):
-                # 打包后的可执行文件
-                base_dir = osp.dirname(sys.executable)
-            else:
-                # 开发环境
-                base_dir = osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))
-            
-            folder_path = osp.join(base_dir, timestamp)
-            if not osp.exists(folder_path):
-                os.makedirs(folder_path)
+            # 开发环境：.../anylabeling/views/labeling/label_widget.py
+            application_dir = osp.dirname(
+                osp.dirname(osp.dirname(osp.abspath(__file__)))
+            )
+
+        clipboard_root = osp.join(
+            osp.dirname(application_dir), "来自剪贴板"
+        )
+        folder_path = osp.join(clipboard_root, timestamp)
+        os.makedirs(folder_path, exist_ok=True)
         
         # 批量保存图片
         saved_files = []
@@ -17316,10 +17383,18 @@ class LabelingWidget(QtWidgets.QWidget):
 
         self.open_next_image()
 
-    def import_image_folder(self, dirpath, pattern=None, load=True, recursive=None, filter_config=None):
+    def import_image_folder(
+        self,
+        dirpath,
+        pattern=None,
+        load=True,
+        recursive=None,
+        filter_config=None,
+        check_continue=True,
+    ):
         if recursive is None:
             recursive = self._config.get("load_subfolders", False)
-        if not self.may_continue() or not dirpath:
+        if (check_continue and not self.may_continue()) or not dirpath:
             return
 
         # Add to recent folders history
