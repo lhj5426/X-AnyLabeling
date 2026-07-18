@@ -800,24 +800,11 @@ def run_all_images(self):
     end_num = len(self.image_list)  # 显示用的结束页码
     total_to_process = end_num - current_index  # 要处理的图片数量
 
-    # 根据下拉菜单显示当前模式
-    ocr_mode = getattr(
-        self.auto_labeling_widget, '_ocr_mode_current', 'detect_ocr'
-    )
-    mode_text = {
-        'detect_ocr': '检测+OCR',
-        'detect_only': '仅检测',
-        'existing_ocr': '已有框OCR',
-        'split_boxes': '拆分大框',
-        'text_color': '仅检测颜色',
-    }.get(ocr_mode, '检测+OCR')
-
     response = QtWidgets.QMessageBox()
     response.setIcon(QtWidgets.QMessageBox.Warning)
     response.setWindowTitle("确认")
     response.setText(
-        f"当前模式: {mode_text}\n"
-        f"是否要处理第 {start_num}-{end_num} 张图片?\n(共 {total_to_process} 张)"
+        f"是否要执行第 {start_num}-{end_num} 张图片?\n(共 {total_to_process} 张)"
     )
     ok_button = response.addButton("确定", QtWidgets.QMessageBox.AcceptRole)
     response.addButton("取消", QtWidgets.QMessageBox.RejectRole)

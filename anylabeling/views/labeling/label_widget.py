@@ -163,8 +163,8 @@ class MergeThread(QtCore.QThread):
             page_name = os.path.basename(file_path)
             page_number = self.start_page + index
 
-            self.progress.emit(index, f'Processing: {page_name}')
-            self.log_message.emit(f'Processing page: {page_name}')
+            self.progress.emit(index, f'正在处理: {page_name}')
+            self.log_message.emit(f'正在处理: {page_name}')
 
             success, message, fail_reason = merger.process_file(
                 label_file, self.config
@@ -178,12 +178,12 @@ class MergeThread(QtCore.QThread):
                 self.failed_pages.append((page_number, fail_reason))
 
         if self.isInterruptionRequested():
-            final_message = 'Operation cancelled.'
+            final_message = '操作已取消。'
         else:
-            final_message = f'Merge finished. Updated {success_count} file(s).'
+            final_message = f'合并完成。已更新 {success_count} 个文件。'
             if fail_count > 0:
                 final_message += (
-                    f' {fail_count} file(s) failed or needed no changes.'
+                    f' {fail_count} 个文件失败或无需更改。'
                 )
 
         self.finished.emit(final_message)
@@ -11875,6 +11875,16 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # 更新独立安全边界设置
         shape._safety_border_settings = self._get_safety_border_settings_by_label(shape.label)
+
+        # 更新标签独立透明度
+        label_alphas = self._config.get("label_alphas") or {}
+        if label_alphas and shape.label in label_alphas:
+            alpha_config = label_alphas[shape.label]
+            shape.label_alpha_idle = alpha_config.get("idle")
+            shape.label_alpha_highlight = alpha_config.get("highlight")
+        else:
+            shape.label_alpha_idle = None
+            shape.label_alpha_highlight = None
 
     def _get_rgb_by_label(self, label, skip_label_info=False, unique_item=None):
         if label in self.label_info and not skip_label_info:

@@ -3169,25 +3169,11 @@ class Canvas(
         if not target_label:
             return
 
-        labels = self._config.get("labels", [])
         changed = False
         for shape in selected_shapes:
             if shape.label == target_label:
                 continue
             shape.label = target_label
-            # 更新颜色：自动模式下重新计算颜色
-            if self._config.get("shape_color", "auto") == "auto":
-                try:
-                    label_id = labels.index(target_label) + 1
-                    label_id += self._config.get("shift_auto_shape_color", 0)
-                except ValueError:
-                    label_id = 0
-                colormap = label_colormap()
-                r, g, b = colormap[label_id % len(colormap)]
-                shape.line_color = QtGui.QColor(r, g, b)
-                shape.fill_color = QtGui.QColor(r, g, b, 128)
-                shape.select_line_color = QtGui.QColor(r, g, b)
-                shape.select_fill_color = QtGui.QColor(r, g, b, 155)
             changed = True
 
         if changed:
