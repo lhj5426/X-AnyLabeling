@@ -22,6 +22,7 @@ class MergeDialog(QtWidgets.QDialog):
         
         # 运行期间临时保存的窗口位置（不写入配置文件）
         self.saved_geometry = None
+        self._page_signal_connected = False
 
         self.layout = QtWidgets.QVBoxLayout(self)
         self.layout.setSpacing(6)
@@ -394,8 +395,7 @@ class MergeDialog(QtWidgets.QDialog):
         self.layout.addWidget(range_group)
         
         # 连接翻页信号
-        if hasattr(self.parent_widget, 'file_list_widget'):
-            self.parent_widget.file_list_widget.currentRowChanged.connect(self.on_page_changed)
+        self._connect_page_signal()
         
         # 初始化范围（不设置当前页，等showEvent时再设置）
         if hasattr(self.parent_widget, 'image_list') and self.parent_widget.image_list:
@@ -712,6 +712,7 @@ class MergeDialog(QtWidgets.QDialog):
     def showEvent(self, event):
         """窗口显示时恢复上次位置并更新范围（仅运行期间有效）"""
         super().showEvent(event)
+        self._connect_page_signal()
         # 如果有保存的位置，恢复它
         if self.saved_geometry is not None:
             self.restoreGeometry(self.saved_geometry)
@@ -728,11 +729,7 @@ class MergeDialog(QtWidgets.QDialog):
         self.save_settings_to_config()
         self.save_window_position()
         # 断开翻页信号
-        if hasattr(self.parent_widget, 'file_list_widget'):
-            try:
-                self.parent_widget.file_list_widget.currentRowChanged.disconnect(self.on_page_changed)
-            except:
-                pass
+        self._disconnect_page_signal()
         super().closeEvent(event)
     
     def hideEvent(self, event):
@@ -744,7 +741,62 @@ class MergeDialog(QtWidgets.QDialog):
         """保存窗口位置到内存（不写入配置文件）"""
         self.saved_geometry = self.saveGeometry()
     
+    def _connect_page_signal(self):
+        if self._page_signal_connected:
+            return
+        if hasattr(self.parent_widget, 'file_list_widget'):
+            self.parent_widget.file_list_widget.currentRowChanged.connect(self.on_page_changed)
+            self._page_signal_connected = True
+    
+    def _disconnect_page_signal(self):
+        if not self._page_signal_connected:
+            return
+        if hasattr(self.parent_widget, 'file_list_widget'):
+            try:
+                self.parent_widget.file_list_widget.currentRowChanged.disconnect(self.on_page_changed)
+            except Exception:
+                pass
+        self._page_signal_connected = False
+    
+    def _current_page_from_parent(self):
+        if not self.parent_widget:
+            return 1
+        filename = getattr(self.parent_widget, 'filename', None)
+        image_list = list(getattr(self.parent_widget, 'image_list', []) or [])
+        if filename and image_list:
+            try:
+                return image_list.index(filename) + 1
+            except ValueError:
+                pass
+        if hasattr(self.parent_widget, 'file_list_widget'):
+            current_row = self.parent_widget.file_list_widget.currentRow()
+            if current_row >= 0:
+                return current_row + 1
+        if hasattr(self.parent_widget, 'cur_img_idx'):
+            return self.parent_widget.cur_img_idx + 1
+        return 1
+    
+    def update_page_range(self, current_page=None, total_pages=None):
+        if total_pages is None:
+            image_list = list(getattr(self.parent_widget, 'image_list', []) or [])
+            total_pages = len(image_list) if image_list else 1
+        total_pages = max(1, total_pages)
+        
+        self.range_from.setMaximum(total_pages)
+        self.range_to.setMaximum(total_pages)
+        if self.range_to.value() > total_pages:
+            self.range_to.setValue(total_pages)
+        
+        if current_page is None:
+            current_page = self._current_page_from_parent()
+        current_page = max(1, min(int(current_page), total_pages))
+        self.range_from.setValue(current_page)
+    
     def update_range_limits(self):
+        image_list = list(getattr(self.parent_widget, 'image_list', []) or [])
+        if image_list:
+            self.update_page_range(total_pages=len(image_list))
+            return
         """更新范围限制"""
         if hasattr(self.parent_widget, 'image_list') and self.parent_widget.image_list:
             total = len(self.parent_widget.image_list)
@@ -769,6 +821,8 @@ class MergeDialog(QtWidgets.QDialog):
     def on_page_changed(self, current_row):
         """翻页时更新范围的"从"值"""
         if current_row >= 0:
+            self.update_page_range(current_page=current_row + 1)
+            return
             current_page = current_row + 1
             self.range_from.setValue(current_page)
     

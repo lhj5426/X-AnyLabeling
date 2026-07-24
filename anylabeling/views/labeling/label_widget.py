@@ -11345,13 +11345,9 @@ class LabelingWidget(QtWidgets.QWidget):
                 flags=flags,
             )
             self.label_file = label_file
-            items = self.file_list_widget.findItems(
-                self.image_path, Qt.MatchExactly
-            )
-            if len(items) > 0:
-                if len(items) != 1:
-                    raise RuntimeError("There are duplicate files.")
-                items[0].setCheckState(Qt.Checked)
+            item = self._file_item_for_path(self.image_path)
+            if item is not None:
+                item.setCheckState(Qt.Checked)
             # disable allows next and previous image to proceed
             # self.filename = filename
             return True
@@ -12232,9 +12228,8 @@ class LabelingWidget(QtWidgets.QWidget):
     
     def _update_file_list_item_color(self, image_path, manually_edited):
         """Helper function to update file list item color based on manually_edited status"""
-        items = self.file_list_widget.findItems(image_path, Qt.MatchExactly)
-        if len(items) > 0:
-            item = items[0]
+        item = self._file_item_for_path(image_path)
+        if item is not None:
             if manually_edited:
                 # 使用颜色管理器中配置的手动编辑颜色
                 color = self._get_manually_edited_color()
@@ -12252,14 +12247,14 @@ class LabelingWidget(QtWidgets.QWidget):
         if thread_id != self.load_colors_thread_id:
             return
         
-        items = self.file_list_widget.findItems(filename, Qt.MatchExactly)
-        if items:
+        item = self._file_item_for_path(filename)
+        if item is not None:
             if manually_edited:
                 color = self._get_manually_edited_color()
-                items[0].setForeground(color)
+                item.setForeground(color)
             else:
                 # 清除颜色，恢复默认黑色
-                items[0].setForeground(QtGui.QColor("#000000"))
+                item.setForeground(QtGui.QColor("#000000"))
     
     def _update_edit_status_indicator(self, manually_edited):
         """更新右下角的编辑状态指示器"""
@@ -12413,13 +12408,8 @@ class LabelingWidget(QtWidgets.QWidget):
                 flags=flags,
             )
             self.label_file = label_file
-            items = self.file_list_widget.findItems(
-                self.image_path, Qt.MatchExactly
-            )
-            if len(items) > 0:
-                if len(items) != 1:
-                    raise RuntimeError("There are duplicate files.")
-                item = items[0]
+            item = self._file_item_for_path(self.image_path)
+            if item is not None:
                 item.setCheckState(Qt.Checked)
 
                 # Update color to show manually edited status
@@ -15783,6 +15773,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self._update_tag_sort_dialog_page_range()
         self._update_rectangle_scale_page_range()
         self._update_segmentation_dialog_page_range()
+        self._update_merge_tool_page_range()
         self._update_page_text_dialog()
 
         if (
@@ -16165,6 +16156,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Update segmentation dialog page range if open
         self._update_segmentation_dialog_page_range()
+
+        # Update merge tool page range if open
+        self._update_merge_tool_page_range()
 
         # Update page text dialog if open
         self._update_page_text_dialog()
@@ -17356,6 +17350,23 @@ class LabelingWidget(QtWidgets.QWidget):
             filename = item.text()
         return filename
 
+    def _file_display_text(self, filename):
+        filename = str(filename) if filename else ""
+        basename = osp.basename(filename)
+        dirname = osp.dirname(filename)
+        return f"{basename} → {dirname}" if dirname else basename
+
+    def _file_item_for_path(self, filename):
+        target = str(filename)
+        for i in range(self.file_list_widget.count()):
+            item = self.file_list_widget.item(i)
+            if item is None:
+                continue
+            item_filename = item.data(Qt.UserRole) or item.text()
+            if str(item_filename) == target:
+                return item
+        return None
+
     def import_dropped_image_files(self, image_files):
         extensions = [
             f".{fmt.data().decode().lower()}"
@@ -17374,7 +17385,9 @@ class LabelingWidget(QtWidgets.QWidget):
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
                 label_file = self.output_dir + "/" + label_file_without_path
-            item = QtWidgets.QListWidgetItem(file)
+            item = QtWidgets.QListWidgetItem(self._file_display_text(file))
+            item.setData(Qt.UserRole, file)
+            item.setToolTip(file)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(
                 label_file
@@ -17429,7 +17442,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # Optimization: Collect all filenames first
         all_filenames = []
         for filename in utils.scan_all_images(dirpath, recursive=recursive):
-            if pattern and pattern not in filename:
+            if pattern and pattern not in self._file_display_text(filename):
                 continue
             all_filenames.append(filename)
         
@@ -17463,9 +17476,10 @@ class LabelingWidget(QtWidgets.QWidget):
             label_file = label_files_map[filename]
             has_label = filename in manually_edited_map
             
-            # Create list item with actual filename
-            item = QtWidgets.QListWidgetItem(filename)
+            # Show "filename -> folder" while keeping the full path in UserRole.
+            item = QtWidgets.QListWidgetItem(self._file_display_text(filename))
             item.setData(Qt.UserRole, filename)
+            item.setToolTip(filename)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             
             if has_label:
@@ -18968,6 +18982,19 @@ class LabelingWidget(QtWidgets.QWidget):
             total_pages = len(self.image_list) if self.image_list else 1
             self.segmentation_dialog.update_page_range(current_page, total_pages)
 
+    def _update_merge_tool_page_range(self):
+        """Update page range in merge tool dialog if it's open and visible."""
+        if (hasattr(self, 'merge_tool_dialog') and
+            self.merge_tool_dialog is not None and
+            self.merge_tool_dialog.isVisible()):
+            total_pages = len(self.image_list) if self.image_list else 1
+            current_page = 1
+            if self.filename and self.filename in self.image_list:
+                current_page = self.image_list.index(self.filename) + 1
+            elif self.file_list_widget:
+                current_page = self.file_list_widget.currentRow() + 1
+            self.merge_tool_dialog.update_page_range(current_page, total_pages)
+
     def _update_page_text_dialog(self):
         """Update page text dialog if it's open and visible."""
         if (hasattr(self, 'page_text_dialog') and
@@ -19162,9 +19189,8 @@ class LabelingWidget(QtWidgets.QWidget):
             # The 'manually_edited_color' config key is now effectively replaced by traffic_light_colors['edited']
             # We need to re-evaluate the color of the current file if it's edited
             if self.filename:
-                current_item = self.file_list_widget.findItems(self.filename, Qt.MatchExactly)
+                current_item = self._file_item_for_path(self.filename)
                 if current_item:
-                    current_item = current_item[0]
                     # Check if the current file is manually edited (requires reading its JSON)
                     label_file_path = osp.splitext(self.filename)[0] + ".json"
                     if self.output_dir:
