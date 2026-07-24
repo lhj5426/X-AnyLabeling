@@ -824,6 +824,13 @@ class AutoLabelingWidget(QWidget):
         else:
             self.run_prediction()
 
+    def _notify_current_shapes_changed(self):
+        """Notify open tools after this widget mutates current canvas shapes."""
+        if hasattr(self.parent, "shape_list_changed"):
+            self.parent.shape_list_changed.emit()
+        if hasattr(self.parent, "_update_page_text_dialog"):
+            self.parent._update_page_text_dialog()
+
     def _prepare_split_box_infos(self, shapes):
         """把 shape 列表转成 (shape, pts, label) 三元组，过滤掉非矩形/旋转框"""
         box_infos = []
@@ -886,6 +893,7 @@ class AutoLabelingWidget(QWidget):
             self.parent.load_shapes(canvas.shapes, replace=True)
             self.parent.save_file()
             self.parent.set_dirty(mark_as_manually_edited=False)
+            self._notify_current_shapes_changed()
         return added
 
     def run_split_boxes_on_selected(self):
@@ -1066,6 +1074,7 @@ class AutoLabelingWidget(QWidget):
             self.parent.label_list.viewport().update()
             # Mark file as dirty so OCR results get saved
             self.parent.set_dirty(mark_as_manually_edited=False)
+            self._notify_current_shapes_changed()
             # 通过信号把描述文本传回主线程更新 UI（用替换后的文本）
             desc = ""
             p = self.parent
@@ -1197,6 +1206,7 @@ class AutoLabelingWidget(QWidget):
             self.parent.label_list.viewport().update()
             # Mark file as dirty so OCR results get saved
             self.parent.set_dirty(mark_as_manually_edited=False)
+            self._notify_current_shapes_changed()
             self.model_manager.new_model_status.emit(
                 self.tr(f"全图框识别完成。共处理 {len(box_infos)} 个框。")
             )

@@ -18084,6 +18084,8 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # 更新标签数量显示
         self.update_label_counts()
+        self.shape_list_changed.emit()
+        self._update_page_text_dialog()
 
     def _sync_char_render_rules(self):
         """字符渲染工具保存后同步规则到画布"""
