@@ -15774,6 +15774,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self._update_rectangle_scale_page_range()
         self._update_segmentation_dialog_page_range()
         self._update_merge_tool_page_range()
+        self._update_label_tool_dialog_page_range()
         self._update_page_text_dialog()
 
         if (
@@ -16159,6 +16160,9 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Update merge tool page range if open
         self._update_merge_tool_page_range()
+
+        # Update label tool page range if open
+        self._update_label_tool_dialog_page_range()
 
         # Update page text dialog if open
         self._update_page_text_dialog()
@@ -17547,7 +17551,13 @@ class LabelingWidget(QtWidgets.QWidget):
         if self.label_tool_dialog and self.label_tool_dialog.isVisible():
             total_files = self.file_list_widget.count()
             new_folder_path = self.last_open_dir 
-            self.label_tool_dialog.refresh_state(total_files, 1, new_folder_path)
+            current_page = 1
+            current_index = self._get_file_index(self.filename) if self.filename else None
+            if current_index is not None:
+                current_page = current_index + 1
+            elif self.file_list_widget:
+                current_page = self.file_list_widget.currentRow() + 1
+            self.label_tool_dialog.refresh_state(total_files, current_page, new_folder_path)
 
         if load:
             self.filename = None
@@ -18997,6 +19007,24 @@ class LabelingWidget(QtWidgets.QWidget):
                 current_page = self.file_list_widget.currentRow() + 1
             self.merge_tool_dialog.update_page_range(current_page, total_pages)
 
+    def _update_label_tool_dialog_page_range(self):
+        """Update the dual-color tool range from the currently loaded canvas file."""
+        if (hasattr(self, 'label_tool_dialog') and
+            self.label_tool_dialog is not None and
+            self.label_tool_dialog.isVisible()):
+            total_files = len(self.image_list) if self.image_list else 0
+            current_page = 1
+            current_index = self._get_file_index(self.filename) if self.filename else None
+            if current_index is not None:
+                current_page = current_index + 1
+            elif self.file_list_widget:
+                current_page = self.file_list_widget.currentRow() + 1
+            self.label_tool_dialog.refresh_state(
+                total_files,
+                current_page,
+                self.last_open_dir,
+            )
+
     def _update_page_text_dialog(self):
         """Update page text dialog if it's open and visible."""
         if (hasattr(self, 'page_text_dialog') and
@@ -19142,6 +19170,14 @@ class LabelingWidget(QtWidgets.QWidget):
             self.label_tool_dialog.close()
             self.label_tool_dialog = LabelToolDialog(self.last_open_dir, self)
 
+        total_files = len(self.image_list) if self.image_list else (self.file_list_widget.count() if self.file_list_widget else 0)
+        current_page = 1
+        current_index = self._get_file_index(self.filename) if self.filename else None
+        if current_index is not None:
+            current_page = current_index + 1
+        elif self.file_list_widget:
+            current_page = self.file_list_widget.currentRow() + 1
+        self.label_tool_dialog.refresh_state(total_files, current_page, self.last_open_dir)
         self.label_tool_dialog.show()
         self.label_tool_dialog.raise_()
         self.label_tool_dialog.activateWindow()

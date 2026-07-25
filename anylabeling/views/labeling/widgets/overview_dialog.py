@@ -428,9 +428,16 @@ class OverviewDialog(QtWidgets.QDialog):
         image_file_list = []
         count = self.parent.file_list_widget.count()
         for c in range(count):
-            image_file = self.parent.file_list_widget.item(c).text()
-            image_file_list.append(image_file)
+            image_file = self._file_item_path(self.parent.file_list_widget.item(c))
+            if image_file:
+                image_file_list.append(image_file)
         return image_file_list
+
+    def _file_item_path(self, item):
+        """Return the real file path stored on a file-list item."""
+        if item is None:
+            return ""
+        return item.data(Qt.UserRole) or item.text()
 
     def get_label_infos(self, start_index: int = -1, end_index: int = -1):
         """
@@ -1211,9 +1218,17 @@ class OverviewDialog(QtWidgets.QDialog):
         for i in range(self.parent.file_list_widget.count()):
             item = self.parent.file_list_widget.item(i)
             if item:
-                item_filename = item.text()
+                item_filename = str(self._file_item_path(item))
+                item_display = item.text()
+                item_basename = os.path.basename(item_filename)
                 # 检查文件名是否在搜索结果中
-                should_show = any(fn in item_filename for fn in filtered_filenames)
+                should_show = any(
+                    fn == item_filename
+                    or os.path.basename(fn) == item_basename
+                    or fn in item_filename
+                    or fn in item_display
+                    for fn in filtered_filenames
+                )
                 item.setHidden(not should_show)
                 if should_show:
                     visible_count += 1
@@ -1296,7 +1311,15 @@ class OverviewDialog(QtWidgets.QDialog):
             file_index = None
             for i in range(self.parent.file_list_widget.count()):
                 item = self.parent.file_list_widget.item(i)
-                if item and filename in item.text():
+                if not item:
+                    continue
+                item_filename = str(self._file_item_path(item))
+                if (
+                    filename == item_filename
+                    or os.path.basename(filename) == os.path.basename(item_filename)
+                    or filename in item_filename
+                    or filename in item.text()
+                ):
                     file_index = i
                     break
             

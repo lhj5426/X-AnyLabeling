@@ -6,6 +6,12 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 
+from anylabeling.config import get_config, save_config
+
+
+DEFAULT_LABEL_A = "qipao,balloon,changfangtiao"
+DEFAULT_LABEL_B = "qipao2,balloon2,changfangtiao2"
+
 class Worker(QThread):
     log_signal = pyqtSignal(str)
     finished_signal = pyqtSignal()
@@ -101,6 +107,8 @@ class LabelToolDialog(QDialog):
     def __init__(self, folder_path, parent=None):
         super().__init__(parent)
         self.folder_path = folder_path
+        self._config = getattr(self.parent(), "_config", None) or get_config()
+        self._label_tool_settings = self._config.setdefault("label_tool_settings", {})
         self.setWindowTitle("双色标签工具")
         self.setMinimumSize(500, 400)
         # 设置窗口标志：移除帮助按钮,添加最小化按钮
@@ -121,14 +129,20 @@ class LabelToolDialog(QDialog):
         labels_layout = QVBoxLayout(labels_group)
 
         self.label_a_label = QLabel("单数标签 (Label A):")
-        self.label_a_edit = QLineEdit("qipao,balloon,changfangtiao")
+        self.label_a_edit = QLineEdit(
+            self._label_tool_settings.get("label_a", DEFAULT_LABEL_A)
+        )
         labels_layout.addWidget(self.label_a_label)
         labels_layout.addWidget(self.label_a_edit)
 
         self.label_b_label = QLabel("双数标签 (Label B):")
-        self.label_b_edit = QLineEdit("qipao2,balloon2,changfangtiao2")
+        self.label_b_edit = QLineEdit(
+            self._label_tool_settings.get("label_b", DEFAULT_LABEL_B)
+        )
         labels_layout.addWidget(self.label_b_label)
         labels_layout.addWidget(self.label_b_edit)
+        self.label_a_edit.textChanged.connect(self._save_settings)
+        self.label_b_edit.textChanged.connect(self._save_settings)
 
         self.layout.addWidget(labels_group)
 
@@ -161,7 +175,19 @@ class LabelToolDialog(QDialog):
         self.bulk_edit_radio = QRadioButton("批量修改标签 (将所有A替换为B)")
         self.to_bicolor_radio = QRadioButton("间隔修改标签 (将偶数个A替换为B)")
         self.to_monocolor_radio = QRadioButton("还原为单色标签 (将B还原为A)")
-        self.bulk_edit_radio.setChecked(True)
+        saved_mode = self._label_tool_settings.get("mode", "bulk_edit")
+        self.bulk_edit_radio.setChecked(saved_mode == "bulk_edit")
+        self.to_bicolor_radio.setChecked(saved_mode == "to_bicolor")
+        self.to_monocolor_radio.setChecked(saved_mode == "to_monocolor")
+        if not (
+            self.bulk_edit_radio.isChecked()
+            or self.to_bicolor_radio.isChecked()
+            or self.to_monocolor_radio.isChecked()
+        ):
+            self.bulk_edit_radio.setChecked(True)
+        self.bulk_edit_radio.toggled.connect(self._save_settings)
+        self.to_bicolor_radio.toggled.connect(self._save_settings)
+        self.to_monocolor_radio.toggled.connect(self._save_settings)
         mode_layout = QVBoxLayout()
         mode_layout.addWidget(self.bulk_edit_radio)
         mode_layout.addWidget(self.to_bicolor_radio)
@@ -189,15 +215,35 @@ class LabelToolDialog(QDialog):
         self.layout.addWidget(self.log_label)
         self.layout.addWidget(self.log_output)
 
+    def _current_mode(self):
+        if self.to_bicolor_radio.isChecked():
+            return "to_bicolor"
+        if self.to_monocolor_radio.isChecked():
+            return "to_monocolor"
+        return "bulk_edit"
+
+    def _save_settings(self, *_args):
+        self._label_tool_settings["label_a"] = self.label_a_edit.text()
+        self._label_tool_settings["label_b"] = self.label_b_edit.text()
+        self._label_tool_settings["mode"] = self._current_mode()
+        self._config["label_tool_settings"] = self._label_tool_settings
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "_config"):
+            parent._config["label_tool_settings"] = self._label_tool_settings
+        save_config(self._config)
+
     def refresh_state(self, total_files: int, current_page: int, folder_path: str) -> None:
         """刷新对话框的状态，包括文件范围和文件夹路径。"""
         self.folder_path = folder_path
+        self._config = getattr(self.parent(), "_config", None) or get_config()
+        self._label_tool_settings = self._config.setdefault("label_tool_settings", {})
         self.folder_label.setText(f"处理目录: {self.folder_path}\n")
 
         if total_files > 0:
+            current_page = max(1, min(current_page or 1, total_files))
             self.start_spinbox.setRange(1, total_files)
             self.end_spinbox.setRange(1, total_files)
-            self.start_spinbox.setValue(1)
+            self.start_spinbox.setValue(current_page)
             self.end_spinbox.setValue(total_files)
 
 
@@ -228,6 +274,7 @@ class LabelToolDialog(QDialog):
         self._run_processing_with_worker(files_to_process)
 
     def _run_processing_with_worker(self, files_to_process):
+        self._save_settings()
         labels_a_str = self.label_a_edit.text().strip()
         labels_b_str = self.label_b_edit.text().strip()
         
@@ -253,12 +300,36 @@ class LabelToolDialog(QDialog):
         self.run_range_button.setEnabled(False)
         self.run_current_button.setEnabled(False)
         
+        self._last_processed_files = {
+            self._normalized_path(file_path) for file_path in files_to_process
+        }
         self.worker = Worker(files_to_process, labels_a, labels_b, mode)
         self.worker.log_signal.connect(self.log_output.append)
-        self.worker.finished_signal.connect(self._on_processing_finished)
+        self.worker.finished_signal.connect(self._on_worker_finished)
         self.worker.start()
 
+    def _normalized_path(self, file_path):
+        return os.path.normcase(os.path.abspath(str(file_path)))
+
+    def _refresh_current_file_if_processed(self):
+        parent = self.parent()
+        if not parent or not hasattr(parent, 'filename') or not parent.filename:
+            return
+
+        current_image_file = self._normalized_path(parent.filename)
+        if current_image_file not in getattr(self, '_last_processed_files', set()):
+            return
+
+        if hasattr(parent, 'load_file'):
+            parent.load_file(parent.filename)
+            self.log_output.append("主窗口已刷新。")
+
+    def _on_worker_finished(self):
+        self._refresh_current_file_if_processed()
+        self._on_processing_finished()
+
     def run_current_page_processing(self):
+        self._save_settings()
         labels_a_str = self.label_a_edit.text().strip()
         labels_b_str = self.label_b_edit.text().strip()
 
@@ -335,6 +406,10 @@ class LabelToolDialog(QDialog):
         self.run_all_button.setEnabled(True)
         self.run_range_button.setEnabled(True)
         self.run_current_button.setEnabled(True)
+
+    def closeEvent(self, event):
+        self._save_settings()
+        super().closeEvent(event)
 
     def _to_bicolor(self, data, labels_a, labels_b):
         label_map = dict(zip(labels_a, labels_b))
