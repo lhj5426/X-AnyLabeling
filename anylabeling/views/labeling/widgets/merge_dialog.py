@@ -782,10 +782,9 @@ class MergeDialog(QtWidgets.QDialog):
             total_pages = len(image_list) if image_list else 1
         total_pages = max(1, total_pages)
         
-        self.range_from.setMaximum(total_pages)
-        self.range_to.setMaximum(total_pages)
-        if self.range_to.value() > total_pages:
-            self.range_to.setValue(total_pages)
+        self.range_from.setRange(1, total_pages)
+        self.range_to.setRange(1, total_pages)
+        self.range_to.setValue(total_pages)
         
         if current_page is None:
             current_page = self._current_page_from_parent()

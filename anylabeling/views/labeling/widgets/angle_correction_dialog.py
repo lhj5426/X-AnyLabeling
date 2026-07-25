@@ -282,9 +282,25 @@ class AngleCorrectionDialog(QtWidgets.QDialog):
         if hasattr(self.parent, 'file_list_widget'):
             count = self.parent.file_list_widget.count()
             for c in range(count):
-                image_file = self.parent.file_list_widget.item(c).text()
+                item = self.parent.file_list_widget.item(c)
+                if item is None:
+                    continue
+                image_file = item.data(QtCore.Qt.UserRole) or item.text()
                 image_file_list.append(image_file)
         return image_file_list
+
+    def update_page_range(self, current_page, total_pages):
+        self.image_file_list = self.get_image_file_list()
+        total_pages = max(1, int(total_pages or 1))
+        current_page = max(1, min(int(current_page or 1), total_pages))
+        for start_spinbox, end_spinbox in (
+            (self.start_spinbox, self.end_spinbox),
+            (self.deletion_start_spinbox, self.deletion_end_spinbox),
+        ):
+            start_spinbox.setRange(1, total_pages)
+            end_spinbox.setRange(1, total_pages)
+            start_spinbox.setValue(current_page)
+            end_spinbox.setValue(total_pages)
 
     def move_to_center(self):
         """Move the dialog to the center of the screen."""

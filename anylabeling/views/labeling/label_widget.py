@@ -5588,12 +5588,25 @@ class LabelingWidget(QtWidgets.QWidget):
                 return
 
     def label_manager(self):
-        modify_label_dialog = LabelModifyDialog(
+        dialog = getattr(self, "label_modify_dialog", None)
+        if dialog is not None and dialog.isVisible():
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+
+        self.label_modify_dialog = LabelModifyDialog(
             parent=self, opacity=LABEL_OPACITY
         )
-        result = modify_label_dialog.exec_()
-        if result == QtWidgets.QDialog.Accepted:
-            self.load_file(self.filename)
+        self.label_modify_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        self.label_modify_dialog.accepted.connect(
+            lambda: self.load_file(self.filename) if self.filename else None
+        )
+        self.label_modify_dialog.finished.connect(
+            lambda _result: setattr(self, "label_modify_dialog", None)
+        )
+        self.label_modify_dialog.show()
+        self.label_modify_dialog.raise_()
+        self.label_modify_dialog.activateWindow()
 
     def object_manager(self):
         """Toggle the object manager dialog."""
@@ -5968,10 +5981,23 @@ class LabelingWidget(QtWidgets.QWidget):
         self.tag_sort_total = 0
 
     def gid_manager(self):
-        modify_gid_dialog = GroupIDModifyDialog(parent=self)
-        result = modify_gid_dialog.exec_()
-        if result == QtWidgets.QDialog.Accepted:
-            self.load_file(self.filename)
+        dialog = getattr(self, "gid_modify_dialog", None)
+        if dialog is not None and dialog.isVisible():
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+
+        self.gid_modify_dialog = GroupIDModifyDialog(parent=self)
+        self.gid_modify_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        self.gid_modify_dialog.accepted.connect(
+            lambda: self.load_file(self.filename) if self.filename else None
+        )
+        self.gid_modify_dialog.finished.connect(
+            lambda _result: setattr(self, "gid_modify_dialog", None)
+        )
+        self.gid_modify_dialog.show()
+        self.gid_modify_dialog.raise_()
+        self.gid_modify_dialog.activateWindow()
 
     def open_chatbot(self):
         dialog = ChatbotDialog(self)
@@ -6067,6 +6093,8 @@ class LabelingWidget(QtWidgets.QWidget):
             self.angle_correction_dialog = AngleCorrectionDialog(parent=self)
             self.angle_correction_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose, False)
 
+        self._update_angle_correction_dialog_page_range(force=True)
+
         if self.angle_correction_dialog.isVisible():
             self.angle_correction_dialog.raise_()
             self.angle_correction_dialog.activateWindow()
@@ -6108,8 +6136,7 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.reference_selected.connect(self.on_reference_shape_selected)
 
         # 更新范围spinbox
-        current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
-        total_pages = len(self.image_list) if self.image_list else 1
+        current_page, total_pages = self._current_file_list_page_state()
         self.alignment_dialog.update_page_range(current_page, total_pages)
         
         # 更新标签复选框列表（带颜色）
@@ -8430,8 +8457,7 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.setFocus()
 
         # 更新页面范围
-        current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
-        total_pages = len(self.image_list) if self.image_list else 1
+        current_page, total_pages = self._current_file_list_page_state()
         self.segmentation_dialog.update_page_range(current_page, total_pages)
 
     def _ensure_segmentation_dialog(self):
@@ -8944,8 +8970,8 @@ class LabelingWidget(QtWidgets.QWidget):
             return
         
         # 获取当前页面索引
-        current_index = self.file_list_widget.currentRow()
-        total_pages = len(self.image_list) if self.image_list else 1
+        current_page, total_pages = self._current_file_list_page_state()
+        current_index = current_page - 1
         
         # 更新对话框数据
         self.label_sync_dialog.update_items(
@@ -15776,6 +15802,8 @@ class LabelingWidget(QtWidgets.QWidget):
         self._update_merge_tool_page_range()
         self._update_label_tool_dialog_page_range()
         self._update_page_text_dialog()
+        self._update_label_sync_dialog()
+        self._update_angle_correction_dialog_page_range()
 
         if (
             hasattr(self, "vertical_viewer_dialog")
@@ -16166,6 +16194,12 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Update page text dialog if open
         self._update_page_text_dialog()
+
+        # Update label sync dialog if open
+        self._update_label_sync_dialog()
+
+        # Update angle correction dialog page range if open
+        self._update_angle_correction_dialog_page_range()
 
         # Sync viewer dialogs if enabled
         if hasattr(self, 'vertical_viewer_dialog') and self.vertical_viewer_dialog and self.vertical_viewer_dialog.isVisible():
@@ -17541,6 +17575,14 @@ class LabelingWidget(QtWidgets.QWidget):
             # At this point, no item is selected yet, so the current page is temporarily set to 1.
             # The subsequent call to load_file -> file_selection_changed will update it precisely.
             self.expand_margins_dialog.refresh_state(all_labels, total_files, 1)
+
+        # After repopulating the file list, refresh the merge tool range if it's open.
+        self._update_merge_tool_page_range()
+        self._update_alignment_dialog_page_range()
+        self._update_segmentation_dialog_page_range()
+        self._update_page_text_dialog()
+        self._update_label_sync_dialog(force_update=True)
+        self._update_angle_correction_dialog_page_range()
 
         # 刷新 "标签排序工具"
         if self.tag_sort_dialog and self.tag_sort_dialog.isVisible():
@@ -18948,13 +18990,26 @@ class LabelingWidget(QtWidgets.QWidget):
                 current_page = self.file_list_widget.currentRow() + 1
                 self.expand_margins_dialog.set_current_page(current_page)
 
+    def _current_file_list_page_state(self):
+        total_pages = self.file_list_widget.count() if self.file_list_widget else 0
+        total_pages = max(1, total_pages)
+        current_page = 1
+        current_index = self._get_file_index(self.filename) if self.filename else None
+        if current_index is not None:
+            current_page = current_index + 1
+        elif self.file_list_widget:
+            row = self.file_list_widget.currentRow()
+            if row >= 0:
+                current_page = row + 1
+        current_page = max(1, min(current_page, total_pages))
+        return current_page, total_pages
+
     def _update_alignment_dialog_page_range(self):
         """Update page range in alignment dialog if it's open and visible."""
         if (hasattr(self, 'alignment_dialog') and
             self.alignment_dialog is not None and
             self.alignment_dialog.isVisible()):
-            current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
-            total_pages = len(self.image_list) if self.image_list else 1
+            current_page, total_pages = self._current_file_list_page_state()
             self.alignment_dialog.update_page_range(current_page, total_pages)
             # 更新标签复选框列表（带颜色）
             labels = [self.unique_label_list.item(i).data(QtCore.Qt.UserRole) 
@@ -18990,8 +19045,7 @@ class LabelingWidget(QtWidgets.QWidget):
         if (hasattr(self, 'segmentation_dialog') and
             self.segmentation_dialog is not None and
             self.segmentation_dialog.isVisible()):
-            current_page = self.file_list_widget.currentRow() + 1 if self.file_list_widget else 1
-            total_pages = len(self.image_list) if self.image_list else 1
+            current_page, total_pages = self._current_file_list_page_state()
             self.segmentation_dialog.update_page_range(current_page, total_pages)
 
     def _update_merge_tool_page_range(self):
@@ -18999,12 +19053,7 @@ class LabelingWidget(QtWidgets.QWidget):
         if (hasattr(self, 'merge_tool_dialog') and
             self.merge_tool_dialog is not None and
             self.merge_tool_dialog.isVisible()):
-            total_pages = len(self.image_list) if self.image_list else 1
-            current_page = 1
-            if self.filename and self.filename in self.image_list:
-                current_page = self.image_list.index(self.filename) + 1
-            elif self.file_list_widget:
-                current_page = self.file_list_widget.currentRow() + 1
+            current_page, total_pages = self._current_file_list_page_state()
             self.merge_tool_dialog.update_page_range(current_page, total_pages)
 
     def _update_label_tool_dialog_page_range(self):
@@ -19030,8 +19079,21 @@ class LabelingWidget(QtWidgets.QWidget):
         if (hasattr(self, 'page_text_dialog') and
             self.page_text_dialog is not None and
             self.page_text_dialog.isVisible()):
+            current_page, total_pages = self._current_file_list_page_state()
+            if hasattr(self.page_text_dialog, "update_page_range"):
+                self.page_text_dialog.update_page_range(current_page, total_pages)
             # 更新当前页面的形状列表
             self.page_text_dialog.update_shapes(self.canvas.shapes)
+
+    def _update_angle_correction_dialog_page_range(self, force=False):
+        """Update page range in angle correction dialog if it's open and visible."""
+        if not hasattr(self, 'angle_correction_dialog') or self.angle_correction_dialog is None:
+            return
+        if not force and not self.angle_correction_dialog.isVisible():
+            return
+        current_page, total_pages = self._current_file_list_page_state()
+        if hasattr(self.angle_correction_dialog, "update_page_range"):
+            self.angle_correction_dialog.update_page_range(current_page, total_pages)
 
     def open_merge_tool(self):
         if not self.image_list:

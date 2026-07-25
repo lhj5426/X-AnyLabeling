@@ -505,17 +505,26 @@ class PageTextDialog(QtWidgets.QDialog):
         if scope != 1:
             for img_path in self._get_scope_files():
                 self._apply_to_image(img_path, lambda d, t: (d, ""))
+
+    def update_page_range(self, current_page, total_pages):
+        total_pages = max(1, int(total_pages or 1))
+        current_page = max(1, min(int(current_page or 1), total_pages))
+        self.spin_start.setRange(1, total_pages)
+        self.spin_end.setRange(1, total_pages)
+        self.spin_start.setValue(current_page)
+        self.spin_end.setValue(total_pages)
     
     def showEvent(self, event):
         """窗口显示时刷新数据"""
         super().showEvent(event)
         self.refresh_data()
         # 更新范围 spinbox
-        if self.parent and hasattr(self.parent, 'image_list'):
+        if self.parent and hasattr(self.parent, '_current_file_list_page_state'):
+            current_page, total_pages = self.parent._current_file_list_page_state()
+            self.update_page_range(current_page, total_pages)
+        elif self.parent and hasattr(self.parent, 'image_list'):
             n = len(self.parent.image_list)
-            self.spin_start.setRange(1, n)
-            self.spin_end.setRange(1, n)
-            self.spin_end.setValue(n)
+            self.update_page_range(1, n)
     
     def tr(self, text):
         """翻译函数"""

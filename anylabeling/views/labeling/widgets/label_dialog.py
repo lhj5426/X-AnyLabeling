@@ -460,7 +460,10 @@ class GroupIDModifyDialog(QtWidgets.QDialog):
         image_file_list = []
         count = self.parent.file_list_widget.count()
         for c in range(count):
-            image_file = self.parent.file_list_widget.item(c).text()
+            item = self.parent.file_list_widget.item(c)
+            if item is None:
+                continue
+            image_file = item.data(Qt.UserRole) or item.text()
             image_file_list.append(image_file)
         return image_file_list
 
@@ -501,7 +504,7 @@ class GroupIDModifyDialog(QtWidgets.QDialog):
     def init_ui(self):
         """Initialize the UI."""
 
-        self.setWindowTitle(self.tr("Group ID Change Manager"))
+        self.setWindowTitle(self.tr("群组编号管理器"))
         self.setWindowFlags(
             self.windowFlags()
             | Qt.WindowMinimizeButtonHint
@@ -515,7 +518,7 @@ class GroupIDModifyDialog(QtWidgets.QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(20)
 
-        title_list = ["Ori Group-ID", "New Group-ID"]
+        title_list = [self.tr("原 Group-ID"), self.tr("新 Group-ID")]
         self.table_widget = QTableWidget(self)
         self.table_widget.setColumnCount(len(title_list))
         self.table_widget.setHorizontalHeaderLabels(title_list)
@@ -605,7 +608,7 @@ class GroupIDModifyDialog(QtWidgets.QDialog):
         range_layout = QtWidgets.QHBoxLayout()
         range_layout.addStretch(1)
 
-        from_label = QtWidgets.QLabel("From:")
+        from_label = QtWidgets.QLabel(self.tr("从:"))
         self.from_input = QtWidgets.QSpinBox()
         self.from_input.setMinimum(1)
         self.from_input.setMaximum(len(self.image_file_list))
@@ -615,7 +618,7 @@ class GroupIDModifyDialog(QtWidgets.QDialog):
         range_layout.addWidget(from_label)
         range_layout.addWidget(self.from_input)
 
-        to_label = QtWidgets.QLabel("To:")
+        to_label = QtWidgets.QLabel(self.tr("到:"))
         self.to_input = QtWidgets.QSpinBox()
         self.to_input.setMinimum(1)
         self.to_input.setMaximum(len(self.image_file_list))
@@ -625,7 +628,7 @@ class GroupIDModifyDialog(QtWidgets.QDialog):
         range_layout.addWidget(to_label)
         range_layout.addWidget(self.to_input)
 
-        self.range_button = QtWidgets.QPushButton("Go")
+        self.range_button = QtWidgets.QPushButton(self.tr("执行"))
         self.range_button.setStyleSheet(get_ok_btn_style())
         range_layout.addWidget(self.range_button)
         self.range_button.clicked.connect(self.update_range)
@@ -659,7 +662,7 @@ class GroupIDModifyDialog(QtWidgets.QDialog):
             # New Group-ID
             line_edit = QtWidgets.QLineEdit(self.table_widget)
             line_edit.setValidator(QIntValidator(0, 9999, self))
-            line_edit.setPlaceholderText("Enter new ID")
+            line_edit.setPlaceholderText(self.tr("输入新 ID"))
             line_edit.setAlignment(Qt.AlignCenter)
             line_edit.setFixedHeight(28)
 
@@ -853,7 +856,7 @@ class LabelModifyDialog(QtWidgets.QDialog):
 
     def init_ui(self):
         """Initialize the user interface."""
-        self.setWindowTitle(self.tr("Label Change Manager"))
+        self.setWindowTitle(self.tr("标签管理器"))
         self.setWindowFlags(
             self.windowFlags()
             | Qt.WindowMinimizeButtonHint
@@ -862,7 +865,12 @@ class LabelModifyDialog(QtWidgets.QDialog):
         self.resize(600, 400)
         self.move_to_center()
 
-        title_list = ["Category", "Delete", "New Value", "Color"]
+        title_list = [
+            self.tr("标签"),
+            self.tr("删除"),
+            self.tr("新名称"),
+            self.tr("颜色"),
+        ]
         self.table_widget = QTableWidget(self)
         self.table_widget.setColumnCount(len(title_list))
         self.table_widget.setHorizontalHeaderLabels(title_list)
@@ -881,7 +889,7 @@ class LabelModifyDialog(QtWidgets.QDialog):
         # Add stretch to center the widgets
         range_layout.addStretch(1)
 
-        from_label = QtWidgets.QLabel("From:")
+        from_label = QtWidgets.QLabel(self.tr("从:"))
         self.from_input = QtWidgets.QSpinBox()
         self.from_input.setMinimum(1)
         self.from_input.setMaximum(len(self.image_file_list))
@@ -891,7 +899,7 @@ class LabelModifyDialog(QtWidgets.QDialog):
         range_layout.addWidget(from_label)
         range_layout.addWidget(self.from_input)
 
-        to_label = QtWidgets.QLabel("To:")
+        to_label = QtWidgets.QLabel(self.tr("到:"))
         self.to_input = QtWidgets.QSpinBox()
         self.to_input.setMinimum(1)
         self.to_input.setMaximum(len(self.image_file_list))
@@ -901,7 +909,7 @@ class LabelModifyDialog(QtWidgets.QDialog):
         range_layout.addWidget(to_label)
         range_layout.addWidget(self.to_input)
 
-        self.range_button = QtWidgets.QPushButton("Go")
+        self.range_button = QtWidgets.QPushButton(self.tr("执行"))
         self.range_button.setStyleSheet(get_ok_btn_style())
         range_layout.addWidget(self.range_button)
         self.range_button.clicked.connect(self.update_range)
@@ -919,7 +927,10 @@ class LabelModifyDialog(QtWidgets.QDialog):
         image_file_list = []
         count = self.parent.file_list_widget.count()
         for c in range(count):
-            image_file = self.parent.file_list_widget.item(c).text()
+            item = self.parent.file_list_widget.item(c)
+            if item is None:
+                continue
+            image_file = item.data(Qt.UserRole) or item.text()
             image_file_list.append(image_file)
         return image_file_list
 
