@@ -232,7 +232,7 @@ def upload_vlm_r1_ovd_annotation(self):
         popup.show_popup(self, popup_height=65, position="center")
 
         # update and refresh the current canvas
-        self.load_file(self.filename)
+        self.refresh_image_folder()
 
     except Exception as e:
         progress_dialog.close()
@@ -1624,7 +1624,10 @@ def upload_yolo_annotation(self, mode, LABEL_OPACITY):
                 break
 
         progress_dialog.close()
-        self.load_file(self.filename)
+        if hasattr(self, "refresh_image_folder"):
+            self.refresh_image_folder()
+        elif self.filename:
+            self.load_file(self.filename)
         popup = Popup(
             "上传完成！",
             self,

@@ -40,9 +40,11 @@ from ...app_info import (
 )
 from . import utils
 from ...config import get_config, save_config
+from .label_converter import LabelConverter
 from .label_file import LabelFile, LabelFileError
 from .logger import logger
 from .shape import Shape
+from .utils.style import get_progress_dialog_style
 from .widgets import (
     AboutDialog,
     AutoLabelingWidget,
@@ -1572,6 +1574,15 @@ class LabelingWidget(QtWidgets.QWidget):
             checkable=True,
             enabled=True,
             checked=self._config.get("load_subfolders", False),
+        )
+        auto_import_labels_action = action(
+            text=self.tr("自动导入标签"),
+            slot=lambda x: self._config.update({"auto_import_labels": x}),
+            icon=None,
+            tip=self.tr("打开文件夹时自动导入同名 YOLO TXT 标签"),
+            checkable=True,
+            enabled=True,
+            checked=self._config.get("auto_import_labels", False),
         )
         open_next_image = action(
             self.tr("&Next Image"),
@@ -3187,6 +3198,7 @@ class LabelingWidget(QtWidgets.QWidget):
         # Store actions for further handling.
         self.actions = utils.Struct(
             save_auto=save_auto,
+            auto_import_labels=auto_import_labels_action,
             save_with_image_data=save_with_image_data,
             change_output_dir=change_output_dir,
             save=save,
@@ -3472,6 +3484,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 open_prev_unchecked_image,
                 opendir,
                 load_subfolders_action,
+                auto_import_labels_action,
                 openvideo,
                 self.menus.recent_files,
                 save,
@@ -12266,7 +12279,7 @@ class LabelingWidget(QtWidgets.QWidget):
         
         # 同时更新右下角的状态指示器
         self._update_edit_status_indicator(manually_edited)
-    
+
     def _on_color_loaded(self, filename, manually_edited, thread_id):
         """后台线程加载颜色完成的回调"""
         # 只处理最新线程的信号，忽略旧线程的信号
@@ -12698,7 +12711,7 @@ class LabelingWidget(QtWidgets.QWidget):
             return
         self.set_clean()
         self.import_image_folder(
-            self.last_open_dir, load=False, check_continue=False
+            self.last_open_dir, load=False, check_continue=False, auto_import=False
         )
 
         image_count = self.file_list_widget.count()
@@ -17452,6 +17465,7 @@ class LabelingWidget(QtWidgets.QWidget):
         recursive=None,
         filter_config=None,
         check_continue=True,
+        auto_import=True,
     ):
         if recursive is None:
             recursive = self._config.get("load_subfolders", False)
@@ -17483,7 +17497,7 @@ class LabelingWidget(QtWidgets.QWidget):
             if pattern and pattern not in self._file_display_text(filename):
                 continue
             all_filenames.append(filename)
-        
+
         # Optimization: Batch check label files existence (faster than individual checks)
         label_files_map = {}
         manually_edited_map = {}
@@ -17621,6 +17635,166 @@ class LabelingWidget(QtWidgets.QWidget):
         if hasattr(self, 'thumbnail_viewer_dialog') and self.thumbnail_viewer_dialog and self.thumbnail_viewer_dialog.isVisible():
             self.thumbnail_viewer_dialog.update_image_list(self.image_list, current_file)
         self.refresh_image_category_manager()
+
+        if auto_import and self._config.get("auto_import_labels", False):
+            pending_files = []
+            txt_count = 0
+            json_count = 0
+            for image_file in all_filenames:
+                txt_file = osp.splitext(image_file)[0] + ".txt"
+                json_file = osp.splitext(image_file)[0] + ".json"
+                if self.output_dir:
+                    json_file = osp.join(
+                        self.output_dir, osp.basename(json_file)
+                    )
+                has_txt = osp.exists(txt_file)
+                has_json = osp.exists(json_file)
+                if has_txt:
+                    txt_count += 1
+                if has_json:
+                    json_count += 1
+                if has_txt and not has_json:
+                    pending_files.append(image_file)
+
+            pending_count = len(pending_files)
+            if pending_count == 0:
+                return
+
+            image_count = len(all_filenames)
+            # Give the folder view a moment to render before asking.
+            QTimer.singleShot(
+                1000,
+                lambda files=pending_files, ic=image_count, tc=txt_count, jc=json_count, pc=pending_count: self._prompt_auto_import_folder_labels(
+                    files, ic, tc, jc, pc
+                ),
+            )
+
+    def _infer_yolo_mode_from_txt(self, txt_path):
+        """Infer YOLO annotation mode from a txt file."""
+        try:
+            saw_content = False
+            with open(txt_path, "r", encoding="utf-8") as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    saw_content = True
+                    parts = line.split()
+                    if len(parts) == 5:
+                        return "hbb"
+                    if len(parts) == 9:
+                        return "obb"
+                    if len(parts) > 5 and (len(parts) - 1) % 2 == 0:
+                        return "seg"
+                    break
+            if not saw_content:
+                return "hbb"
+        except Exception:
+            pass
+        return None
+
+    def _prompt_auto_import_folder_labels(self, image_files, image_count, txt_count, json_count, pending_count):
+        """Ask whether to auto import folder labels after the folder view is shown."""
+        if not image_files or not self._config.get("auto_import_labels", False):
+            return
+
+        missing_json_count = pending_count
+        if missing_json_count <= 0:
+            return
+
+        if txt_count != image_count or json_count == image_count:
+            message = self.tr(
+                "发现 %d 张图片、%d 个 TXT、%d 个 JSON，缺少 %d 个 JSON。是否导入缺失的标注？"
+            ) % (image_count, txt_count, json_count, missing_json_count)
+        else:
+            message = self.tr(
+                "发现 %d 张图片和 %d 个 TXT，缺少 %d 个 JSON。是否导入缺失的标注？"
+            ) % (image_count, txt_count, missing_json_count)
+
+        reply_box = QtWidgets.QMessageBox(self)
+        reply_box.setWindowTitle(self.tr("自动导入标签"))
+        reply_box.setText(message)
+        reply_box.setIcon(QtWidgets.QMessageBox.Question)
+        yes_button = reply_box.addButton(self.tr("导入"), QtWidgets.QMessageBox.AcceptRole)
+        no_button = reply_box.addButton(self.tr("取消"), QtWidgets.QMessageBox.RejectRole)
+        reply_box.setDefaultButton(yes_button)
+        reply_box.exec_()
+        if reply_box.clickedButton() != yes_button:
+            return
+
+        self._auto_import_folder_yolo_labels(image_files)
+
+    def _auto_import_folder_yolo_labels(self, image_files):
+        """Batch import matching YOLO TXT labels for a folder."""
+        labels = self._config.get("labels") or []
+        if not labels:
+            logger.warning("Auto import skipped: config labels are empty.")
+            return
+
+        candidates = []
+        for image_file in image_files:
+            txt_file = osp.splitext(image_file)[0] + ".txt"
+            if not osp.exists(txt_file):
+                continue
+
+            json_file = osp.splitext(image_file)[0] + ".json"
+            if self.output_dir:
+                json_file = osp.join(self.output_dir, osp.basename(json_file))
+            if osp.exists(json_file):
+                continue
+
+            mode = self._infer_yolo_mode_from_txt(txt_file)
+            if mode is None:
+                continue
+            candidates.append((image_file, txt_file, json_file, mode))
+
+        if not candidates:
+            return
+
+        progress_dialog = QtWidgets.QProgressDialog(
+            self.tr("正在自动导入标签..."),
+            self.tr("Cancel"),
+            0,
+            len(candidates),
+            self,
+        )
+        progress_dialog.setWindowModality(Qt.WindowModal)
+        progress_dialog.setWindowTitle(self.tr("Progress"))
+        progress_dialog.setMinimumWidth(500)
+        progress_dialog.setMinimumHeight(150)
+        progress_dialog.setStyleSheet(
+            get_progress_dialog_style(color="#1d1d1f", height=20)
+        )
+
+        converter = LabelConverter()
+        converter.classes = list(labels)
+
+        try:
+            for i, (image_file, txt_file, json_file, mode) in enumerate(candidates):
+                if progress_dialog.wasCanceled():
+                    break
+                if mode in ("hbb", "seg"):
+                    converter.yolo_to_custom(
+                        input_file=txt_file,
+                        output_file=json_file,
+                        image_file=image_file,
+                        mode=mode,
+                        merge=False,
+                    )
+                elif mode == "obb":
+                    converter.yolo_obb_to_custom(
+                        input_file=txt_file,
+                        output_file=json_file,
+                        image_file=image_file,
+                        merge=False,
+                    )
+                progress_dialog.setValue(i + 1)
+        except Exception as e:
+            logger.warning(f"Auto import failed: {e}")
+        finally:
+            progress_dialog.close()
+            if candidates:
+                self.refresh_image_folder()
     
     def _load_folder_last_page(self, folder_path):
         """从文件夹读取上次浏览的页码和文件名"""
