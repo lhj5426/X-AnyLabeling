@@ -888,6 +888,7 @@ class LabelingWidget(QtWidgets.QWidget):
         shape_control_layout.setSpacing(2)
         
         self.btn_select_all_shapes = ShrinkablePushButton(self.tr("全选"))
+        self.btn_select_all_shapes.setToolTip(self.tr("选择所有对象"))
         def select_all_objects():
             for item in self.label_list:
                 item.setCheckState(Qt.Checked)
@@ -898,6 +899,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.btn_select_all_shapes.clicked.connect(select_all_objects)
 
         self.btn_invert_selection_shapes = ShrinkablePushButton(self.tr("反选"))
+        self.btn_invert_selection_shapes.setToolTip(self.tr("反向选择对象"))
         def invert_all_objects():
             # 获取反选功能增强设置
             exclude_locked = self._config.get("invert_exclude_locked", True)
@@ -918,6 +920,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.btn_invert_selection_shapes.clicked.connect(invert_all_objects)
 
         self.btn_deselect_all_shapes = ShrinkablePushButton(self.tr("取消"))
+        self.btn_deselect_all_shapes.setToolTip(self.tr("取消选择对象"))
         def deselect_all_objects():
             # 获取取消功能增强设置
             exclude_locked = self._config.get("deselect_exclude_locked", True)
@@ -1033,6 +1036,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self._highlight_on = False
         self.btn_highlight = ShrinkablePushButton(self.tr("高亮"))
         self.btn_highlight.setCheckable(True)
+        self.btn_highlight.setToolTip(self.tr("高亮对象"))
         def toggle_highlight():
             all_shapes = [item.shape() for item in self.label_list]
             if not all_shapes:
@@ -1219,10 +1223,10 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Set shortcuts from config
         shortcuts = self._config.get("shortcuts", {})
-        self.btn_select_all_shapes.setShortcut(shortcuts.get("select_all_shapes", ""))
-        self.btn_invert_selection_shapes.setShortcut(shortcuts.get("invert_selection_shapes", ""))
-        self.btn_deselect_all_shapes.setShortcut(shortcuts.get("deselect_all_shapes", ""))
-        self.btn_highlight.setShortcut(shortcuts.get("toggle_highlight", ""))
+        self._set_button_application_shortcut(self.btn_select_all_shapes, "btn_select_all_shapes", shortcuts.get("select_all_shapes", ""))
+        self._set_button_application_shortcut(self.btn_invert_selection_shapes, "btn_invert_selection_shapes", shortcuts.get("invert_selection_shapes", ""))
+        self._set_button_application_shortcut(self.btn_deselect_all_shapes, "btn_deselect_all_shapes", shortcuts.get("deselect_all_shapes", ""))
+        self._set_button_application_shortcut(self.btn_highlight, "btn_highlight", shortcuts.get("toggle_highlight", ""))
 
         shape_control_layout.addWidget(self.btn_select_all_shapes)
         shape_control_layout.addWidget(self.btn_invert_selection_shapes)
@@ -8414,7 +8418,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 else:
                     action.setShortcut("")
         
-        # 更新按钮快捷键（这些不是action，是直接设置在按钮上的）
+        # 更新按钮快捷键（这些不是action，用应用级 QShortcut 保证浮动 dock 也可用）
         button_shortcuts = {
             "btn_select_all_shapes": "select_all_shapes",
             "btn_invert_selection_shapes": "invert_selection_shapes",
@@ -8427,8 +8431,51 @@ class LabelingWidget(QtWidgets.QWidget):
         }
         for btn_name, shortcut_key in button_shortcuts.items():
             btn = getattr(self, btn_name, None)
-            if btn and hasattr(btn, 'setShortcut'):
-                btn.setShortcut(shortcuts.get(shortcut_key, ""))
+            if btn:
+                self._set_button_application_shortcut(
+                    btn, btn_name, shortcuts.get(shortcut_key, "")
+                )
+
+    def _set_button_application_shortcut(self, button, name, shortcut):
+        """Bind button shortcuts at app scope so floating docks still receive them."""
+        if not hasattr(self, "_button_application_shortcuts"):
+            self._button_application_shortcuts = {}
+
+        if isinstance(shortcut, (list, tuple)):
+            shortcut = shortcut[0] if shortcut else ""
+        shortcut = shortcut or ""
+
+        if hasattr(button, "setShortcut"):
+            button.setShortcut("")
+
+        qshortcut = self._button_application_shortcuts.get(name)
+        if qshortcut is None:
+            qshortcut = QtWidgets.QShortcut(QtGui.QKeySequence(shortcut), self)
+            qshortcut.setContext(Qt.ApplicationShortcut)
+            qshortcut.activated.connect(
+                lambda btn=button: btn.click()
+                if btn.isEnabled() and btn.isVisible()
+                else None
+            )
+            self._button_application_shortcuts[name] = qshortcut
+        else:
+            qshortcut.setKey(QtGui.QKeySequence(shortcut))
+
+        qshortcut.setEnabled(bool(shortcut))
+        self._update_button_shortcut_tooltip(button, shortcut)
+
+    def _update_button_shortcut_tooltip(self, button, shortcut):
+        base_tooltip = button.property("_base_tooltip")
+        if base_tooltip is None:
+            base_tooltip = button.toolTip() or button.text()
+            button.setProperty("_base_tooltip", base_tooltip)
+
+        shortcut_text = QtGui.QKeySequence(shortcut).toString(
+            QtGui.QKeySequence.NativeText
+        ) if shortcut else self.tr("未设置")
+        button.setToolTip(
+            f"{base_tooltip}\n{self.tr('快捷键')}: {shortcut_text}"
+        )
 
     def _create_segmentation_dialog(self):
         """创建并连接 segmentation_dialog（不显示）"""
@@ -10122,12 +10169,9 @@ class LabelingWidget(QtWidgets.QWidget):
         for btn_name, shortcut_key in button_shortcut_map.items():
             if hasattr(self, btn_name):
                 btn = getattr(self, btn_name)
-                shortcut_value = shortcuts.get(shortcut_key, "")
-                if isinstance(shortcut_value, list):
-                    shortcut_str = shortcut_value[0] if shortcut_value else ""
-                else:
-                    shortcut_str = shortcut_value if shortcut_value else ""
-                btn.setShortcut(shortcut_str)
+                self._set_button_application_shortcut(
+                    btn, btn_name, shortcuts.get(shortcut_key, "")
+                )
 
         # Update segmentation dialog shortcut if it exists
         if self.segmentation_dialog is not None:
@@ -11785,10 +11829,10 @@ class LabelingWidget(QtWidgets.QWidget):
 
         # Set shortcuts from config
         shortcuts = self._config.get("shortcuts", {})
-        self.btn_select_all.setShortcut(shortcuts.get("select_all_labels", ""))
-        self.btn_invert_selection.setShortcut(shortcuts.get("invert_selection_labels", ""))
-        self.btn_deselect_all.setShortcut(shortcuts.get("deselect_all_labels", ""))
-        self.btn_overlap.setShortcut(shortcuts.get("toggle_overlap", ""))
+        self._set_button_application_shortcut(self.btn_select_all, "btn_select_all", shortcuts.get("select_all_labels", ""))
+        self._set_button_application_shortcut(self.btn_invert_selection, "btn_invert_selection", shortcuts.get("invert_selection_labels", ""))
+        self._set_button_application_shortcut(self.btn_deselect_all, "btn_deselect_all", shortcuts.get("deselect_all_labels", ""))
+        self._set_button_application_shortcut(self.btn_overlap, "btn_overlap", shortcuts.get("toggle_overlap", ""))
 
         # 添加按钮到布局
         control_layout.addWidget(self.btn_select_all)
