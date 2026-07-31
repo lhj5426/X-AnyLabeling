@@ -4571,6 +4571,12 @@ class Canvas(
     # QT Overload
     def _find_overlapping_areas(self, shapes):
         """找到所有相同标签的矩形之间的重叠区域"""
+        # Overlap highlighting is a visual derived from the shapes currently
+        # shown on the canvas.  Hidden shapes must not keep producing an
+        # orphaned overlap region.  Use Canvas.is_visible() instead of only
+        # Shape.visible because per-shape visibility is also tracked in
+        # self.visible by set_shape_visible().
+        shapes = [shape for shape in shapes if self.is_visible(shape)]
         overlap_regions = []
         if len(shapes) < 2:
             return overlap_regions
@@ -4595,6 +4601,29 @@ class Canvas(
                 if not overlap_path.isEmpty():
                     overlap_regions.append(overlap_path)
         return overlap_regions
+
+    @staticmethod
+    def _draw_non_accumulating_highlight_fills(painter, shapes):
+        """Fill each highlighted label/color union once without alpha stacking."""
+        fill_groups = {}
+        for shape in shapes:
+            fill_color = shape.effective_fill_color()
+            if fill_color is None or not shape.points:
+                continue
+            color_key = fill_color.rgba()
+            group_key = (shape.label, color_key)
+            shape_path = shape.make_path()
+            if shape_path.isEmpty():
+                continue
+            if group_key in fill_groups:
+                fill_groups[group_key][0] = fill_groups[group_key][0].united(
+                    shape_path
+                )
+            else:
+                fill_groups[group_key] = [shape_path, fill_color]
+
+        for fill_path, fill_color in fill_groups.values():
+            painter.fillPath(fill_path, fill_color)
 
     def paintEvent(self, event):  # noqa: C901
         """Paint event for canvas"""
@@ -4791,7 +4820,23 @@ class Canvas(
                 ]
                 p.drawPolygon(arrow_points)
 
-        # 首先绘制所有形状
+        paintable_shapes = [
+            shape
+            for shape in self.shapes
+            if (shape.selected or not self._hide_backround)
+            and self.is_visible(shape)
+            and not getattr(shape, "_brush_using_mask", False)
+        ]
+        for shape in paintable_shapes:
+            shape.fill = self._fill_drawing and (
+                shape.selected or shape == self.h_hape
+            )
+
+        # In highlight mode, fill each same-label union once and then draw the
+        # individual outlines.  Normal (non-highlight) painting stays exactly
+        # on the original per-shape path.
+        if Shape.highlighting_enabled:
+            self._draw_non_accumulating_highlight_fills(p, paintable_shapes)
         for shape in self.shapes:
             if (
                 shape.selected or not self._hide_backround
@@ -4800,7 +4845,9 @@ class Canvas(
                     shape.selected or shape == self.h_hape
                 )
                 if not getattr(shape, "_brush_using_mask", False):
-                    shape.paint(p)
+                    shape.paint(
+                        p, draw_fill=not Shape.highlighting_enabled
+                    )
 
                 # --- Alignment Tool Highlighting ---
                 if self.is_alignment_target_mode or self.is_reference_selection_mode or self.reference_shape:
@@ -10276,8 +10323,15 @@ class Canvas(
         visible_shapes_in_crop = []
         for shape in self.shapes:
             if self.is_visible(shape) and shape.bounding_rect().intersects(crop_rect):
-                shape.paint(temp_painter)
                 visible_shapes_in_crop.append(shape)
+        if Shape.highlighting_enabled:
+            self._draw_non_accumulating_highlight_fills(
+                temp_painter, visible_shapes_in_crop
+            )
+        for shape in visible_shapes_in_crop:
+            shape.paint(
+                temp_painter, draw_fill=not Shape.highlighting_enabled
+            )
         
         # 绘制重叠区域（使用自定义颜色）
         if self.show_overlap and visible_shapes_in_crop:

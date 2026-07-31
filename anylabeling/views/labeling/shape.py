@@ -510,7 +510,39 @@ class Shape:
         x2, y2 = pt2.x(), pt2.y()
         return QtCore.QRectF(x1, y1, x2 - x1, y2 - y1)
 
-    def paint(self, painter: QtGui.QPainter):  # noqa: max-complexity: 18
+    def effective_fill_color(self):
+        """Return the fill color currently used for this shape, if any."""
+        should_fill = self.fill
+        if Shape.highlighting_enabled and Shape.highlight_use_border_color:
+            should_fill = False
+        if not should_fill:
+            return None
+
+        if Shape.highlighting_enabled:
+            alpha = (
+                self.label_alpha_highlight
+                if self.label_alpha_highlight is not None
+                else Shape.alpha_highlight
+            )
+        else:
+            alpha = (
+                self.label_alpha_idle
+                if self.label_alpha_idle is not None
+                else Shape.alpha_idle
+            )
+        if alpha <= 0:
+            return None
+
+        return QtGui.QColor(
+            self.line_color.red(),
+            self.line_color.green(),
+            self.line_color.blue(),
+            alpha,
+        )
+
+    def paint(
+        self, painter: QtGui.QPainter, draw_fill: bool = True
+    ):  # noqa: max-complexity: 18
         """Paint shape using QPainter
         
         矩形边框有5种颜色状态：
@@ -750,21 +782,9 @@ class Shape:
             # 先填充，再画边框，这样边框会完整显示在填充色上面（像相框一样）
             # 避免边框和填充色之间出现过渡色
             # 当启用"高亮时直接使用独立边框颜色"时，跳过填充（模拟状态5：填充消失，边框保留）
-            should_fill = self.fill
-            if Shape.highlighting_enabled and Shape.highlight_use_border_color:
-                should_fill = False  # 高亮时直接进入状态5，不显示填充
-            
-            if should_fill:
-                r, g, b = self.line_color.red(), self.line_color.green(), self.line_color.blue()
-                if Shape.highlighting_enabled:
-                    # 优先使用标签独立透明度，否则使用全局设置
-                    alpha = self.label_alpha_highlight if self.label_alpha_highlight is not None else Shape.alpha_highlight
-                else:
-                    alpha = self.label_alpha_idle if self.label_alpha_idle is not None else Shape.alpha_idle
-                
-                if alpha > 0:
-                    fill_color = QtGui.QColor(r, g, b, alpha)
-                    painter.fillPath(line_path, fill_color)
+            fill_color = self.effective_fill_color()
+            if draw_fill and fill_color is not None:
+                painter.fillPath(line_path, fill_color)
             
             # 画边框（在填充之后，这样边框完整显示）
             # 当边框宽度为 0 时，跳过边框绘制，只显示填充色
