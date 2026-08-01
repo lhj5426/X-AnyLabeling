@@ -214,8 +214,10 @@ def main():
 
     # 强制将语言设置为中文
     config["language"] = "zh_CN"
-    app_name = str(config.get("app_name") or __appname__).strip() or __appname__
-    logger.info(f"Application title: {app_name}")
+    configured_app_name = config.get("app_name")
+    app_name = str(configured_app_name or __appname__).strip() or __appname__
+    if configured_app_name and str(configured_app_name).strip():
+        logger.info(f"Custom application title: {app_name}")
 
     if not config["labels"] and config["validate_label"]:
         logger.error(
