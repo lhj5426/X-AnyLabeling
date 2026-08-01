@@ -31,7 +31,7 @@ def _save_alignment_settings(settings):
                 existing = yaml.safe_load(f) or {}
         existing["alignment_tool_settings"] = settings
         with open(config_file, "w", encoding="utf-8") as f:
-            yaml.safe_dump(existing, f, allow_unicode=True)
+            yaml.safe_dump(existing, f, allow_unicode=True, sort_keys=False)
     except Exception:
         pass
 

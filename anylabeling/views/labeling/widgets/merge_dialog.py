@@ -629,7 +629,7 @@ class MergeDialog(QtWidgets.QDialog):
             existing["merge_tool_settings"] = merge_settings
             
             with open(user_config_file, "w", encoding="utf-8") as f:
-                yaml.safe_dump(existing, f, allow_unicode=True)
+                yaml.safe_dump(existing, f, allow_unicode=True, sort_keys=False)
         except Exception as e:
             print(f"[ERROR] Failed to save config: {e}")
 

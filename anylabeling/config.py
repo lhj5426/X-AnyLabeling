@@ -122,8 +122,15 @@ def save_config(config):
         
         # 保留文件中已有的merge_tool_settings
         existing_merge_settings = existing.get("merge_tool_settings")
-        
+        existing_app_name = existing.get("app_name")
+
         merged = _merge_prefer_non_null(existing, config)
+        # app_name is user-owned. Never replace a configured title with a
+        # missing/null value from defaults or an older runtime config object.
+        if existing_app_name not in (None, ""):
+            merged["app_name"] = existing_app_name
+        elif merged.get("app_name") in (None, ""):
+            merged.pop("app_name", None)
 
         # Force overwrite for label_toggle_shortcuts to handle deletions properly
         if "label_toggle_shortcuts" in config:
@@ -146,8 +153,13 @@ def save_config(config):
         if existing_merge_settings:
             merged["merge_tool_settings"] = existing_merge_settings
             
+        if "app_name" in merged:
+            merged = {"app_name": merged.pop("app_name"), **merged}
+
         with open(user_config_file, "w", encoding="utf-8") as f:
-            yaml.safe_dump(merged, f, allow_unicode=True)
+            yaml.safe_dump(
+                merged, f, allow_unicode=True, sort_keys=False
+            )
     except Exception:  # noqa
         logger.warning(f"Failed to save config: {user_config_file}")
 
