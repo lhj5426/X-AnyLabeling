@@ -1,3 +1,4 @@
+import os
 import os.path as osp
 import shutil
 import yaml
@@ -7,7 +8,68 @@ from anylabeling import configs as anylabeling_configs
 from anylabeling.views.labeling.logger import logger
 
 
+# Active configuration group. The main config file determines the directory
+# containing the matching window and dock INI files.
 current_config_file = None
+DEFAULT_USER_CONFIG_FILE = osp.join(osp.dirname(osp.dirname(osp.abspath(__file__))), "xanylabeling_config.ini")
+USER_CONFIG_FILE = DEFAULT_USER_CONFIG_FILE
+
+
+def resolve_config_file(config_file):
+    """Resolve a config file or config directory relative to the app folder."""
+    if not config_file:
+        return DEFAULT_USER_CONFIG_FILE
+
+    candidate = osp.expanduser(str(config_file))
+    if not osp.isabs(candidate):
+        # Prefer a path relative to the copied project root.
+        candidate = osp.join(_app_dir(), candidate)
+
+    if osp.isdir(candidate):
+        candidate = osp.join(candidate, "xanylabeling_config.ini")
+
+    if osp.isfile(candidate):
+        return osp.abspath(candidate)
+
+    # Windows batch files can pass non-ASCII folder names with a mismatched
+    # code page. If the requested relative name is unreadable, use the only
+    # complete configuration group directly under the project root.
+    if not osp.isabs(str(config_file)):
+        groups = []
+        for name in os.listdir(_app_dir()):
+            group_dir = osp.join(_app_dir(), name)
+            if not osp.isdir(group_dir):
+                continue
+            main_file = osp.join(group_dir, "xanylabeling_config.ini")
+            window_file = osp.join(group_dir, "xanylabeling_window.ini")
+            dock_file = osp.join(group_dir, "xanylabeling_dock.ini")
+            if osp.isfile(main_file) and osp.isfile(window_file) and osp.isfile(dock_file):
+                groups.append(main_file)
+        if len(groups) == 1:
+            return osp.abspath(groups[0])
+
+    return osp.abspath(candidate)
+
+
+def set_active_config_file(config_file):
+    """Select the configuration group used by all three persisted config files."""
+    global current_config_file, USER_CONFIG_FILE
+    resolved = resolve_config_file(config_file)
+    if resolved and osp.exists(resolved) and osp.isfile(resolved):
+        current_config_file = osp.abspath(resolved)
+        USER_CONFIG_FILE = current_config_file
+    else:
+        current_config_file = None
+        USER_CONFIG_FILE = DEFAULT_USER_CONFIG_FILE
+    return USER_CONFIG_FILE
+
+
+def get_window_config_file():
+    return osp.join(osp.dirname(USER_CONFIG_FILE), "xanylabeling_window.ini")
+
+
+def get_dock_config_file():
+    return osp.join(osp.dirname(USER_CONFIG_FILE), "xanylabeling_dock.ini")
 
 
 def _app_dir():
@@ -15,7 +77,6 @@ def _app_dir():
     return osp.dirname(osp.dirname(osp.abspath(__file__)))
 
 
-USER_CONFIG_FILE = osp.join(_app_dir(), "xanylabeling_config.ini")
 
 
 def update_dict(target_dict, new_dict, validate_item=None):

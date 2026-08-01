@@ -469,11 +469,8 @@ class FileFilterDialog(QDialog):
         if self.label_widget and hasattr(self.label_widget, '_window_settings'):
             return self.label_widget._window_settings()
         # fallback
-        import os
-        ini_path = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))))),
-            "xanylabeling_window.ini")
-        return QSettings(ini_path, QSettings.IniFormat)
+        from ....config import get_window_config_file
+        return QSettings(get_window_config_file(), QSettings.IniFormat)
 
     def _restore_size(self):
         """从 INI 恢复上次窗口大小"""

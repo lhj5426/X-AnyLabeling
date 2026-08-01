@@ -35,10 +35,14 @@ class MainWindow(QMainWindow):
     ):
         super().__init__()
         self.app = app
-        self.config = config
+        self.config = config or {}
+        self.app_name = (
+            str(self.config.get("app_name") or __appname__).strip()
+            or __appname__
+        )
 
         self.setContentsMargins(0, 0, 0, 0)
-        self.setWindowTitle(__appname__)
+        self.setWindowTitle(self.app_name)
 
         self.menu_bar = self.menuBar()
         self.setMenuBar(self.menu_bar)
@@ -59,7 +63,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(widget)
 
         status_bar = QStatusBar()
-        status_bar.showMessage(f"{__appname__} - {__appdescription__}")
+        status_bar.showMessage(f"{self.app_name} - {__appdescription__}")
         self.setStatusBar(status_bar)
 
     def nativeEvent(self, event_type, message):

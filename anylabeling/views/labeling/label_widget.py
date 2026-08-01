@@ -39,7 +39,7 @@ from ...app_info import (
     __preferred_device__,
 )
 from . import utils
-from ...config import get_config, save_config
+from ...config import get_config, save_config, get_window_config_file, get_dock_config_file
 from .label_converter import LabelConverter
 from .label_file import LabelFile, LabelFileError
 from .logger import logger
@@ -633,6 +633,10 @@ class LabelingWidget(QtWidgets.QWidget):
         if config is None:
             config = get_config()
         self._config = config
+        self._app_name = (
+            str(self._config.get("app_name") or __appname__).strip()
+            or __appname__
+        )
 
         # OCR 文本替换
         self.ocr_replace_dialog = OCRTextReplaceDialog(
@@ -4520,7 +4524,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.actions.save.setEnabled(True)
         # Update navigator shapes when marking as dirty
         self.update_navigator_shapes()
-        title = __appname__
+        title = self._app_name
         if self.filename is not None:
             title = f"{title} - {self.filename}*"
         self.setWindowTitle(title)
@@ -4567,7 +4571,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self.actions.digit_shortcut_7.setEnabled(True)
         self.actions.digit_shortcut_8.setEnabled(True)
         self.actions.digit_shortcut_9.setEnabled(True)
-        title = __appname__
+        title = self._app_name
         if self.filename is not None:
             title = f"{title} - {self.filename}"
         self.setWindowTitle(title)
@@ -16344,15 +16348,15 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def _dock_settings(self):
         """获取 dock 状态专用的 QSettings，使用项目目录下的文件而非注册表"""
-        project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-        dock_ini = os.path.join(project_dir, "xanylabeling_dock.ini")
-        return QtCore.QSettings(dock_ini, QtCore.QSettings.IniFormat)
+        return QtCore.QSettings(
+            get_dock_config_file(), QtCore.QSettings.IniFormat
+        )
 
     def _window_settings(self):
         """获取窗口状态专用的 QSettings（独立文件，不污染 config.ini）"""
-        project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-        window_ini = os.path.join(project_dir, "xanylabeling_window.ini")
-        return QtCore.QSettings(window_ini, QtCore.QSettings.IniFormat)
+        return QtCore.QSettings(
+            get_window_config_file(), QtCore.QSettings.IniFormat
+        )
 
     def save_dock_state(self, force=False):
         """Save dock state to local file (not registry)."""
@@ -17056,7 +17060,7 @@ class LabelingWidget(QtWidgets.QWidget):
         file_dialog.setFileMode(FileDialogPreview.ExistingFile)
         file_dialog.setNameFilter(filters)
         file_dialog.setWindowTitle(
-            self.tr("%s - Choose Image or Label file") % __appname__,
+            self.tr("%s - Choose Image or Label file") % self._app_name,
         )
         file_dialog.setWindowFilePath(path)
         file_dialog.setViewMode(FileDialogPreview.Detail)
@@ -17075,7 +17079,7 @@ class LabelingWidget(QtWidgets.QWidget):
 
         output_dir = QtWidgets.QFileDialog.getExistingDirectory(
             self,
-            self.tr("%s - Save/Load Annotations in Directory") % __appname__,
+            self.tr("%s - Save/Load Annotations in Directory") % self._app_name,
             default_output_dir,
             QtWidgets.QFileDialog.ShowDirsOnly
             | QtWidgets.QFileDialog.DontResolveSymlinks,
@@ -17119,7 +17123,7 @@ class LabelingWidget(QtWidgets.QWidget):
         self._save_file(self.save_file_dialog())
 
     def save_file_dialog(self):
-        caption = self.tr("%s - Choose File") % __appname__
+        caption = self.tr("%s - Choose File") % self._app_name
         filters = self.tr("Label files (*%s)") % LabelFile.suffix
         if self.output_dir:
             file_dialog = QtWidgets.QFileDialog(
@@ -17415,7 +17419,7 @@ class LabelingWidget(QtWidgets.QWidget):
         target_dir_path = str(
             QtWidgets.QFileDialog.getExistingDirectory(
                 self,
-                self.tr("%s - Open Directory") % __appname__,
+                self.tr("%s - Open Directory") % self._app_name,
                 default_open_dir_path,
                 QtWidgets.QFileDialog.ShowDirsOnly
                 | QtWidgets.QFileDialog.DontResolveSymlinks,

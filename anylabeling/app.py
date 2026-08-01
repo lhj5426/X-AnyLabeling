@@ -23,7 +23,12 @@ import yaml
 from PyQt5 import QtCore, QtWidgets
 
 from anylabeling.app_info import __appname__, __version__, __url__
-from anylabeling.config import get_config
+from anylabeling.config import (
+    get_config,
+    set_active_config_file,
+    resolve_config_file,
+    get_window_config_file,
+)
 from anylabeling import config as anylabeling_config
 from anylabeling.views.mainwindow import MainWindow
 from anylabeling.views.labeling.logger import logger
@@ -202,11 +207,15 @@ def main():
         f"🚀 {gradient_text(f'X-AnyLabeling v{__version__} launched!')}"
     )
     logger.info(f"⭐ If you like it, give us a star: {__url__}")
+    config_file_or_yaml = resolve_config_file(config_file_or_yaml)
+    set_active_config_file(config_file_or_yaml)
     anylabeling_config.current_config_file = config_file_or_yaml
     config = get_config(config_file_or_yaml, config_from_args, show_msg=True)
 
     # 强制将语言设置为中文
     config["language"] = "zh_CN"
+    app_name = str(config.get("app_name") or __appname__).strip() or __appname__
+    logger.info(f"Application title: {app_name}")
 
     if not config["labels"] and config["validate_label"]:
         logger.error(
@@ -246,7 +255,7 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     app.processEvents()
 
-    app.setApplicationName(__appname__)
+    app.setApplicationName(app_name)
     app.setApplicationVersion(__version__)
     app.setWindowIcon(new_icon("icon"))
     if loaded_language:
@@ -286,7 +295,7 @@ def main():
 
     # 根据窗口配置文件决定启动行为：有配置按配置来，无配置默认全屏
     # 删除 xanylabeling_window.ini 即可恢复全屏
-    window_ini = os.path.join(anylabeling_config._app_dir(), "xanylabeling_window.ini")
+    window_ini = get_window_config_file()
     win_settings = QtCore.QSettings(window_ini, QtCore.QSettings.IniFormat)
     was_maximized = win_settings.value("window/maximized", True)
     if isinstance(was_maximized, str):
