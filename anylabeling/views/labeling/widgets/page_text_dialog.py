@@ -173,6 +173,19 @@ class PageTextDialog(QtWidgets.QDialog):
         # 连接标签顺序改变信号，实现自动刷新
         if parent and hasattr(parent, 'unique_label_list'):
             parent.unique_label_list.labels_ordered.connect(self.on_labels_ordered)
+
+        # 反向同步：画布选中 -> 页文本工具对应行（在 __init__ 中连接，
+        # 确保无论是首次打开还是复用旧实例都能订阅 selection_changed）
+        if parent and hasattr(parent, 'canvas'):
+            try:
+                parent.canvas.selection_changed.disconnect(
+                    self.on_canvas_selection_changed
+                )
+            except (TypeError, RuntimeError):
+                pass
+            parent.canvas.selection_changed.connect(
+                self.on_canvas_selection_changed
+            )
     
     def init_ui(self):
         """初始化UI"""
@@ -351,7 +364,7 @@ class PageTextDialog(QtWidgets.QDialog):
             return
 
         row = selected_items[0].row()
-        item = self.table.item(row, 0) 
+        item = self.table.item(row, 0)
         if not item:
             return
 
@@ -363,6 +376,31 @@ class PageTextDialog(QtWidgets.QDialog):
 
         if self.parent and hasattr(self.parent, 'canvas'):
             self.parent.canvas.select_shapes([shape_to_select])
+
+    def on_canvas_selection_changed(self, selected_shapes):
+        """画布选中变化时，同步表格行选中（反向同步）
+
+        阻断 table 信号以避免 select_shapes -> selection_changed 回环。
+        """
+        self.table.blockSignals(True)
+        try:
+            self.table.clearSelection()
+            if not selected_shapes:
+                return
+            target = selected_shapes[0]
+            if target not in self.shapes:
+                return
+            target_index = self.shapes.index(target)
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item and item.data(Qt.UserRole) == target_index:
+                    self.table.selectRow(row)
+                    self.table.scrollToItem(
+                        item, QtWidgets.QAbstractItemView.PositionAtCenter
+                    )
+                    break
+        finally:
+            self.table.blockSignals(False)
 
     def on_cell_changed(self, row, column):
         """单元格内容改变时的处理"""

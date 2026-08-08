@@ -79,6 +79,7 @@ _CUSTOM_MODELS = [
     "u_rtdetr",
     "yoloe",
     "manga_ocr",
+    "comic_text_detector",
 ]
 
 
@@ -184,6 +185,7 @@ _AUTO_LABELING_CONF_MODELS = [
     "yoloe",
     "ppocr_v6",
     "manga_ocr",
+    "comic_text_detector",
 ]
 
 
@@ -223,6 +225,7 @@ _AUTO_LABELING_IOU_MODELS = [
     "yolo26_obb",
     "yolo26_pose",
     "yoloe",
+    "comic_text_detector",
 ]
 
 
@@ -275,6 +278,7 @@ _AUTO_LABELING_PRESERVE_EXISTING_ANNOTATIONS_STATE_MODELS = [
     "yoloe",
     "manga_ocr",
     "segment_anything_2_video",
+    "comic_text_detector",
 ]
 
 
@@ -282,6 +286,7 @@ _AUTO_LABELING_PRESERVE_EXISTING_ANNOTATIONS_STATE_MODELS = [
 _AUTO_LABELING_ROTATION_MODELS = [
     "ppocr_v6",
     "manga_ocr",
+    "comic_text_detector",
 ]
 
 
@@ -289,6 +294,7 @@ _AUTO_LABELING_ROTATION_MODELS = [
 _AUTO_LABELING_FILTER_NON_ROTATED_MODELS = [
     "ppocr_v6",
     "manga_ocr",
+    "comic_text_detector",
 ]
 
 

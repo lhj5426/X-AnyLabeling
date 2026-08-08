@@ -188,6 +188,12 @@ canvas:
     brush_invert: false  # 反转模式：默认画笔，勾选后默认橡皮擦
   mask:
     opacity: 80  # transparency value (0-255) for brush-edit mask overlay
+  magic_wand:
+    default_threshold: 15  # 起始色差容差 (0-255)
+    drag_sensitivity: 3.0  # 每增加 1 容差所需的拖动屏幕像素
+    luminance_weight: 0.5  # Lab 亮度通道权重 (0=只比颜色, 1=完全计入亮度)
+    simplify_epsilon: 0.5  # 轮廓简化容差 (图像像素)
+    opacity: 0.6  # 实时选区预览的填充透明度 (0-1)
 
 shortcuts:
   add_point_to_edge: Ctrl+Shift+P
@@ -200,6 +206,7 @@ shortcuts:
   create_circle: null
   create_line: null
   create_linestrip: null
+  create_magic_wand: Shift+W
   create_point: null
   create_polygon: [P, Ctrl+N]
   create_rectangle: [R, Ctrl+R]

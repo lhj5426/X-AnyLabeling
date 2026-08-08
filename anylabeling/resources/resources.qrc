@@ -57,7 +57,6 @@
         <file>images/eye.png</file>
         <file>images/eye.svg</file>
         <file>images/file.png</file>
-        <file>images/filter.svg</file>
         <file>images/fit-width.png</file>
         <file>images/fit-window.png</file>
         <file>images/fit.png</file>
@@ -95,6 +94,7 @@
         <file>images/line.png</file>
         <file>images/logo.png</file>
         <file>images/loop.png</file>
+        <file>images/magic_wand.png</file>
         <file>images/megvii.png</file>
         <file>images/meituan.png</file>
         <file>images/meta.png</file>

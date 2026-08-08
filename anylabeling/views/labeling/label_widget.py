@@ -1950,6 +1950,17 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.brush_invert = enabled
             self.canvas.update()
         invert_action.triggered.connect(on_brush_invert_chosen)
+        # 画笔融合模式（开启后涂到的多边形会融合为一个）
+        merge_action = brush_shape_menu.addAction(self.tr("融合模式 (涂到的多边形融化为一个)"))
+        merge_action.setCheckable(True)
+        merge_action.setChecked(self._config.get("canvas", {}).get("brush", {}).get("brush_merge_mode", False))
+        def on_brush_merge_chosen():
+            enabled = merge_action.isChecked()
+            self._config.setdefault("canvas", {}).setdefault("brush", {})["brush_merge_mode"] = enabled
+            save_config(self._config)
+            self.canvas.brush_merge_mode = enabled
+            self.canvas.update()
+        merge_action.triggered.connect(on_brush_merge_chosen)
         # 画笔大小数值输入框
         brush_shape_menu.addSeparator()
         size_widget = QtWidgets.QWidget()
@@ -1982,6 +1993,106 @@ class LabelingWidget(QtWidgets.QWidget):
         brush_shape_menu.aboutToShow.connect(
             lambda: self._sync_brush_size_spin()
         )
+        create_magic_wand_mode = action(
+            self.tr("魔术棒"),
+            lambda checked: self.toggle_magic_wand_mode(checked),
+            shortcuts.get("create_magic_wand", "Shift+W"),
+            "magic_wand",
+            self.tr(
+                "点击连续颜色区域生成多边形，"
+                "按住左键拖动调整容差，"
+                "右键确认生成，Esc 取消"
+            ),
+            enabled=False,
+            checkable=True,
+            checked=False,
+        )
+        # 魔术棒参数菜单 (工具栏按钮展开)
+        magic_wand_menu = QtWidgets.QMenu(self)
+        magic_wand_menu.setTitle(self.tr("魔术棒设置"))
+        self._magic_wand_spins = []
+
+        def add_magic_wand_spin(
+            label_text, attr, cfg_key, minimum, maximum, step,
+            decimals=0, suffix="",
+        ):
+            """Add a labelled spin box row bound to a canvas attribute."""
+            row = QtWidgets.QWidget()
+            row_layout = QtWidgets.QHBoxLayout(row)
+            row_layout.setContentsMargins(8, 4, 8, 4)
+            row_layout.setSpacing(6)
+            row_layout.addWidget(QtWidgets.QLabel(label_text))
+            if decimals > 0:
+                spin = QtWidgets.QDoubleSpinBox()
+                spin.setDecimals(decimals)
+                spin.setRange(float(minimum), float(maximum))
+                spin.setSingleStep(float(step))
+                spin.setValue(float(getattr(self.canvas, attr)))
+            else:
+                spin = QtWidgets.QSpinBox()
+                spin.setRange(int(minimum), int(maximum))
+                spin.setSingleStep(int(step))
+                spin.setValue(int(getattr(self.canvas, attr)))
+            if suffix:
+                spin.setSuffix(suffix)
+            spin.setFixedWidth(90)
+            row_layout.addWidget(spin)
+            row_layout.addStretch()
+
+            def on_changed(val):
+                value = float(val) if decimals > 0 else int(val)
+                setattr(self.canvas, attr, value)
+                self.canvas.magic_wand_config[cfg_key] = value
+                self._config.setdefault("canvas", {}).setdefault(
+                    "magic_wand", {}
+                )[cfg_key] = value
+                save_config(self._config)
+                # 亮度权重改变会让缓存的色距图失效
+                if attr == "magic_wand_luminance_weight":
+                    self.canvas._magic_wand_distance = None
+                if getattr(self.canvas, "_magic_wand_active", False):
+                    preview_threshold = (
+                        value
+                        if attr == "magic_wand_default_threshold"
+                        else self.canvas._magic_wand_threshold
+                    )
+                    self.canvas._update_magic_wand_preview(preview_threshold)
+                else:
+                    self.canvas.update()
+
+            spin.valueChanged.connect(on_changed)
+            widget_action = QtWidgets.QWidgetAction(magic_wand_menu)
+            widget_action.setDefaultWidget(row)
+            magic_wand_menu.addAction(widget_action)
+            self._magic_wand_spins.append((spin, attr, decimals))
+
+        add_magic_wand_spin(
+            self.tr("默认容差:"),
+            "magic_wand_default_threshold", "default_threshold",
+            0, 255, 1,
+        )
+        add_magic_wand_spin(
+            self.tr("拖动灵敏度:"),
+            "magic_wand_drag_sensitivity", "drag_sensitivity",
+            0.1, 50.0, 0.1, 1, " px",
+        )
+        add_magic_wand_spin(
+            self.tr("亮度权重:"),
+            "magic_wand_luminance_weight", "luminance_weight",
+            0.0, 1.0, 0.05, 2,
+        )
+        add_magic_wand_spin(
+            self.tr("轮廓简化:"),
+            "magic_wand_simplify_epsilon_px", "simplify_epsilon",
+            0.0, 20.0, 0.1, 1, " px",
+        )
+        add_magic_wand_spin(
+            self.tr("预览透明度:"),
+            "magic_wand_opacity", "opacity",
+            0.0, 1.0, 0.05, 2,
+        )
+        create_magic_wand_mode.setMenu(magic_wand_menu)
+        magic_wand_menu.aboutToShow.connect(self._sync_magic_wand_spins)
         group_selected_shapes = action(
             self.tr("Group Selected Shapes"),
             self.group_selected_shapes,
@@ -3236,6 +3347,7 @@ class LabelingWidget(QtWidgets.QWidget):
             create_mode=create_mode,
             edit_mode=edit_mode,
             edit_brush_mode=edit_brush_mode,
+            create_magic_wand_mode=create_magic_wand_mode,
             create_rectangle_mode=create_rectangle_mode,
             create_rotation_mode=create_rotation_mode,
             create_rotation3_mode=create_rotation3_mode,
@@ -3415,6 +3527,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 create_line_mode,
                 create_point_mode,
                 create_line_strip_mode,
+                create_magic_wand_mode,
                 edit_mode,
                 edit_brush_mode,
                 edit,
@@ -3440,6 +3553,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 create_line_mode,
                 create_point_mode,
                 create_line_strip_mode,
+                create_magic_wand_mode,
                 digit_shortcut_0,
                 digit_shortcut_1,
                 digit_shortcut_2,
@@ -3689,6 +3803,7 @@ class LabelingWidget(QtWidgets.QWidget):
             self.actions.create_line_mode,
             self.actions.create_point_mode,
             self.actions.create_line_strip_mode,
+            self.actions.create_magic_wand_mode,
             None,
             edit_mode,
             edit_brush_mode,
@@ -4467,6 +4582,7 @@ class LabelingWidget(QtWidgets.QWidget):
             self.actions.digit_shortcut_9,
             self.actions.edit_mode,
             self.actions.edit_brush_mode,
+            self.actions.create_magic_wand_mode,
         )
         utils.add_actions(self.menus.edit, actions + self.actions.editMenu)
 
@@ -4589,6 +4705,7 @@ class LabelingWidget(QtWidgets.QWidget):
             action.setEnabled(value)
         if not value:
             self.actions.edit_brush_mode.setEnabled(False)
+            self.actions.create_magic_wand_mode.setChecked(False)
 
     def queue_event(self, function):
         QtCore.QTimer.singleShot(0, function)
@@ -6046,6 +6163,15 @@ class LabelingWidget(QtWidgets.QWidget):
             self.expand_margins_dialog.jump_to_image.connect(self.on_jump_to_image)
             self.expand_margins_dialog.apply_single_label_selected.connect(
                 self.on_expand_margins_single_label_selected
+            )
+            # 多边形轮廓扩缩（Tab "多边形"）
+            self.expand_margins_dialog.apply_polygon_current.connect(self.on_polygon_expand_current)
+            self.expand_margins_dialog.apply_polygon_selected.connect(self.on_polygon_expand_selected)
+            self.expand_margins_dialog.apply_polygon_all.connect(self.on_polygon_expand_all)
+            self.expand_margins_dialog.apply_polygon_all_in_range.connect(self.on_polygon_expand_in_range)
+            self.expand_margins_dialog.apply_polygon_single_label.connect(self.on_polygon_expand_single_label)
+            self.expand_margins_dialog.apply_polygon_single_label_selected.connect(
+                self.on_polygon_expand_single_label_selected
             )
             self.expand_margins_dialog.setAttribute(
                 QtCore.Qt.WA_DeleteOnClose, False
@@ -10053,6 +10179,7 @@ class LabelingWidget(QtWidgets.QWidget):
             "create_line": self.actions.create_line_mode,
             "create_linestrip": self.actions.create_line_strip_mode,
             "create_point": self.actions.create_point_mode,
+            "create_magic_wand": self.actions.create_magic_wand_mode,
             # Edit operations
             "edit_label": self.actions.edit,
             "edit_polygon": self.actions.edit_mode,
@@ -10557,6 +10684,7 @@ class LabelingWidget(QtWidgets.QWidget):
             "point",
             "linestrip",
             "brush",
+            "magic_wand",
         ]:
             return
 
@@ -10575,6 +10703,17 @@ class LabelingWidget(QtWidgets.QWidget):
             self.canvas.update()
             return
 
+        if create_mode == "magic_wand":
+            # 魔术棒模式：digit_to_label 在 finalise → new_shape 流程里被取走，
+            # 这里先打开魔术棒，复用 toggle_magic_wand_mode 的官方入口以确保
+            # canvas 标志与菜单勾选一致。
+            self.digit_to_label = label
+            self._digit_shortcut_used_brush = False
+            self.toggle_magic_wand_mode(True)
+            self.canvas.cross_line_color = hex_color
+            self.canvas.update()
+            return
+
         self._digit_shortcut_used_brush = False
         self.digit_to_label = label
         self.toggle_draw_mode(edit=False, create_mode=create_mode)
@@ -10589,6 +10728,7 @@ class LabelingWidget(QtWidgets.QWidget):
         create_mode="rectangle",
         disable_auto_labeling=True,
         preserve_brush_mode=False,
+        preserve_magic_wand=False,
     ):
         if not preserve_brush_mode:
             self._digit_shortcut_used_brush = False
@@ -10596,6 +10736,11 @@ class LabelingWidget(QtWidgets.QWidget):
                 self.canvas.cancel_brush_mode()
             elif self.actions.edit_brush_mode.isChecked():
                 self.actions.edit_brush_mode.setChecked(False)
+        if not preserve_magic_wand:
+            if getattr(self.canvas, "is_magic_wand_mode", False):
+                self.canvas.set_magic_wand_mode(False)
+            if self.actions.create_magic_wand_mode.isChecked():
+                self.actions.create_magic_wand_mode.setChecked(False)
         # Define modes that should have the auto-crosshair feature.
         auto_crosshair_modes = {"rotation", "rectangle", "rotation3"}
 
@@ -10782,10 +10927,32 @@ class LabelingWidget(QtWidgets.QWidget):
             # 关闭连续模式时切回编辑模式并恢复十字线
             self.set_edit_mode()
 
-    def _restart_continuous_drawing(self, create_mode, saved_color):
-        """Restart drawing mode while preserving crosshair color."""
-        self.toggle_draw_mode(edit=False, create_mode=create_mode,
-                              disable_auto_labeling=False, preserve_brush_mode=True)
+    def _restart_continuous_drawing(self, create_mode, saved_color, was_magic_wand=False):
+        """Restart drawing mode while preserving crosshair color (and magic wand).
+
+        连续标注模式：每个对象完成绘制后需要重新激活当前工具。
+        若当前正在使用魔术棒（``was_magic_wand`` 为 True），复用与数字快捷键 /
+        菜单完全相同的健壮入口 ``toggle_magic_wand_mode(True)`` 强制重新激活
+        魔术棒，而不是只手动写几个标志位——手动路径缺少 set_text_editing /
+        create_mode 启用 / label_instruction 刷新 / set_magic_wand_mode 的预览
+        清理等步骤，且容易被 ``toggle_draw_mode`` 内部 ``preserve_magic_wand=False``
+        的清理链复位，导致下一次回落到普通多边形。
+        ``was_magic_wand`` 由 new_shape 在提交那一刻捕获并传入，避免延迟读取时
+        状态已被清掉而误判。
+        """
+        if was_magic_wand:
+            # 复用已验证可用的入口（数字快捷键魔术棒即走此路径）
+            self.toggle_magic_wand_mode(True)
+            self.canvas.cross_line_color = saved_color
+            self.canvas.update()
+            return
+        self.toggle_draw_mode(
+            edit=False,
+            create_mode=create_mode,
+            disable_auto_labeling=False,
+            preserve_brush_mode=True,
+            preserve_magic_wand=False,
+        )
         self.canvas.cross_line_color = saved_color
         self.canvas.update()
 
@@ -10801,6 +10968,46 @@ class LabelingWidget(QtWidgets.QWidget):
         if spin is not None:
             spin.blockSignals(True)
             spin.setValue(int(round(self.canvas.brush_radius * 2)))
+            spin.blockSignals(False)
+
+    def toggle_magic_wand_mode(self, checked):
+        """Enable or disable magic wand flood selection for polygon creation."""
+        if checked:
+            if self.canvas.current is not None:
+                self.canvas.current = None
+                self.canvas.set_hiding(False)
+                self.canvas.drawing_polygon.emit(False)
+                self.canvas.update()
+            self.toggle_draw_mode(
+                False, create_mode="polygon", preserve_magic_wand=True
+            )
+            # 进入魔术棒时自动开启十字线（与矩形/旋转等绘制模式一致）。
+            # 仅当十字线原本未显示时才切换，并记录待恢复标志，
+            # 退出魔术棒或标注完成后由 restore_crosshair_if_needed 还原。
+            if not self._config["canvas"]["crosshair"]["show"]:
+                self.toggle_crosshair()
+                self._crosshair_was_toggled_for_drawing = True
+            else:
+                self._crosshair_was_toggled_for_drawing = False
+            self.canvas.set_magic_wand_mode(True)
+            self.actions.create_mode.setEnabled(True)
+            self.actions.create_magic_wand_mode.setChecked(True)
+            self.label_instruction.setText(self.get_labeling_instruction())
+            return
+
+        if getattr(self.canvas, "is_magic_wand_mode", False):
+            self.canvas.set_magic_wand_mode(False)
+            self.set_edit_mode()
+            # 退出魔术棒时恢复十字线原始状态（若在进入时自动开启过）
+            self.restore_crosshair_if_needed()
+        self.label_instruction.setText(self.get_labeling_instruction())
+
+    def _sync_magic_wand_spins(self):
+        """Sync magic wand spin boxes to the current canvas values."""
+        for spin, attr, decimals in getattr(self, "_magic_wand_spins", []):
+            value = getattr(self.canvas, attr)
+            spin.blockSignals(True)
+            spin.setValue(float(value) if decimals > 0 else int(value))
             spin.blockSignals(False)
 
     def set_edit_mode(self):
@@ -14734,8 +14941,14 @@ class LabelingWidget(QtWidgets.QWidget):
                 elif self.canvas.create_mode != "edit":
                     current_mode = self.canvas.create_mode
                     saved_color = self.canvas.cross_line_color
-                    QtCore.QTimer.singleShot(50, lambda mode=current_mode, color=saved_color:
-                        self._restart_continuous_drawing(mode, color))
+                    # 在 new_shape 此刻捕获魔术棒状态（此时菜单仍是勾选的），
+                    # 避免 50ms 后重启时若该状态被任何副作用清除而误判为普通多边形。
+                    was_magic_wand = self.actions.create_magic_wand_mode.isChecked()
+                    QtCore.QTimer.singleShot(
+                        50,
+                        lambda mode=current_mode, color=saved_color, mw=was_magic_wand:
+                        self._restart_continuous_drawing(mode, color, mw),
+                    )
         else:
             self.canvas.undo_last_line()
             self.canvas.shapes_backups.pop()
@@ -16278,6 +16491,16 @@ class LabelingWidget(QtWidgets.QWidget):
     # QT Overload
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
+            # 魔术棒：先清预览，无预览时退出魔术棒模式
+            if getattr(self.canvas, "_magic_wand_active", False):
+                self.canvas._clear_magic_wand_preview()
+                event.accept()
+                return
+            if self.actions.create_magic_wand_mode.isChecked():
+                self.actions.create_magic_wand_mode.setChecked(False)
+                self.toggle_magic_wand_mode(False)
+                event.accept()
+                return
             if getattr(self.canvas, "is_brush_mode", False):
                 self.canvas.cancel_brush_mode()
             elif self.actions.edit_brush_mode.isChecked():
@@ -19186,6 +19409,253 @@ class LabelingWidget(QtWidgets.QWidget):
             self._update_navigator_title_with_selection()
         else:
             self.status(self.tr(f"选中的标注框中没有需要更新的 '{label_to_apply}' 标签。"))
+
+    # ---------- 多边形轮廓扩缩（Tab "多边形"） ----------
+
+    def _adjust_shape_polygon(self, shape, deltas):
+        """对单个 polygon shape 沿轮廓扩缩（正扩负缩）。返回是否修改。"""
+        if shape.shape_type != "polygon":
+            return False
+        label = shape.label
+        if label not in deltas:
+            return False
+        delta_px = deltas[label]
+        if delta_px == 0:
+            return False
+        return self.canvas._morph_polygon_shape(shape, delta_px)
+
+    def _morph_polygon_points_json(self, points, delta_px):
+        """对 json 里的多边形 points 应用形态学扩缩，返回新 points (list of [x,y]) 或 None。"""
+        if not points or delta_px == 0:
+            return None
+        arr = np.array([[p[0], p[1]] for p in points], dtype=np.float64)
+        x_min, y_min = arr.min(axis=0)
+        x_max, y_max = arr.max(axis=0)
+        # margin 需足以容纳扩缩量，避免形态学操作被 mask 边界裁切
+        margin = max(20, int(abs(delta_px)) + 10)
+        h = max(1, int(y_max - y_min + 2 * margin))
+        w = max(1, int(x_max - x_min + 2 * margin))
+        mask = np.zeros((h, w), np.uint8)
+        local = (arr - np.array([x_min - margin, y_min - margin])).astype(np.int32)
+        cv2.fillPoly(mask, [local.reshape((-1, 1, 2))], 255)
+        k = max(1, int(round(abs(delta_px))))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1))
+        if delta_px > 0:
+            new_mask = cv2.dilate(mask, kernel, iterations=1)
+        else:
+            new_mask = cv2.erode(mask, kernel, iterations=1)
+        contours, _ = cv2.findContours(new_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None
+        cnt = max(contours, key=cv2.contourArea)
+        approx = cv2.approxPolyDP(cnt, 0.5, True).reshape(-1, 2)
+        if len(approx) < 3:
+            return None
+        return (approx + np.array([x_min - margin, y_min - margin])).tolist()
+
+    def on_polygon_expand_current(self, deltas):
+        """对当前页所有 polygon shape 应用扩缩。"""
+        modified_count = 0
+        for shape in self.canvas.shapes:
+            if self._adjust_shape_polygon(shape, deltas):
+                modified_count += 1
+        if modified_count > 0:
+            self.canvas.update()
+            self.set_dirty()
+            self.status(self.tr(f"已更新当前页面上的 {modified_count} 个多边形标注。"))
+            self._update_navigator_title_with_selection()
+        else:
+            self.status(self.tr("当前页面上没有需要更新的多边形标注。"))
+
+    def on_polygon_expand_selected(self, deltas):
+        """对选中的 polygon shape 应用扩缩。"""
+        if not self.canvas.selected_shapes:
+            self.status(self.tr("没有选中的标注框。"))
+            return
+        modified_count = 0
+        for shape in self.canvas.selected_shapes:
+            if self._adjust_shape_polygon(shape, deltas):
+                modified_count += 1
+        if modified_count > 0:
+            self.canvas.update()
+            self.set_dirty()
+            self.status(self.tr(f"已更新选中的 {modified_count} 个多边形标注。"))
+            self._update_navigator_title_with_selection()
+        else:
+            self.status(self.tr("选中的多边形没有需要更新的。"))
+
+    def on_polygon_expand_all(self, deltas):
+        """批量处理全部 json 文件里的多边形标注。"""
+        if not self.image_list:
+            self.status(self.tr("没有加载图像列表。"))
+            return
+        reply = QtWidgets.QMessageBox.question(
+            self, self.tr("确认操作"),
+            self.tr(f"你确定要将这些轮廓扩缩应用到全部 {len(self.image_list)} 个文件的标注吗？\n这个操作会直接修改文件且无法撤销。"),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        processed_files = 0
+        modified_shapes_total = 0
+        total_files = len(self.image_list)
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在处理轮廓扩缩..."), self.tr("取消"), 0, total_files, self
+        )
+        progress.setWindowTitle(self.tr("轮廓扩缩"))
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        for i, image_path in enumerate(self.image_list):
+            if progress.wasCanceled():
+                break
+            progress.setValue(i)
+            progress.setLabelText(self.tr(f"正在处理: {i + 1}/{total_files}"))
+            QtWidgets.QApplication.processEvents()
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+            if not osp.exists(label_file_path):
+                continue
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                modified_in_file = False
+                modified_count = 0
+                for shape_dict in data.get("shapes", []):
+                    if shape_dict.get("shape_type") != "polygon":
+                        continue
+                    label = shape_dict.get("label")
+                    if label not in deltas or deltas[label] == 0:
+                        continue
+                    new_points = self._morph_polygon_points_json(
+                        shape_dict.get("points", []), deltas[label]
+                    )
+                    if new_points is not None:
+                        shape_dict["points"] = new_points
+                        modified_in_file = True
+                        modified_count += 1
+                if modified_in_file:
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    processed_files += 1
+                    modified_shapes_total += modified_count
+            except Exception as e:
+                logger.error(f"处理文件失败 {label_file_path}: {e}")
+                continue
+        progress.setValue(total_files)
+        progress.close()
+        self.load_file(self.filename)
+        self.status(self.tr(
+            f"处理完成！总共修改了 {processed_files} 个文件中的 {modified_shapes_total} 个多边形标注。"
+        ))
+
+    def on_polygon_expand_in_range(self, deltas, start_index, end_index):
+        """批量处理指定范围 json 文件里的多边形标注。"""
+        if not self.image_list:
+            self.status(self.tr("没有加载图像列表。"))
+            return
+        if not (0 <= start_index < len(self.image_list) and 0 <= end_index < len(self.image_list) and start_index <= end_index):
+            self.error_message(self.tr("范围无效"), self.tr("提供的文件范围无效。"))
+            return
+        files_to_process = self.image_list[start_index: end_index + 1]
+        num_files = len(files_to_process)
+        reply = QtWidgets.QMessageBox.question(
+            self, self.tr("确认操作"),
+            self.tr(f"你确定要将这些轮廓扩缩应用到从 {start_index + 1} 到 {end_index + 1} 的 {num_files} 个文件吗？\n这个操作会直接修改文件且无法撤销。"),
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        processed_files = 0
+        modified_shapes_total = 0
+        progress = QtWidgets.QProgressDialog(
+            self.tr("正在处理轮廓扩缩..."), self.tr("取消"), 0, num_files, self
+        )
+        progress.setWindowTitle(self.tr("轮廓扩缩"))
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        for i, image_path in enumerate(files_to_process):
+            if progress.wasCanceled():
+                break
+            progress.setValue(i)
+            progress.setLabelText(self.tr(f"正在处理: {i + 1}/{num_files}"))
+            QtWidgets.QApplication.processEvents()
+            label_file_path = osp.splitext(image_path)[0] + ".json"
+            if self.output_dir:
+                label_file_path = osp.join(self.output_dir, osp.basename(label_file_path))
+            if not osp.exists(label_file_path):
+                continue
+            try:
+                with open(label_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                modified_in_file = False
+                modified_count = 0
+                for shape_dict in data.get("shapes", []):
+                    if shape_dict.get("shape_type") != "polygon":
+                        continue
+                    label = shape_dict.get("label")
+                    if label not in deltas or deltas[label] == 0:
+                        continue
+                    new_points = self._morph_polygon_points_json(
+                        shape_dict.get("points", []), deltas[label]
+                    )
+                    if new_points is not None:
+                        shape_dict["points"] = new_points
+                        modified_in_file = True
+                        modified_count += 1
+                if modified_in_file:
+                    with open(label_file_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                    processed_files += 1
+                    modified_shapes_total += modified_count
+            except Exception as e:
+                logger.error(f"处理文件失败 {label_file_path}: {e}")
+                continue
+        progress.setValue(num_files)
+        progress.close()
+        self.load_file(self.filename)
+        self.status(self.tr(
+            f"处理完成！总共修改了 {processed_files} 个文件中的 {modified_shapes_total} 个多边形标注。"
+        ))
+
+    def on_polygon_expand_single_label(self, deltas):
+        """对当前页所有匹配标签的 polygon 应用扩缩。"""
+        label_to_apply = list(deltas.keys())[0]
+        modified_count = 0
+        for shape in self.canvas.shapes:
+            if shape.label == label_to_apply:
+                if self._adjust_shape_polygon(shape, deltas):
+                    modified_count += 1
+        if modified_count > 0:
+            self.canvas.update()
+            self.set_dirty()
+            self.status(self.tr(f"已更新当前页面上 '{label_to_apply}' 的 {modified_count} 个多边形标注。"))
+            self._update_navigator_title_with_selection()
+        else:
+            self.status(self.tr(f"当前页面上没有 '{label_to_apply}' 的多边形标注。"))
+
+    def on_polygon_expand_single_label_selected(self, deltas):
+        """对选中 polygon 中匹配标签的应用扩缩。"""
+        if not self.canvas.selected_shapes:
+            self.status(self.tr("没有选中的标注框。"))
+            return
+        label_to_apply = list(deltas.keys())[0]
+        modified_count = 0
+        for shape in self.canvas.selected_shapes:
+            if shape.label == label_to_apply:
+                if self._adjust_shape_polygon(shape, deltas):
+                    modified_count += 1
+        if modified_count > 0:
+            self.canvas.update()
+            self.set_dirty()
+            self.status(self.tr(f"已更新选中 '{label_to_apply}' 的 {modified_count} 个多边形标注。"))
+            self._update_navigator_title_with_selection()
+        else:
+            self.status(self.tr("选中的多边形中没有需要更新的。"))
 
     def on_jump_to_image(self, index):
         """Handle jumping to a specific image index."""

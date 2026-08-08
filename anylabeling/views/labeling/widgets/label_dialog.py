@@ -46,6 +46,7 @@ class ColoredComboBox(QtWidgets.QComboBox):
             "point": QtGui.QColor("#00ACC1"),  # Teal
             "linestrip": QtGui.QColor("#6D4C41"),  # Brown
             "brush": QtGui.QColor("#455A64"),  # Blue Grey
+            "magic_wand": QtGui.QColor("#00B4FF"),  # Magic Wand Blue
         }
 
     def addModeItem(self, text, userData=None):
@@ -112,7 +113,13 @@ class DigitShortcutDialog(QtWidgets.QDialog):
             "point",
             "linestrip",
             "brush",
+            "magic_wand",
         ]
+
+
+        def _tr_mode(mode):
+            """Map internal mode key to display string; pass-through identity."""
+            return mode
 
         self.setWindowTitle(self.tr("Digit Shortcut Manager"))
         self.setModal(True)

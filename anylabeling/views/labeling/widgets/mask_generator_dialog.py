@@ -13,17 +13,17 @@ from PyQt5 import QtCore, QtWidgets, QtGui
 
 
 class MaskGeneratorWorker(QtCore.QThread):
-    """掩膜生成工作线程 - 直接调用CTD模型"""
+    """掩膜生成工作线程 - 使用预加载的CTD模型"""
     # 信号
     progress = QtCore.pyqtSignal(str)  # 进度信息
     finished = QtCore.pyqtSignal(dict)  # 完成信号，返回结果字典
     error = QtCore.pyqtSignal(str)  # 错误信号
 
-    def __init__(self, image_path, yolo_labels, model_path, output_path, params, save_png=False, parent=None):
+    def __init__(self, image_path, yolo_labels, ctd_inference, output_path, params, save_png=False, parent=None):
         super().__init__(parent)
         self.image_path = image_path
         self.yolo_labels = yolo_labels
-        self.model_path = model_path
+        self.ctd_inference = ctd_inference  # 已加载的CTD模型实例
         self.output_path = output_path
         self.params = params
         self.save_png = save_png  # 是否保存PNG文件
@@ -33,24 +33,19 @@ class MaskGeneratorWorker(QtCore.QThread):
         try:
             self.progress.emit("[CTD] 开始生成掩膜...")
             self.progress.emit(f"[CTD] 图片路径: {self.image_path}")
-            self.progress.emit(f"[CTD] 模型路径: {self.model_path}")
+            self.progress.emit(f"[CTD] 使用自动标注已加载的模型")
             self.progress.emit(f"[CTD] YOLO标签数量: {len(self.yolo_labels)}")
 
-            # 添加BallonsTranslator路径
-            ballons_path = r"D:\BallonsTranslator\BallonsTranslator"
-            if ballons_path not in sys.path:
-                sys.path.insert(0, ballons_path)
-
-            # 导入CTD模块
-            self.progress.emit("[CTD] 导入CTD模块...")
-            from modules.textdetector.ctd import CTDModel
+            # 直接使用自动标注已加载的CTD模型，避免重复加载
+            self.progress.emit("[CTD] 复用模型实例...")
+            from anylabeling.services.auto_labeling.ctd.inference import preprocess_img
             import torch
 
-            # 加载模型
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            ctd_inference = self.ctd_inference
+            detect_size = ctd_inference.detect_size
             self.progress.emit(f"[CTD] 加载模型... (设备: {device})")
-            model = CTDModel(self.model_path, detect_size=1024, device=device)
-            self.progress.emit("[CTD] 模型加载完成")
+            self.progress.emit(f"[CTD] 设备: {device}, 检测尺寸: {detect_size}")
 
             # 读取图片（使用PIL支持中文路径，然后转换为OpenCV格式）
             self.progress.emit("[CTD] 读取图片...")
@@ -94,166 +89,135 @@ class MaskGeneratorWorker(QtCore.QThread):
 
             # 1. 全图文字检测 - 获取高质量文字掩膜（提供完整上下文）
             self.progress.emit("[CTD] 正在进行全图文字检测...")
-            mask_full, mask_refined_full, _ = model(img, refine_mode=0, keep_undetected_mask=False)
+            with torch.no_grad():
+                img_in, ratio, dw, dh = preprocess_img(
+                    img, bgr2rgb=False, detect_size=detect_size,
+                    device=ctd_inference.device, half=ctd_inference.half,
+                    to_tensor=(ctd_inference.backend == 'torch')
+                )
+                blks, mask_tensor, lines_map = ctd_inference.net(img_in)
+            mask_out = mask_tensor.squeeze()
+            if hasattr(mask_out, 'cpu'):
+                mask_out = mask_out.cpu().numpy()
+            # 移除letterbox padding
+            mask_out = mask_out[..., :mask_out.shape[0] - dh, :mask_out.shape[1] - dw]
+            # 阈值化: sigmoid 输出 > 0.5
+            mask_binary = (mask_out > 0.5).astype(np.uint8) * 255
+            mask_refined_full = cv2.resize(mask_binary, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
+            mask_full = mask_refined_full
 
             if mask_refined_full is None or mask_refined_full.size == 0:
                 self.progress.emit("[CTD] ⚠️ 未检测到文字区域")
                 mask = np.zeros((img_h, img_w), dtype=np.uint8)
             else:
-                # 确保掩膜大小对齐
-                if mask_refined_full.shape[:2] != (img_h, img_w):
-                    mask_refined_full = cv2.resize(mask_refined_full, (img_w, img_h))
-
-                # 2. 针对每个标注框进行局部优化和轮廓提取
-                self.progress.emit(f"[CTD] 正在处理 {len(self.yolo_labels)} 个标注区域的掩膜连通性...")
-                final_contours = []
-                
-                # 准备形态学内核，用于粘合离散的字符笔画
-                kernel_close = np.ones((5, 5), np.uint8)
-                
-                for idx, label_data in enumerate(self.yolo_labels):
+                # 2. YOLO 框过滤：只保留框内的掩膜区域（照搬 yolo_to_mask_gui.py）
+                self.progress.emit(f"[CTD] 用 {len(self.yolo_labels)} 个 YOLO 框过滤掩膜...")
+                yolo_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+                pixel_boxes = []
+                for label_data in self.yolo_labels:
                     x_center, y_center, width, height = label_data[1:]
                     x1 = int((x_center - width / 2) * img_w)
                     y1 = int((y_center - height / 2) * img_h)
                     x2 = int((x_center + width / 2) * img_w)
                     y2 = int((y_center + height / 2) * img_h)
-                    
                     x1, y1 = max(0, x1), max(0, y1)
                     x2, y2 = min(img_w, x2), min(img_h, y2)
-                    
-                    if x2 <= x1 or y2 <= y1:
-                        continue
+                    if x2 > x1 and y2 > y1:
+                        yolo_mask[y1:y2, x1:x2] = 255
+                        pixel_boxes.append((x1, y1, x2, y2))
+                mask = cv2.bitwise_and(mask_refined_full, yolo_mask)
 
-                    # 提取该区域的掩膜
-                    region_mask = mask_refined_full[y1:y2, x1:x2].copy()
-                    
-                    # 应用闭运算：粘合字符笔画，减少碎片多边形
-                    region_mask = cv2.morphologyEx(region_mask, cv2.MORPH_CLOSE, kernel_close)
-                    
-                    # 应用参数：缩放/延伸（在这里应用以确保局部精度）
-                    if size_scale != 1.0 or any([extend_top, extend_bottom, extend_left, extend_right]):
-                        # 转换为大掩膜或在局部处理（为了简单，后续在全局统一后处理，此处仅提取初始轮廓）
-                        pass
+            # 保证掩膜与图片尺寸一致
+            if mask.shape[:2] != (img_h, img_w):
+                mask = cv2.resize(mask, (img_w, img_h))
 
-                    # 将处理后的掩膜贴回主掩膜（用于PNG导出）
-                    mask[y1:y2, x1:x2] = np.maximum(mask[y1:y2, x1:x2], region_mask)
-
-            # 对掩膜进行后处理：应用膨胀操作来扩展掩膜区域
-            # 1. 根据size_scale计算膨胀量（使用独立工具的算法）
+            # 3. 整体大小调整（膨胀/腐蚀，照搬 yolo_to_mask_gui.py adjust_mask_size）
             if size_scale != 1.0:
                 if size_scale > 1.0:
-                    # 膨胀：kernel_size = int((factor - 1.0) * 10) + 1
                     kernel_size = int((size_scale - 1.0) * 10) + 1
                     self.progress.emit(f"[CTD] 整体大小 {int(size_scale*100)}%，膨胀核大小 {kernel_size}")
                     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
                     mask = cv2.dilate(mask, kernel, iterations=1)
                 else:
-                    # 腐蚀：kernel_size = int((1.0 - factor) * 10) + 1
                     kernel_size = int((1.0 - size_scale) * 10) + 1
                     self.progress.emit(f"[CTD] 整体大小 {int(size_scale*100)}%，腐蚀核大小 {kernel_size}")
                     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
                     mask = cv2.erode(mask, kernel, iterations=1)
 
-            # 2. 应用方向延伸参数（使用像素移位方法）
-            if extend_top > 0 or extend_bottom > 0 or extend_left > 0 or extend_right > 0:
-                self.progress.emit(f"[CTD] 应用方向延伸: 上{extend_top} 下{extend_bottom} 左{extend_left} 右{extend_right}")
-                h, w = mask.shape
-                result_mask = mask.copy()
+            # 4. 轮廓膨胀（用户面板参数 dilate_kernel_size）
+            dilate_ks = self.params.get('dilate_kernel_size', 3)
+            if dilate_ks > 0:
+                kernel_d = np.ones((dilate_ks, dilate_ks), np.uint8)
+                mask = cv2.dilate(mask, kernel_d, iterations=1)
 
-                # 向上单向延伸
+            # 2. 方向延伸（像素移位法，照搬 yolo_to_mask_gui.py apply_directional_extensions）
+            if extend_top > 0 or extend_bottom > 0 or extend_left > 0 or extend_right > 0:
+                self.progress.emit(f"[CTD] 方向延伸: 上{extend_top} 下{extend_bottom} 左{extend_left} 右{extend_right}")
+                result_mask = mask.copy()
+                h_m, w_m = mask.shape
                 if extend_top > 0:
                     for i in range(1, int(extend_top) + 1):
                         shifted = np.zeros_like(mask)
-                        if i < h:
+                        if i < h_m:
                             shifted[:-i, :] = mask[i:, :]
                             result_mask = np.maximum(result_mask, shifted)
-
-                # 向下单向延伸
                 if extend_bottom > 0:
                     for i in range(1, int(extend_bottom) + 1):
                         shifted = np.zeros_like(mask)
-                        if i < h:
+                        if i < h_m:
                             shifted[i:, :] = mask[:-i, :]
                             result_mask = np.maximum(result_mask, shifted)
-
-                # 向左单向延伸
                 if extend_left > 0:
                     for i in range(1, int(extend_left) + 1):
                         shifted = np.zeros_like(mask)
-                        if i < w:
+                        if i < w_m:
                             shifted[:, :-i] = mask[:, i:]
                             result_mask = np.maximum(result_mask, shifted)
-
-                # 向右单向延伸
                 if extend_right > 0:
                     for i in range(1, int(extend_right) + 1):
                         shifted = np.zeros_like(mask)
-                        if i < w:
+                        if i < w_m:
                             shifted[:, i:] = mask[:, :-i]
                             result_mask = np.maximum(result_mask, shifted)
-
                 mask = result_mask
-                self.progress.emit(f"[CTD] ✅ 方向延伸完成")
 
-            # 根据格式生成掩膜图（仅在需要导出PNG时）
+            # 统一合成 PNG（照搬原逻辑）
             if self.save_png:
                 self.progress.emit(f"[CTD] 生成掩膜PNG...")
-                mask_format = self.params.get('format', 'ballons')
-                text_color = self.params.get('text_color', [255, 255, 255])  # RGB
-                text_alpha = self.params.get('text_alpha', 255)  # 0-255
-
-                if mask_format == 'imagetrans':
-                    self.progress.emit(f"[CTD] 使用ImageTrans格式（透明背景 + RGB{text_color}, Alpha={text_alpha}）")
-                    # ImageTrans格式：透明背景 + 自定义颜色文字区域
-                    mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
-                    mask_indices = mask > 127
-                    mask_rgba[mask_indices] = [text_color[2], text_color[1], text_color[0], text_alpha]  # BGRA
-                    # 使用imencode支持中文路径
-                    _, buffer = cv2.imencode('.png', mask_rgba)
-                    buffer.tofile(self.output_path)
-                    self.progress.emit(f"[CTD] ImageTrans掩膜已保存: {self.output_path}")
-                else:
-                    self.progress.emit(f"[CTD] 使用BallonsTranslator格式（黑背景 + 白色文字）")
-                    # 使用imencode支持中文路径
-                    _, buffer = cv2.imencode('.png', mask)
-                    buffer.tofile(self.output_path)
-                    self.progress.emit(f"[CTD] BallonsTranslator掩膜已保存: {self.output_path}")
+                bg_bgra = self.params.get('bg_bgra', [0, 0, 0, 255])
+                mask_bgra = self.params.get('mask_bgra', [255, 255, 255, 255])
+                mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
+                mask_rgba[..., 0] = bg_bgra[0]
+                mask_rgba[..., 1] = bg_bgra[1]
+                mask_rgba[..., 2] = bg_bgra[2]
+                mask_rgba[..., 3] = bg_bgra[3]
+                mask_indices = mask > 127
+                if mask_indices.any():
+                    mask_rgba[mask_indices, 0] = mask_bgra[0]
+                    mask_rgba[mask_indices, 1] = mask_bgra[1]
+                    mask_rgba[mask_indices, 2] = mask_bgra[2]
+                    mask_rgba[mask_indices, 3] = mask_bgra[3]
+                _, buffer = cv2.imencode('.png', mask_rgba)
+                buffer.tofile(self.output_path)
             else:
                 self.progress.emit(f"[生成] 跳过PNG保存，仅提取轮廓数据...")
 
-            # 5. 提取轮廓（用于多边形显示）
-            self.progress.emit(f"[CTD] 正在从合并掩膜中提取最终多边形...")
+            # 5. 提取轮廓 — 椭圆开运算磨圆直角
+            self.progress.emit(f"[CTD] 提取多边形轮廓...")
             contours = []
-            
-            # 最终全局掩膜后处理：使用闭运算粘合碎片
-            mask_binary = (mask > 127).astype(np.uint8)
-            kernel_glue = np.ones((5, 5), np.uint8)
-            mask_glued = cv2.morphologyEx(mask_binary, cv2.MORPH_CLOSE, kernel_glue)
-            
-            # 额外的膨胀（根据用户参数）
-            dilate_kernel_size = self.params.get('dilate_kernel_size', 3)
-            if dilate_kernel_size > 0:
-                kernel_dilate = np.ones((dilate_kernel_size, dilate_kernel_size), np.uint8)
-                mask_glued = cv2.dilate(mask_glued, kernel_dilate, iterations=1)
-
-            contour_list, _ = cv2.findContours(mask_glued, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-            self.progress.emit(f"[CTD] 找到 {len(contour_list)} 个聚合文字块轮廓")
-
-            for idx, cnt in enumerate(contour_list):
-                # 过滤太小的噪点
-                if cv2.contourArea(cnt) < 15:
+            kernel_round = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            mask_round = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_round)
+            cnt_list, _ = cv2.findContours(mask_round, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cnt in cnt_list:
+                if len(cnt) < 3 or cv2.contourArea(cnt) < 30:
                     continue
-                    
-                # 拟合平滑多边形
-                epsilon = 0.005 * cv2.arcLength(cnt, True)
-                approx = cv2.approxPolyDP(cnt, epsilon, True)
-                
-                points = [[float(point[0][0]), float(point[0][1])] for point in approx]
-                if len(points) >= 3:
-                    contours.append(points)
+                peri = cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, 0.0001 * peri, True)
+                pts = [[int(pt[0][0]), int(pt[0][1])] for pt in approx]
+                if len(pts) >= 3:
+                    contours.append(pts)
 
-            self.progress.emit(f"[CTD] 提取了 {len(contours)} 个有效多边形轮廓")
+            self.progress.emit(f"[CTD] 提取了 {len(contours)} 个多边形轮廓")
             self.progress.emit(f"[CTD] ✅ 掩膜生成完成！")
 
             # 返回结果
@@ -279,8 +243,6 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_widget = parent
-        self.ctd_model = None
-        self.ctd_model_path = None
 
         # 设置为非模态窗口
         self.setWindowModality(QtCore.Qt.NonModal)
@@ -299,34 +261,6 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
 
         # 主布局
         main_layout = QtWidgets.QVBoxLayout()
-
-        # === CTD模型配置 ===
-        model_group = QtWidgets.QGroupBox(self.tr("CTD模型配置"))
-        model_layout = QtWidgets.QVBoxLayout()
-
-        # 模型路径（占一整行）
-        self.model_path_edit = QtWidgets.QLineEdit()
-        self.model_path_edit.setPlaceholderText(self.tr("默认: BallonsTranslator/data/models/comictextdetector.pt"))
-        self.model_path_edit.setReadOnly(True)
-        self.model_path_edit.setMinimumHeight(28)
-        model_layout.addWidget(self.model_path_edit)
-
-        # 浏览/重置在路径框下方
-        btn_row = QtWidgets.QHBoxLayout()
-        browse_btn = QtWidgets.QPushButton(self.tr("浏览..."))
-        browse_btn.setMinimumHeight(28)
-        browse_btn.clicked.connect(self.browse_model_path)
-        btn_row.addWidget(browse_btn)
-
-        reset_btn = QtWidgets.QPushButton(self.tr("重置"))
-        reset_btn.setMinimumHeight(28)
-        reset_btn.clicked.connect(self.reset_model_path)
-        btn_row.addWidget(reset_btn)
-        btn_row.addStretch()
-        model_layout.addLayout(btn_row)
-
-        model_group.setLayout(model_layout)
-        main_layout.addWidget(model_group)
 
         # === 生成范围 ===
         scope_group = QtWidgets.QGroupBox(self.tr("生成范围"))
@@ -354,6 +288,12 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         self.clear_old_polygons_checkbox.setChecked(True)  # 默认勾选
         self.clear_old_polygons_checkbox.setToolTip(self.tr("勾选后，每次生成多边形前会自动删除画布上已有的多边形标注"))
         scope_layout.addWidget(self.clear_old_polygons_checkbox)
+
+        # 自动清理框外 mask 多边形开关
+        self.auto_clean_checkbox = QtWidgets.QCheckBox(self.tr("自动清理框外多边形"))
+        self.auto_clean_checkbox.setChecked(True)  # 默认勾选
+        self.auto_clean_checkbox.setToolTip(self.tr("勾选后，生成完多边形会自动删除不在标注框内的 mask 多边形"))
+        scope_layout.addWidget(self.auto_clean_checkbox)
 
         # 排除标签设置
         scope_layout.addSpacing(10)
@@ -438,55 +378,65 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         param_group.setLayout(param_layout)
         main_layout.addWidget(param_group)
 
-        # === 掩膜颜色设置 ===
+        # === 掩膜输出格式：背景 + 掩膜 两组独立的颜色/透明度 ===
         color_group = QtWidgets.QGroupBox(self.tr("掩膜输出格式"))
         color_layout = QtWidgets.QVBoxLayout()
 
-        # 格式选择
-        format_label = QtWidgets.QLabel(self.tr("掩膜格式:"))
-        format_label.setStyleSheet("font-weight: bold;")
-        color_layout.addWidget(format_label)
+        def _build_color_row(label_text, default_rgb, choose_slot, attr_color,
+                             attr_btn, attr_spin):
+            """构造一行：颜色按钮 + 透明度 spin"""
+            row_widget = QtWidgets.QWidget()
+            row_layout = QtWidgets.QHBoxLayout()
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.addWidget(QtWidgets.QLabel(self.tr(label_text)))
+            color_btn = QtWidgets.QPushButton()
+            setattr(self, attr_btn, color_btn)
+            setattr(self, attr_color, QtGui.QColor(*default_rgb))
+            self._update_color_button(getattr(self, attr_color), color_btn)
+            color_btn.clicked.connect(choose_slot)
+            row_layout.addWidget(color_btn)
+            row_layout.addSpacing(12)
+            row_layout.addWidget(QtWidgets.QLabel(self.tr("透明度:")))
+            spin = QtWidgets.QSpinBox()
+            spin.setRange(0, 100)
+            spin.setValue(100)
+            spin.setSuffix("%")
+            spin.setMaximumWidth(80)
+            setattr(self, attr_spin, spin)
+            row_layout.addWidget(spin)
+            row_layout.addStretch()
+            row_widget.setLayout(row_layout)
+            return row_widget
 
-        self.ballons_format_radio = QtWidgets.QRadioButton(
-            self.tr("BallonsTranslator格式（黑背景+白字）")
+        # 背景（默认黑+100% 不透明 → 等价 BallonsTranslator 风格）
+        bg_label = QtWidgets.QLabel(self.tr("背景"))
+        bg_label.setStyleSheet("font-weight: bold;")
+        color_layout.addWidget(bg_label)
+        bg_row = _build_color_row(
+            label_text="颜色:",
+            default_rgb=(0, 0, 0),
+            choose_slot=self.choose_bg_color,
+            attr_color="bg_color",
+            attr_btn="bg_color_btn",
+            attr_spin="bg_opacity_spin",
         )
-        self.ballons_format_radio.setChecked(True)
-        self.ballons_format_radio.toggled.connect(self.on_format_changed)
-        color_layout.addWidget(self.ballons_format_radio)
+        color_layout.addWidget(bg_row)
 
-        self.imagetrans_format_radio = QtWidgets.QRadioButton(
-            self.tr("ImageTrans格式（透明背景+颜色选择）")
+        color_layout.addSpacing(4)
+
+        # 掩膜（默认白+100% 不透明）
+        mask_label = QtWidgets.QLabel(self.tr("掩膜"))
+        mask_label.setStyleSheet("font-weight: bold;")
+        color_layout.addWidget(mask_label)
+        mask_row = _build_color_row(
+            label_text="颜色:",
+            default_rgb=(255, 255, 255),
+            choose_slot=self.choose_mask_color,
+            attr_color="mask_color",
+            attr_btn="mask_color_btn",
+            attr_spin="mask_opacity_spin",
         )
-        self.imagetrans_format_radio.toggled.connect(self.on_format_changed)
-        color_layout.addWidget(self.imagetrans_format_radio)
-
-        color_layout.addSpacing(10)
-
-        # 颜色+透明度（仅ImageTrans格式可用，横向一排）
-        self.color_settings_widget = QtWidgets.QWidget()
-        color_settings_layout = QtWidgets.QHBoxLayout()
-        color_settings_layout.setContentsMargins(0, 0, 0, 0)
-
-        color_settings_layout.addWidget(QtWidgets.QLabel(self.tr("颜色:")))
-        self.mask_color_btn = QtWidgets.QPushButton()
-        self.mask_color = QtGui.QColor(255, 255, 255)
-        self.update_color_button()
-        self.mask_color_btn.clicked.connect(self.choose_mask_color)
-        color_settings_layout.addWidget(self.mask_color_btn)
-
-        color_settings_layout.addSpacing(12)
-        color_settings_layout.addWidget(QtWidgets.QLabel(self.tr("透明度:")))
-        self.opacity_spin = QtWidgets.QSpinBox()
-        self.opacity_spin.setRange(0, 100)
-        self.opacity_spin.setValue(100)
-        self.opacity_spin.setSuffix("%")
-        self.opacity_spin.setMaximumWidth(80)
-        color_settings_layout.addWidget(self.opacity_spin)
-        color_settings_layout.addStretch()
-
-        self.color_settings_widget.setLayout(color_settings_layout)
-        self.color_settings_widget.setEnabled(False)  # 默认禁用
-        color_layout.addWidget(self.color_settings_widget)
+        color_layout.addWidget(mask_row)
 
         color_group.setLayout(color_layout)
         main_layout.addWidget(color_group)
@@ -506,7 +456,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         self.generate_btn.clicked.connect(self.generate_mask)
         button_grid.addWidget(self.generate_btn, 0, 0, QtCore.Qt.AlignLeft)
 
-        direct_box_btn = QtWidgets.QPushButton(self.tr("标注生成"))
+        direct_box_btn = QtWidgets.QPushButton(self.tr("矩形生成"))
         direct_box_btn.setMinimumHeight(35)
         direct_box_btn.setMinimumWidth(100)
         direct_box_btn.setMaximumWidth(150)
@@ -539,7 +489,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         ctd_direct_btn.clicked.connect(self.generate_mask_with_ctd_direct)
         button_grid.addWidget(ctd_direct_btn, 1, 1, QtCore.Qt.AlignLeft)
 
-        export_btn = QtWidgets.QPushButton(self.tr("导出PNG"))
+        export_btn = QtWidgets.QPushButton(self.tr("多边形生成"))
         export_btn.setMinimumHeight(35)
         export_btn.setMinimumWidth(100)
         export_btn.setMaximumWidth(150)
@@ -602,16 +552,10 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         except Exception:
             pass
 
-    def on_format_changed(self):
-        """格式选择变更时的处理"""
-        # ImageTrans格式时启用颜色设置
-        is_imagetrans = self.imagetrans_format_radio.isChecked()
-        self.color_settings_widget.setEnabled(is_imagetrans)
-
-    def update_color_button(self):
+    def _update_color_button(self, color, btn):
         """更新颜色按钮显示"""
-        color_str = self.mask_color.name()
-        self.mask_color_btn.setStyleSheet(
+        color_str = color.name()
+        btn.setStyleSheet(
             f"background-color: {color_str}; min-width: 60px; min-height: 25px;"
         )
 
@@ -622,32 +566,86 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         )
         if color.isValid():
             self.mask_color = color
-            self.update_color_button()
+            self._update_color_button(self.mask_color, self.mask_color_btn)
+
+    def choose_bg_color(self):
+        """选择背景颜色"""
+        color = QtWidgets.QColorDialog.getColor(
+            self.bg_color, self, self.tr("选择背景颜色")
+        )
+        if color.isValid():
+            self.bg_color = color
+            self._update_color_button(self.bg_color, self.bg_color_btn)
+
+    def _color_bgra(self, color, opacity_spin):
+        """生成 BGRA 4 元组 (B, G, R, A)"""
+        return [
+            color.blue(),
+            color.green(),
+            color.red(),
+            int(opacity_spin.value() * 2.55),
+        ]
+
+    def _build_mask_rgba(self, mask, bg_bgra, mask_bgra):
+        """合成最终 BGRA 掩膜：背景色铺底，掩膜区域覆盖"""
+        if mask.ndim == 2:
+            h, w = mask.shape
+        else:
+            h, w = mask.shape[:2]
+        out = np.zeros((h, w, 4), dtype=np.uint8)
+        out[..., 0] = bg_bgra[0]
+        out[..., 1] = bg_bgra[1]
+        out[..., 2] = bg_bgra[2]
+        out[..., 3] = bg_bgra[3]
+        indices = mask > 127
+        if indices.any():
+            out[indices, 0] = mask_bgra[0]
+            out[indices, 1] = mask_bgra[1]
+            out[indices, 2] = mask_bgra[2]
+            out[indices, 3] = mask_bgra[3]
+        return out
 
     def browse_model_path(self):
-        """浏览选择模型路径"""
-        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+        """浏览选择模型路径（已废弃 - CTD 现在通过自动标注加载）"""
+        QtWidgets.QMessageBox.information(
             self,
-            self.tr("选择CTD模型文件"),
-            "",
-            self.tr("模型文件 (*.pt *.pth)")
+            self.tr("提示"),
+            self.tr("请在「自动标注」面板加载 CTD 模型后使用本功能。")
         )
-        if file_path:
-            self.model_path_edit.setText(file_path)
-            self.ctd_model_path = file_path
 
     def reset_model_path(self):
         """重置模型路径为默认"""
-        self.model_path_edit.clear()
-        self.ctd_model_path = None
+        pass
 
     def get_default_model_path(self):
-        """获取默认模型路径"""
-        # 默认路径：BallonsTranslator目录下
-        default_path = r"D:\BallonsTranslator\BallonsTranslator\data\models\comictextdetector.pt"
-        if os.path.exists(default_path):
-            return default_path
+        """获取默认模型路径（已废弃 - CTD 现在通过自动标注加载）"""
         return None
+
+    def _get_ctd_inference(self):
+        """从自动标注已加载的模型中获取 CTDInference 实例。
+
+        Returns:
+            CTDInference 实例；如果自动标注未加载 CTD 模型，返回 None。
+        """
+        if not self.parent_widget:
+            return None
+        # label_widget 把 model_manager 挂在 auto_labeling_widget 下
+        alw = getattr(self.parent_widget, 'auto_labeling_widget', None)
+        mm = getattr(alw, 'model_manager', None) if alw else None
+        if mm is None:
+            # 兜底：直接找 model_manager 属性
+            mm = getattr(self.parent_widget, 'model_manager', None)
+        if mm is None:
+            return None
+        loaded = getattr(mm, 'loaded_model_config', None)
+        if loaded is None:
+            return None
+        model_obj = loaded.get("model")
+        if model_obj is None:
+            return None
+        if loaded.get("type") != "comic_text_detector":
+            return None
+        return getattr(model_obj, 'model', None)
 
     def generate_mask(self):
         """生成掩膜（从JSON标注框）"""
@@ -773,22 +771,25 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             self.append_log(f"[输出] {output_path}")
 
             # 准备参数
-            is_imagetrans = self.imagetrans_format_radio.isChecked()
             params = {
                 'size_scale': self.size_spin.value() / 100.0,
                 'extend_top': self.extend_top_spin.value(),
                 'extend_bottom': self.extend_bottom_spin.value(),
                 'extend_left': self.extend_left_spin.value(),
                 'extend_right': self.extend_right_spin.value(),
-                'format': 'imagetrans' if is_imagetrans else 'ballons',
-                'text_color': [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()],
-                'text_alpha': int(self.opacity_spin.value() * 2.55),
+                'bg_bgra': self._color_bgra(self.bg_color, self.bg_opacity_spin),
+                'mask_bgra': self._color_bgra(self.mask_color, self.mask_opacity_spin),
                 'dilate_kernel_size': self.dilate_kernel_spin.value(),  # 膨胀核大小
                 'direct_ctd': True  # 标记为直接CTD模式
             }
 
-            # 获取模型路径
-            model_path = self.ctd_model_path or self.get_default_model_path()
+            # 从自动标注获取已加载的 CTD 模型
+            ctd_inference = self._get_ctd_inference()
+            if ctd_inference is None:
+                self.append_log("[失败] 请先在「自动标注」面板加载 CTD 模型")
+                self.status_label.setText(self.tr("❌ 未加载 CTD 模型"))
+                self.ctd_direct_btn.setEnabled(True)
+                return
 
             self.append_log(f"[CTD生成] 将在 {len(yolo_labels)} 个标注框内使用CTD检测...")
 
@@ -796,7 +797,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             self.worker = MaskGeneratorWorker(
                 image_path,
                 yolo_labels,  # 传入所有标注框
-                model_path,
+                ctd_inference,
                 output_path,
                 params,
                 save_png=True  # 直接生成PNG文件
@@ -850,48 +851,27 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             self.generate_btn.setEnabled(False)
 
             # 获取参数
-            is_imagetrans = self.imagetrans_format_radio.isChecked()
             params = {
                 'size_scale': self.size_spin.value() / 100.0,
                 'extend_top': self.extend_top_spin.value(),
                 'extend_bottom': self.extend_bottom_spin.value(),
                 'extend_left': self.extend_left_spin.value(),
                 'extend_right': self.extend_right_spin.value(),
-                'format': 'imagetrans' if is_imagetrans else 'ballons',
-                'text_color': [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()],
-                'text_alpha': int(self.opacity_spin.value() * 2.55),
+                'bg_bgra': self._color_bgra(self.bg_color, self.bg_opacity_spin),
+                'mask_bgra': self._color_bgra(self.mask_color, self.mask_opacity_spin),
                 'dilate_kernel_size': self.dilate_kernel_spin.value()  # 膨胀核大小
             }
 
-            model_path = self.ctd_model_path or self.get_default_model_path()
-
-            # 预先加载CTD模型（只加载一次）
-            self.append_log(f"[CTD] 加载模型: {model_path}")
-            try:
-                import sys
-                import torch
-
-                # 添加BallonsTranslator路径
-                ballons_path = r"D:\BallonsTranslator\BallonsTranslator"
-                if ballons_path not in sys.path:
-                    sys.path.insert(0, ballons_path)
-                    self.append_log(f"[CTD] 添加模块路径: {ballons_path}")
-
-                # 导入CTD模块
-                from modules.textdetector.ctd import CTDModel
-
-                # 加载模型
-                device = 'cuda' if torch.cuda.is_available() else 'cpu'
-                ctd_model = CTDModel(model_path, detect_size=1024, device=device)
-                self.append_log(f"[CTD] 模型加载成功，设备: {device}")
-            except Exception as e:
-                import traceback
-                self.append_log(f"[错误] CTD模型加载失败: {str(e)}")
-                self.append_log(traceback.format_exc())
+            # 从自动标注获取已加载的 CTD 模型
+            ctd_inference = self._get_ctd_inference()
+            if ctd_inference is None:
+                self.append_log("[失败] 请先在「自动标注」面板加载 CTD 模型")
                 self.progress_bar.setVisible(False)
                 self.generate_btn.setEnabled(True)
-                self.status_label.setText(self.tr(f"❌ CTD模型加载失败"))
+                self.status_label.setText(self.tr("❌ 未加载 CTD 模型"))
                 return
+
+            self.append_log(f"[CTD] 使用自动标注已加载的模型")
 
             success_count = 0
             skip_count = 0
@@ -977,12 +957,14 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                         elif img.shape[2] == 3:
                             img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
 
-                    # 创建掩膜画布
-                    if is_imagetrans:
-                        mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
-                    else:
-                        mask_rgba = np.zeros((img_h, img_w), dtype=np.uint8)
-
+                    # 创建掩膜画布（背景铺底 + 掩膜区域后续合并）
+                    bg_bgra = params.get('bg_bgra', [0, 0, 0, 255])
+                    mask_bgra = params.get('mask_bgra', [255, 255, 255, 255])
+                    mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
+                    mask_rgba[..., 0] = bg_bgra[0]
+                    mask_rgba[..., 1] = bg_bgra[1]
+                    mask_rgba[..., 2] = bg_bgra[2]
+                    mask_rgba[..., 3] = bg_bgra[3]
                     # 处理每个标注框
                     for label in yolo_labels:
                         cls, x_center, y_center, w, h = label
@@ -1001,8 +983,21 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                         if crop.size == 0:
                             continue
 
-                        # CTD检测
-                        mask_crop, mask_refined_crop, blk_list = ctd_model(crop, refine_mode=0, keep_undetected_mask=False)
+                        # CTD检测 - 使用预加载的CTD模型
+                        from anylabeling.services.auto_labeling.ctd.inference import preprocess_img as _ctd_preprocess
+                        with torch.no_grad():
+                            _crop_in, _ratio, _dw, _dh = _ctd_preprocess(
+                                crop, bgr2rgb=False, detect_size=ctd_inference.detect_size,
+                                device=ctd_inference.device, half=ctd_inference.half,
+                                to_tensor=(ctd_inference.backend == 'torch')
+                            )
+                            _blks, _mask_tensor, _lines_map = ctd_inference.net(_crop_in)
+                        _m = _mask_tensor.squeeze()
+                        if hasattr(_m, 'cpu'):
+                            _m = _m.cpu().numpy()
+                        _m = _m[..., :_m.shape[0] - _dh, :_m.shape[1] - _dw]
+                        mask_refined_crop = ((_m > 0.5).astype(np.uint8) * 255)
+                        mask_refined_crop = cv2.resize(mask_refined_crop, (x2 - x1, y2 - y1), interpolation=cv2.INTER_LINEAR)
 
                         if mask_refined_crop is None or mask_refined_crop.size == 0:
                             continue
@@ -1044,22 +1039,15 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                             shifted[:, i:] = mask_refined_crop[:, :-i]
                             result_mask = np.maximum(result_mask, shifted)
 
-                        # 合并到总掩膜
-                        if is_imagetrans:
-                            text_color = params['text_color']
-                            text_alpha = params['text_alpha']
-                            # 将检测结果叠加到对应位置
-                            mask_indices = result_mask > 127
-                            mask_rgba[y1:y2, x1:x2, 0][mask_indices] = text_color[2]  # B
-                            mask_rgba[y1:y2, x1:x2, 1][mask_indices] = text_color[1]  # G
-                            mask_rgba[y1:y2, x1:x2, 2][mask_indices] = text_color[0]  # R
-                            mask_rgba[y1:y2, x1:x2, 3][mask_indices] = text_alpha     # A
-                        else:
-                            # BallonsTranslator格式：黑背景 + 白色文字
-                            mask_rgba[y1:y2, x1:x2] = np.maximum(
-                                mask_rgba[y1:y2, x1:x2],
-                                result_mask
-                            )
+                        # 合并到总掩膜（统一 BGRA 合成）
+                        mask_indices = result_mask > 127
+                        if mask_indices.any():
+                            roi = mask_rgba[y1:y2, x1:x2]
+                            roi[..., 0][mask_indices] = mask_bgra[0]
+                            roi[..., 1][mask_indices] = mask_bgra[1]
+                            roi[..., 2][mask_indices] = mask_bgra[2]
+                            roi[..., 3][mask_indices] = mask_bgra[3]
+                            mask_rgba[y1:y2, x1:x2] = roi
 
                     # 保存PNG（支持中文路径）
                     _, buffer = cv2.imencode('.png', mask_rgba)
@@ -1101,7 +1089,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         try:
             # 清空日志
             self.log_text.clear()
-            self.append_log("[标注框] 开始从JSON标注框直接生成PNG掩膜...")
+            self.append_log("[矩形框] 开始从矩形框直接生成PNG掩膜...")
 
             # 获取当前图片路径
             if not self.parent_widget or not hasattr(self.parent_widget, 'filename'):
@@ -1173,28 +1161,17 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             os.makedirs(mask_dir, exist_ok=True)
             output_path = os.path.join(mask_dir, f"{image_name}.png")
 
-            # 根据格式保存PNG
-            is_imagetrans = self.imagetrans_format_radio.isChecked()
-            if is_imagetrans:
-                # ImageTrans格式：透明背景 + 自定义颜色
-                text_color = [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()]
-                text_alpha = int(self.opacity_spin.value() * 2.55)
+            # 统一合成：根据背景/掩膜颜色和透明度生成 PNG
+            bg_bgra = self._color_bgra(self.bg_color, self.bg_opacity_spin)
+            mask_bgra = self._color_bgra(self.mask_color, self.mask_opacity_spin)
+            mask_rgba = self._build_mask_rgba(mask, bg_bgra, mask_bgra)
 
-                mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
-                mask_indices = mask > 127
-                mask_rgba[mask_indices] = [text_color[2], text_color[1], text_color[0], text_alpha]  # BGRA
+            # 使用imencode支持中文路径
+            _, buffer = cv2.imencode('.png', mask_rgba)
+            buffer.tofile(output_path)
+            self.append_log(f"[保存] 矩形掩膜PNG已保存: {output_path}")
 
-                # 使用imencode支持中文路径
-                _, buffer = cv2.imencode('.png', mask_rgba)
-                buffer.tofile(output_path)
-                self.append_log(f"[保存] ImageTrans格式PNG已保存: {output_path}")
-            else:
-                # BallonsTranslator格式：黑背景 + 白色文字
-                _, buffer = cv2.imencode('.png', mask)
-                buffer.tofile(output_path)
-                self.append_log(f"[保存] BallonsTranslator格式PNG已保存: {output_path}")
-
-            self.append_log(f"[完成] ✅ PNG生成完成！")
+            self.append_log(f"[完成] ✅ 矩形PNG生成完成！")
             self.append_log(f"[保存] {output_path}")
             self.append_log(f"[统计] 矩形框数: {box_count}")
             self.status_label.setText(self.tr(f"✅ 从标注框生成PNG完成 ({box_count}个框)"))
@@ -1211,7 +1188,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         try:
             # 清空日志
             self.log_text.clear()
-            self.append_log("[批量标注框] 开始批量从JSON标注框生成PNG...")
+            self.append_log("[批量矩形框] 开始批量从矩形框生成PNG...")
 
             # 获取所有图片列表
             if not self.parent_widget or not hasattr(self.parent_widget, 'image_list'):
@@ -1237,9 +1214,8 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             self.generate_btn.setEnabled(False)
 
             # 获取参数
-            is_imagetrans = self.imagetrans_format_radio.isChecked()
-            text_color = [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()]
-            text_alpha = int(self.opacity_spin.value() * 2.55)
+            bg_bgra = self._color_bgra(self.bg_color, self.bg_opacity_spin)
+            mask_bgra = self._color_bgra(self.mask_color, self.mask_opacity_spin)
 
             success_count = 0
             skip_count = 0
@@ -1300,16 +1276,10 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                     os.makedirs(mask_dir, exist_ok=True)
                     output_path = os.path.join(mask_dir, f"{image_name}.png")
 
-                    # 根据格式保存PNG
-                    if is_imagetrans:
-                        mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
-                        mask_indices = mask > 127
-                        mask_rgba[mask_indices] = [text_color[2], text_color[1], text_color[0], text_alpha]
-                        _, buffer = cv2.imencode('.png', mask_rgba)
-                        buffer.tofile(output_path)
-                    else:
-                        _, buffer = cv2.imencode('.png', mask)
-                        buffer.tofile(output_path)
+                    # 统一合成掩膜 PNG
+                    mask_rgba = self._build_mask_rgba(mask, bg_bgra, mask_bgra)
+                    _, buffer = cv2.imencode('.png', mask_rgba)
+                    buffer.tofile(output_path)
 
                     self.append_log(f"  [完成] PNG已保存 ({box_count}个框)")
                     success_count += 1
@@ -1605,13 +1575,14 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
             # ── 自动清理：删除不在矩形/旋转框内的 mask 多边形 ──
-            from anylabeling.services.text_splitter.mask_generator import filter_polygons_by_boxes
-            filtered_shapes, auto_removed = filter_polygons_by_boxes(data['shapes'])
-            if auto_removed > 0:
-                data['shapes'] = filtered_shapes
-                with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                self.append_log(f"[自动清理] 删除了 {auto_removed} 个框外 mask 多边形")
+            if self.auto_clean_checkbox.isChecked():
+                from anylabeling.services.text_splitter.mask_generator import filter_polygons_by_boxes
+                filtered_shapes, auto_removed = filter_polygons_by_boxes(data['shapes'])
+                if auto_removed > 0:
+                    data['shapes'] = filtered_shapes
+                    with open(json_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    self.append_log(f"[自动清理] 删除了 {auto_removed} 个框外 mask 多边形")
 
         # 用实际标注框多边形裁剪 mask_full，删除 AABB 框外噪声
         if np.any(mask_full):
@@ -1630,19 +1601,12 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             os.makedirs(mask_dir, exist_ok=True)
             base = os.path.splitext(os.path.basename(image_path))[0]
 
-            is_imagetrans = self.imagetrans_format_radio.isChecked()
-            if is_imagetrans:
-                text_color = [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()]
-                text_alpha = int(self.opacity_spin.value() * 2.55)
-                mask_rgba = np.zeros((h, w, 4), dtype=np.uint8)
-                mask_indices = mask_full > 127
-                mask_rgba[mask_indices] = [text_color[2], text_color[1], text_color[0], text_alpha]
-                _, buf = cv2.imencode('.png', mask_rgba)
-                buf.tofile(os.path.join(mask_dir, f"{base}.png"))
-            else:
-                # BallonsTranslator: 纯掩膜
-                _, buf = cv2.imencode('.png', mask_full)
-                buf.tofile(os.path.join(mask_dir, f"{base}.png"))
+            # 统一合成掩膜 PNG
+            bg_bgra = self._color_bgra(self.bg_color, self.bg_opacity_spin)
+            mask_bgra = self._color_bgra(self.mask_color, self.mask_opacity_spin)
+            mask_rgba = self._build_mask_rgba(mask_full, bg_bgra, mask_bgra)
+            _, buf = cv2.imencode('.png', mask_rgba)
+            buf.tofile(os.path.join(mask_dir, f"{base}.png"))
 
         return box_count
 
@@ -1866,21 +1830,12 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         os.makedirs(mask_dir, exist_ok=True)
         base = os.path.splitext(os.path.basename(image_path))[0]
 
-        is_imagetrans = self.imagetrans_format_radio.isChecked()
-        if is_imagetrans:
-            text_color = [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()]
-            text_alpha = int(self.opacity_spin.value() * 2.55)
-            mask_rgba = np.zeros((h, w, 4), dtype=np.uint8)
-            mask_indices = mask_full > 127
-            mask_rgba[mask_indices] = [text_color[2], text_color[1], text_color[0], text_alpha]
-            _, buf = cv2.imencode('.png', mask_rgba)
-            buf.tofile(os.path.join(mask_dir, f"{base}.png"))
-            self.append_log(f"  → {mask_dir}/{base}.png")
-        else:
-            # BallonsTranslator: 黑底白字纯掩膜
-            _, buf = cv2.imencode('.png', mask_full)
-            buf.tofile(os.path.join(mask_dir, f"{base}.png"))
-            self.append_log(f"  → {mask_dir}/{base}.png")
+        bg_bgra = self._color_bgra(self.bg_color, self.bg_opacity_spin)
+        mask_bgra = self._color_bgra(self.mask_color, self.mask_opacity_spin)
+        mask_rgba = self._build_mask_rgba(mask_full, bg_bgra, mask_bgra)
+        _, buf = cv2.imencode('.png', mask_rgba)
+        buf.tofile(os.path.join(mask_dir, f"{base}.png"))
+        self.append_log(f"  → {mask_dir}/{base}.png")
 
     def generate_current_mask(self):
         """生成当前页面的掩膜（异步执行）"""
@@ -2002,27 +1957,31 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
     def start_mask_generation_async(self, image_path, yolo_labels, output_path):
         """异步启动掩膜生成"""
         # 准备参数
-        is_imagetrans = self.imagetrans_format_radio.isChecked()
         params = {
             'size_scale': self.size_spin.value() / 100.0,
             'extend_top': self.extend_top_spin.value(),
             'extend_bottom': self.extend_bottom_spin.value(),
             'extend_left': self.extend_left_spin.value(),
             'extend_right': self.extend_right_spin.value(),
-            'format': 'imagetrans' if is_imagetrans else 'ballons',
-            'text_color': [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()],
-            'text_alpha': int(self.opacity_spin.value() * 2.55),
+            'bg_bgra': self._color_bgra(self.bg_color, self.bg_opacity_spin),
+            'mask_bgra': self._color_bgra(self.mask_color, self.mask_opacity_spin),
             'dilate_kernel_size': self.dilate_kernel_spin.value(),  # 膨胀核大小
         }
 
         # 获取模型路径
-        model_path = self.ctd_model_path or self.get_default_model_path()
+        # 从自动标注获取已加载的 CTD 模型
+        ctd_inference = self._get_ctd_inference()
+        if ctd_inference is None:
+            self.append_log("[失败] 请先在「自动标注」面板加载 CTD 模型")
+            self.status_label.setText(self.tr("❌ 未加载 CTD 模型"))
+            self.generate_btn.setEnabled(True)
+            return
 
-        self.append_log(f"[开始] 使用CTD模型直接生成...")
+        self.append_log(f"[开始] 使用自动标注已加载的CTD模型...")
 
         # 创建Worker线程（直接传参数，不再使用subprocess）
         # save_png=False: 生成掩膜时不保存PNG，只提取轮廓
-        self.worker = MaskGeneratorWorker(image_path, yolo_labels, model_path, output_path, params, save_png=False)
+        self.worker = MaskGeneratorWorker(image_path, yolo_labels, ctd_inference, output_path, params, save_png=False)
         self.worker.progress.connect(self.append_log)
         self.worker.finished.connect(lambda result: self.on_mask_generation_finished(result, output_path))
         self.worker.error.connect(self.on_mask_generation_error)
@@ -2061,20 +2020,21 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             self.save_contours_to_json(contours)
 
             # ── 自动清理：删除不在矩形/旋转框内的 mask 多边形 ──
-            self.append_log(f"[自动清理] 正在清理框外 mask 多边形...")
-            from anylabeling.services.text_splitter.mask_generator import filter_polygons_by_boxes
-            img_path = self.parent_widget.filename
-            json_path_c = os.path.splitext(img_path)[0] + '.json'
-            with open(json_path_c, 'r', encoding='utf-8') as f:
-                clean_data = json.load(f)
-            clean_shapes, clean_removed = filter_polygons_by_boxes(clean_data.get('shapes', []))
-            if clean_removed > 0:
-                clean_data['shapes'] = clean_shapes
-                with open(json_path_c, 'w', encoding='utf-8') as f:
-                    json.dump(clean_data, f, ensure_ascii=False, indent=2)
-                self.append_log(f"[自动清理] 删除了 {clean_removed} 个框外 mask 多边形")
-            else:
-                self.append_log(f"[自动清理] 没有需要删除的多边形")
+            if self.auto_clean_checkbox.isChecked():
+                self.append_log(f"[自动清理] 正在清理框外 mask 多边形...")
+                from anylabeling.services.text_splitter.mask_generator import filter_polygons_by_boxes
+                img_path = self.parent_widget.filename
+                json_path_c = os.path.splitext(img_path)[0] + '.json'
+                with open(json_path_c, 'r', encoding='utf-8') as f:
+                    clean_data = json.load(f)
+                clean_shapes, clean_removed = filter_polygons_by_boxes(clean_data.get('shapes', []))
+                if clean_removed > 0:
+                    clean_data['shapes'] = clean_shapes
+                    with open(json_path_c, 'w', encoding='utf-8') as f:
+                        json.dump(clean_data, f, ensure_ascii=False, indent=2)
+                    self.append_log(f"[自动清理] 删除了 {clean_removed} 个框外 mask 多边形")
+                else:
+                    self.append_log(f"[自动清理] 没有需要删除的多边形")
 
         self.append_log(f"[完成] ✅ 掩膜生成完成！已保存到JSON并刷新画布")
         self.status_label.setText(
@@ -2142,20 +2102,28 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             self.generate_btn.setEnabled(False)
 
             # 获取参数
-            is_imagetrans = self.imagetrans_format_radio.isChecked()
             params = {
                 'size_scale': self.size_spin.value() / 100.0,
                 'extend_top': self.extend_top_spin.value(),
                 'extend_bottom': self.extend_bottom_spin.value(),
                 'extend_left': self.extend_left_spin.value(),
                 'extend_right': self.extend_right_spin.value(),
-                'format': 'imagetrans' if is_imagetrans else 'ballons',
-                'text_color': [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()],
-                'text_alpha': int(self.opacity_spin.value() * 2.55),
+                'bg_bgra': self._color_bgra(self.bg_color, self.bg_opacity_spin),
+                'mask_bgra': self._color_bgra(self.mask_color, self.mask_opacity_spin),
                 'dilate_kernel_size': self.dilate_kernel_spin.value()  # 膨胀核大小
             }
 
-            model_path = self.ctd_model_path or self.get_default_model_path()
+            # 从自动标注获取已加载的 CTD 模型
+            ctd_inference = self._get_ctd_inference()
+            if ctd_inference is None:
+                self.append_log("[失败] 请先在「自动标注」面板加载 CTD 模型")
+                self.status_label.setText(self.tr("❌ 未加载 CTD 模型"))
+                self.progress_bar.setVisible(False)
+                self.generate_btn.setEnabled(True)
+                return
+
+            import torch
+            self.append_log(f"[模型] ✅ 使用自动标注已加载的CTD模型")
 
             # 获取排除标签列表
             exclude_labels_text = self.exclude_labels_edit.text().strip()
@@ -2163,29 +2131,6 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             if exclude_labels_text:
                 exclude_labels = [label.strip() for label in exclude_labels_text.split(',') if label.strip()]
                 self.append_log(f"[过滤] 排除标签: {exclude_labels}")
-
-            # 🎯 在批量处理前加载一次CTD模型
-            self.append_log(f"[模型] 正在加载CTD模型...")
-            try:
-                import sys
-                import torch
-
-                # 添加BallonsTranslator路径
-                ballons_path = r"D:\BallonsTranslator\BallonsTranslator"
-                if ballons_path not in sys.path:
-                    sys.path.insert(0, ballons_path)
-
-                from modules.textdetector.ctd import CTDModel
-
-                device = 'cuda' if torch.cuda.is_available() else 'cpu'
-                ctd_model = CTDModel(model_path, detect_size=1024, device=device)
-                self.append_log(f"[模型] ✅ CTD模型加载完成 (设备: {device})")
-            except Exception as e:
-                self.append_log(f"[错误] 模型加载失败: {str(e)}")
-                self.status_label.setText(self.tr("❌ 模型加载失败"))
-                self.progress_bar.setVisible(False)
-                self.generate_btn.setEnabled(True)
-                return
 
             success_count = 0
             skip_count = 0
@@ -2279,7 +2224,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                     )
 
                     # 直接运行（不启动线程），传入已加载的模型
-                    result = self._run_worker_sync(worker, ctd_model)
+                    result = self._run_worker_sync(worker, ctd_inference)
 
                     if result.get("success"):
                         contours = result.get("contours", [])
@@ -2289,15 +2234,16 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                         if contours:
                             self._save_contours_to_json_batch(json_path, contours)
                             # ── 自动清理 ──
-                            from anylabeling.services.text_splitter.mask_generator import filter_polygons_by_boxes
-                            with open(json_path, 'r', encoding='utf-8') as f:
-                                clean_data = json.load(f)
-                            clean_shapes, clean_removed = filter_polygons_by_boxes(clean_data.get('shapes', []))
-                            if clean_removed > 0:
-                                clean_data['shapes'] = clean_shapes
-                                with open(json_path, 'w', encoding='utf-8') as f:
-                                    json.dump(clean_data, f, ensure_ascii=False, indent=2)
-                                self.append_log(f"  [自动清理] 删除了 {clean_removed} 个框外 mask 多边形")
+                            if self.auto_clean_checkbox.isChecked():
+                                from anylabeling.services.text_splitter.mask_generator import filter_polygons_by_boxes
+                                with open(json_path, 'r', encoding='utf-8') as f:
+                                    clean_data = json.load(f)
+                                clean_shapes, clean_removed = filter_polygons_by_boxes(clean_data.get('shapes', []))
+                                if clean_removed > 0:
+                                    clean_data['shapes'] = clean_shapes
+                                    with open(json_path, 'w', encoding='utf-8') as f:
+                                        json.dump(clean_data, f, ensure_ascii=False, indent=2)
+                                    self.append_log(f"  [自动清理] 删除了 {clean_removed} 个框外 mask 多边形")
 
                         success_count += 1
                     else:
@@ -2337,7 +2283,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         """导出当前页面的掩膜为PNG"""
         try:
             self.log_text.clear()
-            self.append_log("[导出] 开始导出PNG...")
+            self.append_log("[多边形] 开始导出多边形PNG掩膜")
             self.status_label.setText(self.tr("正在导出掩膜..."))
             QtWidgets.QApplication.processEvents()
 
@@ -2373,7 +2319,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                 self.status_label.setText(self.tr("❌ 读取图片失败"))
                 return
 
-            self.append_log(f"[导出] 图片尺寸: {img_w}x{img_h}")
+            self.append_log(f"[尺寸] {img_w}x{img_h}")
 
             # 创建空白掩膜
             mask = np.zeros((img_h, img_w), dtype=np.uint8)
@@ -2391,7 +2337,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                         cv2.fillPoly(mask, [pts], 255)
                         polygon_count += 1
 
-            self.append_log(f"[导出] 绘制了 {polygon_count} 个多边形")
+            self.append_log(f"[多边形] 绘制了 {polygon_count} 个多边形")
 
             # 确定输出路径
             image_dir = os.path.dirname(image_path)
@@ -2400,27 +2346,15 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             os.makedirs(mask_dir, exist_ok=True)
             output_path = os.path.join(mask_dir, f"{image_name}.png")
 
-            # 根据格式保存（使用imencode支持中文路径）
-            is_imagetrans = self.imagetrans_format_radio.isChecked()
-            if is_imagetrans:
-                # ImageTrans格式：透明背景 + 自定义颜色
-                text_color = [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()]
-                text_alpha = int(self.opacity_spin.value() * 2.55)
+            # 统一合成掩膜 PNG
+            bg_bgra = self._color_bgra(self.bg_color, self.bg_opacity_spin)
+            mask_bgra = self._color_bgra(self.mask_color, self.mask_opacity_spin)
+            mask_rgba = self._build_mask_rgba(mask, bg_bgra, mask_bgra)
 
-                mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
-                mask_indices = mask > 127
-                mask_rgba[mask_indices] = [text_color[2], text_color[1], text_color[0], text_alpha]  # BGRA
-
-                # 使用imencode支持中文路径
-                _, buffer = cv2.imencode('.png', mask_rgba)
-                buffer.tofile(output_path)
-                self.append_log(f"[导出] ImageTrans格式PNG已保存: {output_path}")
-            else:
-                # BallonsTranslator格式：黑背景 + 白色文字
-                # 使用imencode支持中文路径
-                _, buffer = cv2.imencode('.png', mask)
-                buffer.tofile(output_path)
-                self.append_log(f"[导出] BallonsTranslator格式PNG已保存: {output_path}")
+            # 使用imencode支持中文路径
+            _, buffer = cv2.imencode('.png', mask_rgba)
+            buffer.tofile(output_path)
+            self.append_log(f"[导出] 掩膜PNG已保存: {output_path}")
 
             self.append_log(f"[完成] ✅ PNG导出完成！")
             self.append_log(f"[保存] {output_path}")
@@ -2438,7 +2372,7 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
         try:
             # 清空日志
             self.log_text.clear()
-            self.append_log("[批量导出] 开始批量导出所有页面PNG...")
+            self.append_log("[批量多边形] 开始批量导出所有页面多边形PNG...")
 
             # 获取所有图片列表
             if not self.parent_widget or not hasattr(self.parent_widget, 'image_list'):
@@ -2464,9 +2398,8 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             self.generate_btn.setEnabled(False)
 
             # 获取参数
-            is_imagetrans = self.imagetrans_format_radio.isChecked()
-            text_color = [self.mask_color.red(), self.mask_color.green(), self.mask_color.blue()]
-            text_alpha = int(self.opacity_spin.value() * 2.55)
+            bg_bgra = self._color_bgra(self.bg_color, self.bg_opacity_spin)
+            mask_bgra = self._color_bgra(self.mask_color, self.mask_opacity_spin)
 
             success_count = 0
             skip_count = 0
@@ -2527,15 +2460,10 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                     output_path = os.path.join(mask_dir, f"{image_name}.png")
 
                     # 根据格式保存PNG
-                    if is_imagetrans:
-                        mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
-                        mask_indices = mask > 127
-                        mask_rgba[mask_indices] = [text_color[2], text_color[1], text_color[0], text_alpha]
-                        _, buffer = cv2.imencode('.png', mask_rgba)
-                        buffer.tofile(output_path)
-                    else:
-                        _, buffer = cv2.imencode('.png', mask)
-                        buffer.tofile(output_path)
+                    # 统一合成掩膜 PNG
+                    mask_rgba = self._build_mask_rgba(mask, bg_bgra, mask_bgra)
+                    _, buffer = cv2.imencode('.png', mask_rgba)
+                    buffer.tofile(output_path)
 
                     self.append_log(f"  [完成] PNG已保存 ({polygon_count}个多边形)")
                     success_count += 1
@@ -2743,22 +2671,34 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
             img_h, img_w = img.shape[:2]
 
             # 使用传入的已加载模型（不再重复加载）
-            model = ctd_model
+            ctd_inference = ctd_model
 
             # 获取设备信息（用于返回值）
             import torch
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
             # 1. 全图检测获取最准确掩膜
-            mask_full, mask_refined_full, _ = model(img, refine_mode=0, keep_undetected_mask=False)
+            from anylabeling.services.auto_labeling.ctd.inference import preprocess_img
+            with torch.no_grad():
+                img_in, ratio, dw, dh = preprocess_img(
+                    img, bgr2rgb=False, detect_size=ctd_inference.detect_size,
+                    device=ctd_inference.device, half=ctd_inference.half,
+                    to_tensor=(ctd_inference.backend == 'torch')
+                )
+                blks, mask_tensor, lines_map = ctd_inference.net(img_in)
+            mask_out = mask_tensor.squeeze()
+            if hasattr(mask_out, 'cpu'):
+                mask_out = mask_out.cpu().numpy()
+            mask_out = mask_out[..., :mask_out.shape[0] - dh, :mask_out.shape[1] - dw]
+            mask_binary = (mask_out > 0.5).astype(np.uint8) * 255
+            mask_refined_full = cv2.resize(mask_binary, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
 
             if mask_refined_full is None or mask_refined_full.size == 0:
                 mask = np.zeros((img_h, img_w), dtype=np.uint8)
             else:
-                if mask_refined_full.shape[:2] != (img_h, img_w):
-                    mask_refined_full = cv2.resize(mask_refined_full, (img_w, img_h))
 
                 # 2. 局部聚合逻辑：在每个标注框内合并碎片
+                mask = np.zeros((img_h, img_w), dtype=np.uint8)
                 mask = np.zeros((img_h, img_w), dtype=np.uint8)
                 kernel_close = np.ones((5, 5), np.uint8)
                 
@@ -2900,13 +2840,14 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
 
             device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-            # 创建掩膜画布
-            is_imagetrans = worker.params['format'] == 'imagetrans'
-
-            if is_imagetrans:
-                mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
-            else:
-                mask_rgba = np.zeros((img_h, img_w), dtype=np.uint8)
+            # 创建掩膜画布（背景铺底 + 掩膜区域后续合并）
+            bg_bgra = worker.params.get('bg_bgra', [0, 0, 0, 255])
+            mask_bgra = worker.params.get('mask_bgra', [255, 255, 255, 255])
+            mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
+            mask_rgba[..., 0] = bg_bgra[0]
+            mask_rgba[..., 1] = bg_bgra[1]
+            mask_rgba[..., 2] = bg_bgra[2]
+            mask_rgba[..., 3] = bg_bgra[3]
 
             # 处理每个标注框
             for label in worker.yolo_labels:
@@ -2945,31 +2886,24 @@ class MaskGeneratorDialog(QtWidgets.QDialog):
                 mask_resized = cv2.resize(mask_raw, (x2_ext - x1_ext, y2_ext - y1_ext))
                 _, binary_mask = cv2.threshold(mask_resized, 127, 255, cv2.THRESH_BINARY)
 
-                # 合并到总掩膜
-                if is_imagetrans:
-                    text_color = worker.params['text_color']
-                    text_alpha = worker.params['text_alpha']
-                    mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 0] = np.maximum(
-                        mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 0],
-                        (binary_mask > 0).astype(np.uint8) * text_color[2]
+                # 合并到总掩膜（统一 BGRA 合成）
+                indices = binary_mask > 0
+                if indices.any():
+                    roi = mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext]
+                    ind_full = indices
+                    roi[..., 0][ind_full] = np.maximum(
+                        roi[..., 0][ind_full], mask_bgra[0]
                     )
-                    mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 1] = np.maximum(
-                        mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 1],
-                        (binary_mask > 0).astype(np.uint8) * text_color[1]
+                    roi[..., 1][ind_full] = np.maximum(
+                        roi[..., 1][ind_full], mask_bgra[1]
                     )
-                    mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 2] = np.maximum(
-                        mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 2],
-                        (binary_mask > 0).astype(np.uint8) * text_color[0]
+                    roi[..., 2][ind_full] = np.maximum(
+                        roi[..., 2][ind_full], mask_bgra[2]
                     )
-                    mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 3] = np.maximum(
-                        mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext, 3],
-                        (binary_mask > 0).astype(np.uint8) * text_alpha
+                    roi[..., 3][ind_full] = np.maximum(
+                        roi[..., 3][ind_full], mask_bgra[3]
                     )
-                else:
-                    mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext] = np.maximum(
-                        mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext],
-                        binary_mask
-                    )
+                    mask_rgba[y1_ext:y2_ext, x1_ext:x2_ext] = roi
 
             # 保存PNG（支持中文路径）
             _, buffer = cv2.imencode('.png', mask_rgba)

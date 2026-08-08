@@ -1,0 +1,17 @@
+type: comic_text_detector
+name: comic_text_detector-r20250626
+provider: dreMaz/ComicTextDetector
+display_name: Comic Text Detector (CTD)
+model_path: D:/Ddown/XAi/BallonsTranslator-1510/data/models/comictextdetector.pt
+detect_size: 1024
+device: cuda
+conf_thresh: 0.4
+nms_thresh: 0.35
+db_thresh: 0.3
+db_box_thresh: 0.6
+conf_threshold: 0.4
+iou_threshold: 0.5
+classes:
+  - text_block
+  - text_line
+max_shapes: 300

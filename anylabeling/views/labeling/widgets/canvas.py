@@ -255,6 +255,8 @@ class Canvas(
         # Brush edit mode config
         self.brush_config = self._config.get("canvas", {}).get("brush", {})
         self.mask_opacity = self._config.get("canvas", {}).get("mask", {}).get("opacity", 80)
+        # Magic Wand (魔棒) config
+        self.magic_wand_config = self._config.get("canvas", {}).get("magic_wand", {})
 
         super().__init__(*args, **kwargs)
         # Initialise local state.
@@ -379,6 +381,8 @@ class Canvas(
         self.brush_radius = float(self.brush_config.get("brush_radius", 12))  # 图像像素（半径，支持小数以精细调整）
         self.brush_cursor_shape = self.brush_config.get("brush_cursor_shape", "circle")  # circle 或 square
         self.brush_invert = self.brush_config.get("brush_invert", False)  # 反转：默认橡皮擦
+        self.brush_merge_mode = self.brush_config.get("brush_merge_mode", False)  # 融合模式：涂到的多边形融化为一个
+        self._brush_merged_shapes = []  # 当前画笔 stroke 中合并掉的 shape（提交时清理）
         self.eraser_mode = False  # 按住 Ctrl 时为 True
         self._brush_target_shape = None
         self._brush_original_shape = None
@@ -396,6 +400,34 @@ class Canvas(
         self._brush_erase_target = None
         self._brush_erase_original_points = None
         self._brush_erase_bbox = None
+
+        # Magic Wand (魔棒) 状态与参数
+        self.is_magic_wand_mode = False
+        self.magic_wand_default_threshold = max(
+            0,
+            min(255, int(self.magic_wand_config.get("default_threshold", 15))),
+        )
+        self.magic_wand_drag_sensitivity = max(
+            0.1, float(self.magic_wand_config.get("drag_sensitivity", 3.0)),
+        )
+        self.magic_wand_luminance_weight = max(
+            0.0,
+            min(1.0, float(self.magic_wand_config.get("luminance_weight", 0.5))),
+        )
+        self.magic_wand_simplify_epsilon_px = max(
+            0.0, float(self.magic_wand_config.get("simplify_epsilon", 0.5)),
+        )
+        self.magic_wand_opacity = max(
+            0.0, min(1.0, float(self.magic_wand_config.get("opacity", 0.6))),
+        )
+        self._magic_wand_active = False
+        self._magic_wand_source = None
+        self._magic_wand_distance = None
+        self._magic_wand_seed = None
+        self._magic_wand_anchor = None
+        self._magic_wand_threshold = self.magic_wand_default_threshold
+        self._magic_wand_mask = None
+        self._magic_wand_path = None
 
         # 橡皮擦切割模式（参考矩形分割工具的切割逻辑）
         self._eraser_cut_mode = None  # None=像素擦除, 'vertical'=垂直切分, 'horizontal'=水平切分
@@ -662,7 +694,7 @@ class Canvas(
             shape._brush_mask_version = 0
         shape._brush_using_mask = True
 
-    def _update_shape_points_from_mask(self, shape):
+    def _update_shape_points_from_mask(self, shape, epsilon_px=None):
         """Rewrite shape.points from its mask's largest component."""
         if shape is None or getattr(shape, "mask", None) is None:
             return False
@@ -683,7 +715,12 @@ class Canvas(
             shape.points = []
             return False
         cnt = np.array(best, dtype=np.int32).reshape((-1, 1, 2))
-        outer = self._simplify_contour(cnt, self.brush_simplify_epsilon_px)
+        eps = (
+            epsilon_px
+            if epsilon_px is not None
+            else self.brush_simplify_epsilon_px
+        )
+        outer = self._simplify_contour(cnt, eps)
         if len(outer) < 3:
             outer = best
         shape.mask.fill(0)
@@ -692,8 +729,227 @@ class Canvas(
         shape.shape_type = "polygon"
         shape.points = [QtCore.QPointF(float(x), float(y)) for x, y in outer]
         shape.other_data.pop("holes", None)
-        shape.close()
         return True
+
+    def _morph_polygon_shape(self, shape, delta_px):
+        """对单个 polygon shape 沿轮廓扩缩 delta_px 像素（正扩负缩）。
+
+        使用椭圆核的 cv2.dilate / cv2.erode（PS 风格），复用
+        _update_shape_points_from_mask 提取轮廓并简化。
+        返回 True 表示发生改动。
+        """
+        if shape is None or delta_px == 0:
+            return False
+        if shape.shape_type != "polygon":
+            return False
+        if not hasattr(shape, "mask") or shape.mask is None:
+            # 无 pixmap 无法建立全图像坐标系的 mask，直接放弃
+            # （与 _ensure_brush_mask 范式一致：真实 canvas 显示 shape 时必有 pixmap）
+            if self.pixmap is None:
+                return False
+            # 按全图坐标系建立 mask：mask 与图像同尺寸，points 为绝对坐标
+            h, w = int(self.pixmap.height()), int(self.pixmap.width())
+            points_xy = [
+                (int(round(p.x())), int(round(p.y()))) for p in shape.points
+            ]
+            shape.mask = self._polygon_to_mask(points_xy, (h, w))
+        if shape.mask is None:
+            return False
+        k = max(1, int(round(abs(delta_px))))
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (2 * k + 1, 2 * k + 1)
+        )
+        if delta_px > 0:
+            new_mask = cv2.dilate(shape.mask, kernel, iterations=1)
+        else:
+            new_mask = cv2.erode(shape.mask, kernel, iterations=1)
+        shape.mask = new_mask
+        return self._update_shape_points_from_mask(
+            shape, self.magic_wand_simplify_epsilon_px
+        )
+        return True
+
+    # ===== Magic Wand (魔棒) =====
+    # 从连续颜色区域生成 polygon：Lab 色距图 + floodFill 连通域。
+    # 距离图只算一次并缓存，拖动时只重算 floodFill，3K 大图也流畅。
+
+    def _compute_magic_wand_distance(self, image, seed, luminance_weight):
+        """返回 seed 像素到全图的加权感知色距。"""
+        height, width = image.shape[:2]
+        x, y = seed
+        if not (0 <= x < width and 0 <= y < height):
+            return np.full((height, width), np.inf, dtype=np.float32)
+        lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB).astype(np.float32)
+        seed_color = lab[y, x].copy()
+        lab -= seed_color
+        weight = max(0.0, min(1.0, float(luminance_weight)))
+        lab[..., 0] *= (100.0 / 255.0) * weight
+        np.square(lab, out=lab)
+        return np.sqrt(np.sum(lab, axis=2, dtype=np.float32))
+
+    def _connected_magic_wand_mask(self, distance, seed, threshold):
+        """返回 seed 连通且在色距阈值内的区域。"""
+        height, width = distance.shape
+        x, y = seed
+        if not (0 <= x < width and 0 <= y < height):
+            return np.zeros((height, width), dtype=np.uint8)
+        tolerance = max(0, min(255, int(threshold)))
+        candidates = (distance <= tolerance).astype(np.uint8)
+        flood_mask = np.zeros((height + 2, width + 2), dtype=np.uint8)
+        flags = (
+            4
+            | cv2.FLOODFILL_FIXED_RANGE
+            | cv2.FLOODFILL_MASK_ONLY
+            | (255 << 8)
+        )
+        cv2.floodFill(
+            candidates,
+            flood_mask,
+            (x, y),
+            0,
+            0,
+            0,
+            flags,
+        )
+        return flood_mask[1:-1, 1:-1]
+
+    def _compute_magic_wand_mask(
+        self, image, seed, threshold, luminance_weight=0.5
+    ):
+        """返回 seed 周围感知相似的连通区域。"""
+        distance = self._compute_magic_wand_distance(
+            image, seed, luminance_weight
+        )
+        return self._connected_magic_wand_mask(distance, seed, threshold)
+
+    @staticmethod
+    def _polylines_to_painter_path(polylines):
+        """把 mask 轮廓转成闭合 painter path。"""
+        path = QtGui.QPainterPath()
+        for poly in polylines:
+            if len(poly) < 3:
+                continue
+            path.moveTo(float(poly[0][0]), float(poly[0][1]))
+            for x, y in poly[1:]:
+                path.lineTo(float(x), float(y))
+            path.closeSubpath()
+        return path
+
+    def _magic_wand_image(self):
+        """返回当前 pixmap 的缓存连续 RGB 视图。"""
+        if self._magic_wand_source is None:
+            image = self.pixmap.toImage().convertToFormat(
+                QtGui.QImage.Format_RGB888
+            )
+            height, width = image.height(), image.width()
+            ptr = image.bits()
+            ptr.setsize(image.sizeInBytes())
+            rows = np.frombuffer(ptr, dtype=np.uint8).reshape(
+                height, image.bytesPerLine()
+            )
+            rgb = rows[:, : width * 3].reshape(height, width, 3)
+            self._magic_wand_source = np.array(
+                rgb, dtype=np.uint8, copy=True, order="C"
+            )
+        return self._magic_wand_source
+
+    def _update_magic_wand_preview(self, threshold):
+        """按新阈值重算并显示选区。"""
+        if self._magic_wand_seed is None:
+            return
+        self._magic_wand_threshold = max(0, min(255, int(threshold)))
+        if self._magic_wand_distance is None:
+            self._magic_wand_distance = self._compute_magic_wand_distance(
+                self._magic_wand_image(),
+                self._magic_wand_seed,
+                self.magic_wand_luminance_weight,
+            )
+        self._magic_wand_mask = self._connected_magic_wand_mask(
+            self._magic_wand_distance,
+            self._magic_wand_seed,
+            self._magic_wand_threshold,
+        )
+        self._magic_wand_path = self._polylines_to_painter_path(
+            self._mask_to_polylines(self._magic_wand_mask)
+        )
+        self.update()
+
+    def _start_magic_wand(self, pos, anchor):
+        """在图像位置开始阈值 flood 选区。"""
+        if self.out_off_pixmap(pos):
+            return False
+        self._clear_magic_wand_preview()
+        self._magic_wand_active = True
+        self._magic_wand_seed = (
+            int(round(pos.x())),
+            int(round(pos.y())),
+        )
+        self._magic_wand_anchor = QtCore.QPointF(anchor)
+        self._update_magic_wand_preview(self.magic_wand_default_threshold)
+        return True
+
+    def _drag_magic_wand(self, anchor):
+        """根据到按下位置的距离更新容差。"""
+        if not self._magic_wand_active or self._magic_wand_anchor is None:
+            return
+        delta = anchor - self._magic_wand_anchor
+        distance = math.hypot(delta.x(), delta.y())
+        threshold = self.magic_wand_default_threshold + int(
+            distance / self.magic_wand_drag_sensitivity
+        )
+        threshold = max(0, min(255, threshold))
+        if threshold != self._magic_wand_threshold:
+            self._update_magic_wand_preview(threshold)
+
+    def _clear_magic_wand_preview(self):
+        """清除进行中的 magic wand 选区。"""
+        self._magic_wand_active = False
+        self._magic_wand_seed = None
+        self._magic_wand_anchor = None
+        self._magic_wand_distance = None
+        self._magic_wand_mask = None
+        self._magic_wand_path = None
+        self._magic_wand_threshold = self.magic_wand_default_threshold
+        self.update()
+
+    def _finish_magic_wand(self):
+        """把当前 magic wand mask 转成 polygon shape。"""
+        mask = self._magic_wand_mask
+        self._clear_magic_wand_preview()
+        if mask is None:
+            return False
+        shape = Shape(shape_type="polygon")
+        shape.mask = mask
+        if not self._update_shape_points_from_mask(
+            shape, self.magic_wand_simplify_epsilon_px
+        ):
+            return False
+        shape.mask = None
+        shape._brush_using_mask = False
+        self.current = shape
+        self.finalise()
+        return True
+
+    def set_magic_wand_mode(self, enabled):
+        """开启或关闭阈值 flood 选区模式。"""
+        self._clear_magic_wand_preview()
+        self.is_magic_wand_mode = bool(enabled)
+        if not enabled:
+            self._magic_wand_source = None
+
+    def _paint_magic_wand_overlay(self, p):
+        """在图像上方绘制实时 magic wand 选区。"""
+        if self._magic_wand_path is None or self._magic_wand_path.isEmpty():
+            return
+        p.save()
+        color = QtGui.QColor(
+            0, 180, 255, int(round(self.magic_wand_opacity * 255))
+        )
+        outline = QtGui.QColor(255, 255, 255, 230)
+        p.setPen(QtGui.QPen(outline, 2.0 / max(self.scale, 1e-6)))
+        p.setBrush(color)
+        p.drawPath(self._magic_wand_path)
+        p.restore()
 
     def _invalidate_brush_cache(self, shape):
         """Drop the cached overlay image for shape."""
@@ -771,8 +1027,33 @@ class Canvas(
         self.eraser_mode = False
 
         if target is not None and getattr(target, "mask", None) is not None:
+            # 融合模式：先把被合并的 shape 从 shapes 列表清理、label 同步到 target
+            if not cancel and getattr(self, "brush_merge_mode", False):
+                _removed_merged = self._flush_brush_merges(target, is_draw)
+                if _removed_merged:
+                    # 通知 label_widget 移除被合并 shape 的视图条目
+                    self.shapes_deleted.emit(_removed_merged)
+            else:
+                _removed_merged = []
             if is_draw:
                 # --- Draw mode ---
+                # 融合模式 + 实际融合了 polygon：提交时对主 mask 做闭运算
+                # 填补 brush stroke 与 polygon 之间的 ≤ brush_radius 间隙，
+                # 让 brush stroke + polygon 4/5 连成一片。闭运算 = dilate +
+                # erode，不改变比核大的形状。
+                if _removed_merged:
+                    try:
+                        kr = max(1, int(round(self.brush_radius)))
+                        ksize = kr * 2 + 1
+                        kernel = cv2.getStructuringElement(
+                            cv2.MORPH_ELLIPSE, (ksize, ksize)
+                        )
+                        target.mask = cv2.morphologyEx(
+                            target.mask, cv2.MORPH_CLOSE, kernel
+                        )
+                        self._bump_brush_version(target)
+                    except Exception:
+                        pass
                 has_geometry = False
                 if not cancel and self._brush_modified:
                     has_geometry = self._update_shape_points_from_mask(target)
@@ -941,6 +1222,106 @@ class Canvas(
             return
         self._brush_undo_stack.append(mask.copy())
         self._brush_redo_stack.clear()
+
+    def _brush_merge_other_shapes_into_target(self, pos, radius):
+        """融合模式：把画笔刷过的其他 polygon shape 整体 OR 到主 mask。
+
+        判定：polygon 与画笔圆盘有"接触"——polygon mask 在圆盘窗口内
+        有非零像素（接触 = 距离 ≤ brush_radius）。
+        合并时把**整个 polygon mask** OR 到主 mask（保持 polygon 完整
+        形状），并记录到 ``self._brush_merged_shapes``，供提交时清理。
+        仅在正向涂抹（``add=True``）时生效；擦除时不融合。
+        """
+        if not getattr(self, "brush_merge_mode", False):
+            return
+        target = getattr(self, "_brush_target_shape", None)
+        if target is None or getattr(target, "mask", None) is None:
+            return
+        if self.pixmap is None:
+            return
+        if not hasattr(self, "_brush_merged_shapes") or self._brush_merged_shapes is None:
+            self._brush_merged_shapes = []
+
+        x = float(pos.x())
+        y = float(pos.y())
+        r = max(1, int(round(radius)))
+        h, w = target.mask.shape[:2]
+        xi0 = max(0, int(round(x)) - r)
+        yi0 = max(0, int(round(y)) - r)
+        xi1 = min(w, int(round(x)) + r + 1)
+        yi1 = min(h, int(round(y)) + r + 1)
+        if xi0 >= xi1 or yi0 >= yi1:
+            return
+
+        for shape in self.shapes:
+            if shape is target:
+                continue
+            if getattr(shape, "shape_type", "") != "polygon":
+                continue
+            if getattr(shape, "locked", False):
+                continue
+            sm = getattr(shape, "mask", None)
+            if sm is None or sm.shape != target.mask.shape:
+                # 普通 polygon 没有 mask：从 points 现栅格化并缓存。
+                if self.pixmap is None:
+                    continue
+                pts = [
+                    (int(round(p.x())), int(round(p.y())))
+                    for p in shape.points
+                ]
+                if len(pts) < 3:
+                    continue
+                sm = self._polygon_to_mask(pts, target.mask.shape)
+                shape.mask = sm
+                shape._brush_using_mask = False
+            # 接触判定：polygon mask 在圆盘窗口内有像素 = 画笔与 polygon
+            # 接触（距离 ≤ brush_radius）才融合。OR 时用完整 mask，保留
+            # polygon 形状完整（避免被 brush stroke 包住后提不出轮廓）。
+            region = sm[yi0:yi1, xi0:xi1]
+            if region is None or region.size == 0:
+                continue
+            if int(region.max()) <= 0:
+                continue
+            target.mask = np.maximum(target.mask, sm)
+            self._bump_brush_version(target)
+            if shape not in self._brush_merged_shapes:
+                self._brush_merged_shapes.append(shape)
+
+    def _flush_brush_merges(self, target, is_draw):
+        """融合模式提交时清理被合并 shape：同步 label、从 shapes 删除。
+
+        draw mode 下若 ``target.label`` 为空，继承第一个被合并 shape 的
+        label，便于后续 ``new_shape`` 弹窗预填。
+        返回被移除的 shape 列表（供外部发 ``shapes_deleted`` 信号）。
+        """
+        merged = getattr(self, "_brush_merged_shapes", None) or []
+        if not merged:
+            self._brush_merged_shapes = []
+            return []
+        # draw mode：dummy 还没 label，继承第一个被合并 shape 的 label
+        if is_draw and not getattr(target, "label", ""):
+            for s in merged:
+                lbl = getattr(s, "label", "")
+                if lbl:
+                    target.label = lbl
+                    break
+        # 同步被合并 shape 的 label 到 target（即便它们将被删除，便于 undo 统计等）
+        target_label = getattr(target, "label", "")
+        for s in merged:
+            if getattr(s, "label", "") != target_label:
+                s.label = target_label or s.label
+        removed = []
+        for s in merged:
+            if s in self.shapes:
+                self.shapes.remove(s)
+            if s in self.selected_shapes:
+                self.selected_shapes = [x for x in self.selected_shapes if x is not s]
+            s.selected = False
+            if getattr(s, "mask", None) is not None:
+                s.mask = None
+            removed.append(s)
+        self._brush_merged_shapes = []
+        return removed
         while len(self._brush_undo_stack) > self._brush_max_undo_steps + 1:
             del self._brush_undo_stack[1]
         while (
@@ -1360,6 +1741,11 @@ class Canvas(
                 self._brush_stroke_dirty = True
                 self._brush_modified = True
                 self._bump_brush_version(self._brush_target_shape)
+                if not self.eraser_mode:
+                    # 融合模式：正向涂抹时把刷过的其他 polygon 像素 OR 到主 mask
+                    self._brush_merge_other_shapes_into_target(
+                        pos, radius=max(1, int(round(self.brush_radius)))
+                    )
                 self.update()
                 return True
         return False
@@ -1474,6 +1860,9 @@ class Canvas(
             self._brush_stroke_dirty = True
             self._brush_modified = True
             self._bump_brush_version(target)
+            if add:
+                # 融合模式：正向涂抹时把刷过的其他 polygon 像素 OR 到主 mask
+                self._brush_merge_other_shapes_into_target(pos, radius=radius)
         self.update()
         return True
 
@@ -2178,6 +2567,38 @@ class Canvas(
             self._brush_mouse_move(ev, pos)
             return
 
+        if self.is_magic_wand_mode and self.drawing():
+            # Shift+左键拖拽：画布平移（与画笔/多边形模式一致）
+            if (QtCore.Qt.ShiftModifier & int(ev.modifiers())) and (
+                QtCore.Qt.LeftButton & ev.buttons()
+            ):
+                self.override_cursor(CURSOR_MOVE)
+                if (
+                    self.pixmap
+                    and self.pixmap.width()
+                    and self.pixmap.height()
+                ):
+                    delta = ev.localPos() - self.prev_pan_point
+                    self.scroll_request.emit(
+                        delta.x() / (self.pixmap.width() * self.scale),
+                        Qt.Horizontal,
+                        1,
+                    )
+                    self.scroll_request.emit(
+                        delta.y() / (self.pixmap.height() * self.scale),
+                        Qt.Vertical,
+                        1,
+                    )
+                return
+            self.prev_move_point = pos
+            self.override_cursor(CURSOR_DRAW)
+            if self._magic_wand_active and bool(
+                QtCore.Qt.LeftButton & ev.buttons()
+            ):
+                self._drag_magic_wand(ev.localPos())
+            self.repaint()
+            return
+
         # 发射鼠标位置信号（用于导航器显示）
         self.mouse_pos_changed.emit(pos)
 
@@ -2820,6 +3241,14 @@ class Canvas(
             return
 
         if ev.button() == QtCore.Qt.LeftButton:
+            if self.is_magic_wand_mode and self.drawing():
+                # Shift+左键：保留画布拖拽
+                if ev.modifiers() & QtCore.Qt.ShiftModifier:
+                    self.prev_pan_point = ev.localPos()
+                    return
+                if self._start_magic_wand(pos, ev.localPos()):
+                    ev.accept()
+                return
             if self.drawing():
                 # Shift+左键：画布拖拽，不触发标注绘制（所有标注模式通用）
                 if ev.modifiers() & QtCore.Qt.ShiftModifier:
@@ -3082,6 +3511,18 @@ class Canvas(
 
         if self.is_brush_mode and self._brush_mouse_release(ev):
             return
+
+        if self._magic_wand_active:
+            if ev.button() == QtCore.Qt.LeftButton:
+                # 松开左键：保留预览，等待右键确认
+                ev.accept()
+                return
+            if ev.button() == QtCore.Qt.RightButton:
+                if self._finish_magic_wand() and not self.is_auto_labeling:
+                    self.prev_pan_point = ev.localPos()
+                    self.mode_changed.emit()
+                ev.accept()
+                return
 
         # Handle Alt+drag selection box completion
         if self.selection_box_mode and ev.button() == QtCore.Qt.LeftButton:
@@ -5105,6 +5546,7 @@ class Canvas(
 
         # Draw live brush-edit overlays on top of the regular shapes.
         self._paint_brush_overlays(p)
+        self._paint_magic_wand_overlay(p)
 
         if self.current:
             # Don't paint the shape itself in rotation3 mode (only paint line with arrow)
@@ -8130,6 +8572,11 @@ class Canvas(
         self.update()
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape and self._magic_wand_active:
+            self._clear_magic_wand_preview()
+            event.accept()
+            return
+
         if event.key() == Qt.Key_Escape:
             # 连续标注模式下 ESC 退出当前绘制（不关闭开关）
             if self.parent is not None and getattr(self.parent, '_continuous_drawing', False):
@@ -8364,6 +8811,8 @@ class Canvas(
     def load_pixmap(self, pixmap, clear_shapes=True):
         """Load pixmap"""
         self.cancel_brush_mode()
+        self._clear_magic_wand_preview()
+        self._magic_wand_source = None
         self.pixmap = pixmap
         if clear_shapes:
             self.shapes = []
@@ -8375,6 +8824,7 @@ class Canvas(
     def load_shapes(self, shapes, replace=True):
         """Load shapes"""
         self.cancel_brush_mode()
+        self._clear_magic_wand_preview()
         if replace:
             self.shapes = list(shapes)
         else:

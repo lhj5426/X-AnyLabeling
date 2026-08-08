@@ -55,12 +55,31 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
     apply_single_label_selected = QtCore.pyqtSignal(dict)
     jump_to_image = QtCore.pyqtSignal(int)
 
+    # 多边形轮廓扩缩（Tab "多边形"），字典 {label: delta_px}，正扩负缩
+    apply_polygon_current = QtCore.pyqtSignal(dict)
+    apply_polygon_selected = QtCore.pyqtSignal(dict)
+    apply_polygon_all = QtCore.pyqtSignal(dict)
+    apply_polygon_all_in_range = QtCore.pyqtSignal(dict, int, int)
+    apply_polygon_single_label = QtCore.pyqtSignal(dict)
+    apply_polygon_single_label_selected = QtCore.pyqtSignal(dict)
+
     def __init__(self, labels, parent=None):
         super(ExpandMarginsDialog, self).__init__(parent)
         self.setWindowTitle(self.tr("标注框边距扩展工具"))
         self.resize(525, 470)
 
         self.restore_window_position()
+
+        # 当前 Tab: "rectangle" | "polygon"
+        self.current_tab = "rectangle"
+
+        # 多边形 Tab: 每标签固定 2 个 unit, 横向并排显示在同一行 (无 +/- 操作)
+        # polygon_units = [{label, label_item, spinbox, row, col}, ...]
+        # row = 标签索引 (一个标签独占一行), col = 标签列号 (0 或 2)
+        self.polygon_units = []
+
+        # Tab 切换时的值缓存 (按 tab 分别存, 防止源 Tab 的值被误恢复到目标 Tab)
+        self._tab_cache = {"rectangle": None, "polygon": None}
 
         # 设置窗口标志：保持最小化按钮
         self.setWindowFlags(
@@ -74,6 +93,25 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
+
+        # Tab 控件: [矩形] [多边形]
+        self._tab_bar = QtWidgets.QWidget()
+        tab_layout = QtWidgets.QHBoxLayout(self._tab_bar)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(4)
+        self._btn_tab_rect = QtWidgets.QPushButton(self.tr("矩形"))
+        self._btn_tab_rect.setCheckable(True)
+        self._btn_tab_rect.setChecked(True)
+        self._btn_tab_rect.setFixedHeight(28)
+        self._btn_tab_poly = QtWidgets.QPushButton(self.tr("多边形"))
+        self._btn_tab_poly.setCheckable(True)
+        self._btn_tab_poly.setFixedHeight(28)
+        tab_layout.addWidget(self._btn_tab_rect)
+        tab_layout.addWidget(self._btn_tab_poly)
+        tab_layout.addStretch()
+        self._btn_tab_rect.clicked.connect(lambda: self._switch_tab("rectangle"))
+        self._btn_tab_poly.clicked.connect(lambda: self._switch_tab("polygon"))
+        layout.addWidget(self._tab_bar)
 
         self.table_widget = QtWidgets.QTableWidget()
         self.table_widget.setColumnCount(10)  # 增加一列用于操作按钮
@@ -89,6 +127,8 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         self.table_widget.viewport().installEventFilter(self)
+        # 记录矩形 Tab 默认行高, 切到多边形 Tab 时临时加厚, 切回时还原
+        self._saved_vheader_default = self.table_widget.verticalHeader().defaultSectionSize()
         self.table_widget.setStyleSheet("""
             QTableWidget::item:hover {
                 background-color: rgba(0, 120, 215, 0.2);
@@ -191,18 +231,41 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
 
 
     def populate_table(self, labels):
+        """按当前 Tab 分发到矩形版或多边形版的 populate。"""
+        if self.current_tab == "polygon":
+            self._populate_polygon_table(labels)
+        else:
+            self._populate_rect_table(labels)
+
+    def _populate_rect_table(self, labels):
+        # 彻底清空旧表格(从多边形 Tab 切回时列数/内容不同, 必须完全重置,
+        # 否则旧列/旧 cellWidget 会与矩形列混排)
+        self.polygon_units = []
+        self.table_widget.setRowCount(0)
+        # 还原多边形 Tab 设过的较厚行高/spinbox 样式, 矩形用回默认 (更紧凑)
+        self.table_widget.verticalHeader().setDefaultSectionSize(self._saved_vheader_default)
+        self.table_widget.setColumnCount(10)
+        self.table_widget.setHorizontalHeaderLabels([
+            self.tr("标签"), self.tr("上"), "", self.tr("下"), "",
+            self.tr("左"), "", self.tr("右"), "", self.tr("操作")
+        ])
+        for i in range(1, 8, 2):
+            self.table_widget.horizontalHeader().setSectionResizeMode(i, QtWidgets.QHeaderView.ResizeToContents)
+            self.table_widget.horizontalHeader().setSectionResizeMode(i + 1, QtWidgets.QHeaderView.ResizeToContents)
+        self.table_widget.horizontalHeader().setSectionResizeMode(9, QtWidgets.QHeaderView.ResizeToContents)
+
         # 保存标签顺序
         self.label_order = list(labels)
-        
+
         # 初始化每个标签的行数为2（如果还没有记录）
         for label in labels:
             if label not in self.label_row_counts:
                 self.label_row_counts[label] = 2
-        
+
         # 计算总行数
         total_rows = sum(self.label_row_counts.get(label, 2) for label in labels)
         self.table_widget.setRowCount(total_rows)
-        
+
         edges = ["Top", "Bottom", "Left", "Right"]
         edge_translations = {
             "Top": self.tr("上"), "Bottom": self.tr("下"),
@@ -212,22 +275,22 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         current_row = 0
         for label in labels:  # 按照传入的labels顺序遍历
             row_count = self.label_row_counts.get(label, 2)
-            
+
             for row_offset in range(row_count):
                 row = current_row + row_offset
-                
+
                 # 标签列
                 label_item = QtWidgets.QTableWidgetItem(label)
                 label_item.setFlags(label_item.flags() & ~QtCore.Qt.ItemIsEditable)
                 label_item.setToolTip(self.tr("左键扩缩本页单个标签, 右键扩缩选中单个标签, 中键清零"))
                 self._update_label_color(label_item, label)
                 self.table_widget.setItem(row, 0, label_item)
-                
+
                 # 4个方向的spinbox和按钮
                 for j, edge in enumerate(edges):
                     col_index = j * 2 + 1
                     translated_edge = edge_translations.get(edge, edge)
-                    
+
                     # spinbox
                     spinbox = QtWidgets.QDoubleSpinBox()
                     spinbox.setRange(-1000, 1000)
@@ -247,27 +310,27 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                     apply_button.rightClicked.connect(functools.partial(self.on_single_edge_apply, label, row_offset, edge, "selected"))
                     apply_button.middleClicked.connect(functools.partial(self.on_single_edge_clear, label, row_offset, edge))
                     apply_button.ctrlLeftClicked.connect(functools.partial(self.on_customize_edge_mapping, label, row_offset, col_index + 1, edge))
-                    
+
                     container = QtWidgets.QWidget()
                     container_layout = QtWidgets.QHBoxLayout(container)
                     container_layout.setContentsMargins(0, 0, 0, 0)
                     container_layout.addWidget(apply_button)
                     container_layout.setAlignment(QtCore.Qt.AlignCenter)
                     self.table_widget.setCellWidget(row, col_index + 1, container)
-                
+
                 # 操作按钮列（第10列）
                 btn_container = QtWidgets.QWidget()
                 btn_layout = QtWidgets.QHBoxLayout(btn_container)
                 btn_layout.setContentsMargins(2, 2, 2, 2)
                 btn_layout.setSpacing(2)
-                
+
                 # 添加行按钮（+）
                 btn_add = QtWidgets.QPushButton("+")
                 btn_add.setFixedSize(20, 20)
                 btn_add.setToolTip(self.tr("为此标签添加一行"))
                 btn_add.clicked.connect(functools.partial(self.add_row_for_label, label))
                 btn_layout.addWidget(btn_add)
-                
+
                 # 删除行按钮（-），只有当该标签行数>2时才显示
                 if row_count > 2:
                     btn_remove = QtWidgets.QPushButton("-")
@@ -275,15 +338,110 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                     btn_remove.setToolTip(self.tr("删除此行"))
                     btn_remove.clicked.connect(functools.partial(self.remove_row, row))
                     btn_layout.addWidget(btn_remove)
-                
+
                 self.table_widget.setCellWidget(row, 9, btn_container)
-            
+
             current_row += row_count
 
+    def _populate_polygon_table(self, labels):
+        """多边形 Tab：每行 1 个标签，横向并排 2 个 `标签[输入框]` 单元。
+        表结构: 4 列 = [标签A | 输入A | 标签B | 输入B]，共 4 列无 +/- 操作列。
+        每个标签固定 2 个 unit (沿用旧版 2 行语义)，行数 = 标签数。
+        每行的 2 个 unit 共享同一个标签 (用于「全部页码」求和)，各自独立设置数值
+        (用于「单标签本页/选中」应用时按当前 cell 取值)。"""
+        self.label_order = list(labels)
+
+        # 彻底清空旧表格(从矩形 Tab 切来时旧列/内容不同, 必须完全重置)
+        self.table_widget.setRowCount(0)
+        rows = len(labels)
+        self.table_widget.setColumnCount(4)
+        self.table_widget.setRowCount(rows)
+        self.table_widget.setHorizontalHeaderLabels([
+            self.tr("标签"), self.tr("扩缩量"),
+            self.tr("标签"), self.tr("扩缩量"),
+        ])
+        self.table_widget.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        self.table_widget.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        self.table_widget.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
+        self.table_widget.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.Stretch)
+
+        self.polygon_units = []
+        # 多边形 Tab 临时加大行高, 让界面更饱满 (切回矩形时恢复)
+        # 注意: 多边形 spinbox 用 PyQt5 默认样式 (与矩形一致, 自带上下箭头),
+        # 不套自定义 QSS —— 否则 Windows 下会强制走 Qt 自绘并吞掉箭头
+        self._saved_vheader_default = self.table_widget.verticalHeader().defaultSectionSize()
+        self.table_widget.verticalHeader().setDefaultSectionSize(34)
+        for row, label in enumerate(labels):
+            for u in range(2):  # 每行固定 2 个 unit
+                col_offset = u * 2  # 0 or 2
+
+                # 标签单元格
+                label_item = QtWidgets.QTableWidgetItem(label)
+                label_item.setFlags(label_item.flags() & ~QtCore.Qt.ItemIsEditable)
+                label_item.setToolTip(self.tr("左键扩缩本页单个标签, 右键扩缩选中单个标签, 中键清零"))
+                self._update_label_color(label_item, label)
+                self.table_widget.setItem(row, col_offset, label_item)
+
+                # 输入框单元格 (默认样式, 带上下箭头, 与矩形一致)
+                spinbox = QtWidgets.QDoubleSpinBox()
+                spinbox.setRange(-1000, 1000)
+                spinbox.setDecimals(1)
+                spinbox.setSingleStep(1.0)
+                spinbox.setValue(0.0)
+                spinbox.setMinimumWidth(85)
+                spinbox.setMinimumHeight(26)
+                spinbox.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                self.table_widget.setCellWidget(row, col_offset + 1, spinbox)
+
+                self.polygon_units.append({
+                    "label": label,
+                    "label_item": label_item,
+                    "spinbox": spinbox,
+                    "row": row,
+                    "col": col_offset,
+                })
+
+    def _switch_tab(self, tab):
+        """切换 Tab: 分别缓存两 Tab 的值 → 重建表格 → 恢复目标 Tab 的值。
+        用 _tab_cache 字典分别缓存 rectangle/polygon 两套值,避免源 Tab 的 cache
+        被错误地恢复到目标 Tab (旧逻辑的 bug)。
+        恢复顺序: 本进程内 _tab_cache → 持久化 _config (首次启动时用)。"""
+        if tab == self.current_tab:
+            return
+        # 1. 缓存当前 Tab 的值
+        if self.current_tab == "polygon":
+            self._tab_cache["polygon"] = self._get_polygon_values_raw()
+        else:
+            self._tab_cache["rectangle"] = self._get_rect_margin_values_raw()
+        # 2. 切换
+        self.current_tab = tab
+        self._btn_tab_rect.setChecked(tab == "rectangle")
+        self._btn_tab_poly.setChecked(tab == "polygon")
+        # 3. 重建表格 (populate_table 按 current_tab 分发)
+        if self.label_order:
+            self.populate_table(self.label_order)
+        # 4. 恢复目标 Tab: 优先 _tab_cache, 其次 _config 持久化值
+        if tab == "polygon":
+            target = self._tab_cache.get("polygon")
+            if target is None and self.parent() and hasattr(self.parent(), "_config"):
+                target = self.parent()._config.get("expand_polygon_values")
+            if target:
+                self._restore_polygon_values(target)
+        else:
+            target = self._tab_cache.get("rectangle")
+            if target is None and self.parent() and hasattr(self.parent(), "_config"):
+                target = self.parent()._config.get("expand_margins_values")
+            if target:
+                self._restore_rect_margin_values(target)
+
     def add_row_for_label(self, label):
+        """为指定标签添加一行 (仅矩形 Tab 支持；多边形 Tab 已固定每行 2 unit)。"""
+        self._add_rect_row_for_label(label)
+
+    def _add_rect_row_for_label(self, label):
         """为指定标签添加一行"""
         self.label_row_counts[label] = self.label_row_counts.get(label, 2) + 1
-        
+
         # 保存当前值
         current_values = self.get_margin_values_raw()
         # 重新生成表格（使用保存的标签顺序）
@@ -292,16 +450,20 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.restore_margin_values(current_values)
         # 更新按钮显示
         self.update_edge_button_labels()
-        
+
         # 保存所有配置（行数、数值、映射）
         self.save_current_values()
-    
+
     def remove_row(self, row):
+        """删除指定行 (仅矩形 Tab 支持；多边形 Tab 已固定每行 2 unit)。"""
+        self._remove_rect_row(row)
+
+    def _remove_rect_row(self, row):
         """删除指定行"""
         label = self.table_widget.item(row, 0).text()
         if self.label_row_counts.get(label, 2) <= 2:
             return  # 至少保留2行
-        
+
         # 找到这一行在该标签内的偏移量
         current_row = 0
         row_offset = 0
@@ -312,7 +474,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                     row_offset = row - current_row
                     break
             current_row += row_count
-        
+
         # 删除这一行的所有方向映射，并调整后续行的偏移量
         new_edge_mapping = {}
         for (lbl, offset, col), edge in self.edge_mapping.items():
@@ -330,12 +492,12 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                 # 其他标签保持不变
                 new_edge_mapping[(lbl, offset, col)] = edge
         self.edge_mapping = new_edge_mapping
-        
+
         self.label_row_counts[label] -= 1
-        
+
         # 保存当前值（删除指定行的值）
         current_values = self.get_margin_values_raw_with_row_removal(row)
-        
+
         # 重新生成表格（使用保存的标签顺序）
         self.populate_table(self.label_order)
         # 恢复值
@@ -344,7 +506,11 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.update_edge_button_labels()
         # 保存所有配置（行数、数值、映射）
         self.save_current_values()
-    
+
+    def _remove_polygon_row(self, row):
+        """多边形 Tab 已固定每行 2 unit, 不再支持删行 (保留空函数防止外部误调用)。"""
+        return
+
     def get_margin_values_raw_with_row_removal(self, row_to_remove):
         """获取边距值，但跳过要删除的行"""
         margins = {}
@@ -390,121 +556,187 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.restore_margin_values(current_values)
 
     def get_margin_values(self):
+        """路由器: 按 current_tab 分发到矩形版或多边形版。"""
+        if self.current_tab == "polygon":
+            return self._get_polygon_values()
+        return self._get_rect_margin_values()
+
+    def _get_rect_margin_values(self):
         """获取边距值，合并每个标签的所有行用于应用"""
         margins = {}
         current_row = 0
-        
+
         for label in self.label_order:  # 使用保存的顺序
             row_count = self.label_row_counts.get(label, 2)
             top_sum = 0.0
             bottom_sum = 0.0
             left_sum = 0.0
             right_sum = 0.0
-            
+
             for row_offset in range(row_count):
                 row = current_row + row_offset
                 if row >= self.table_widget.rowCount():
                     break
-                
+
                 spinbox_top = self.table_widget.cellWidget(row, 1)
                 spinbox_bottom = self.table_widget.cellWidget(row, 3)
                 spinbox_left = self.table_widget.cellWidget(row, 5)
                 spinbox_right = self.table_widget.cellWidget(row, 7)
-                
+
                 if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
                     top_sum += spinbox_top.value()
                     bottom_sum += spinbox_bottom.value()
                     left_sum += spinbox_left.value()
                     right_sum += spinbox_right.value()
-            
+
             margins[label] = (top_sum, bottom_sum, left_sum, right_sum)
             current_row += row_count
-        
+
+        return margins
+
+    def _get_polygon_values(self):
+        """多边形 Tab: 合并每个标签的所有 unit 扩缩量 (求和)"""
+        margins = {}
+        for unit in self.polygon_units:
+            try:
+                val = float(unit["spinbox"].value())
+            except RuntimeError:
+                # spinbox 已被销毁(C++ 对象), 跳过
+                continue
+            margins[unit["label"]] = margins.get(unit["label"], 0.0) + val
         return margins
 
     def get_margin_values_raw(self):
+        """路由器: 按 current_tab 分发到矩形版或多边形版的原始值。"""
+        if self.current_tab == "polygon":
+            return self._get_polygon_values_raw()
+        return self._get_rect_margin_values_raw()
+
+    def _get_rect_margin_values_raw(self):
         """获取边距值的原始值（每行4个值），用于保存和恢复"""
         margins = {}
         current_row = 0
-        
+
         for label in self.label_order:  # 使用保存的顺序
             row_count = self.label_row_counts.get(label, 2)
             values_list = []
-            
+
             for row_offset in range(row_count):
                 row = current_row + row_offset
                 if row >= self.table_widget.rowCount():
                     break
-                
+
                 spinbox_top = self.table_widget.cellWidget(row, 1)
                 spinbox_bottom = self.table_widget.cellWidget(row, 3)
                 spinbox_left = self.table_widget.cellWidget(row, 5)
                 spinbox_right = self.table_widget.cellWidget(row, 7)
-                
+
                 if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
                     top = spinbox_top.value()
                     bottom = spinbox_bottom.value()
                     left = spinbox_left.value()
                     right = spinbox_right.value()
                     values_list.extend([top, bottom, left, right])
-            
+
             if values_list:
                 margins[label] = tuple(values_list)
-            
+
             current_row += row_count
-        
+
+        return margins
+
+    def _get_polygon_values_raw(self):
+        """多边形 Tab: 获取每个标签的所有 unit 值列表 (按 polygon_units 顺序)"""
+        margins = {}
+        for unit in self.polygon_units:
+            try:
+                val = float(unit["spinbox"].value())
+            except RuntimeError:
+                # spinbox 已被销毁(C++ 对象), 跳过
+                continue
+            margins.setdefault(unit["label"], []).append(val)
         return margins
 
     def restore_margin_values(self, saved_values):
+        """路由器: 按 current_tab 分发恢复。"""
+        if self.current_tab == "polygon":
+            self._restore_polygon_values(saved_values)
+        else:
+            self._restore_rect_margin_values(saved_values)
+
+    def _restore_rect_margin_values(self, saved_values):
         """恢复边距值"""
         if not saved_values:
             return
-        
+
         current_row = 0
         for label in self.label_order:  # 使用保存的顺序
             if label not in saved_values:
                 current_row += self.label_row_counts.get(label, 2)
                 continue
-            
+
             values = saved_values[label]
             row_count = self.label_row_counts.get(label, 2)
-            
+
             # 每行4个值
             for row_offset in range(row_count):
                 row = current_row + row_offset
                 if row >= self.table_widget.rowCount():
                     break
-                
+
                 value_offset = row_offset * 4
-                
+
                 if value_offset + 3 < len(values):
                     spinbox_top = self.table_widget.cellWidget(row, 1)
                     spinbox_bottom = self.table_widget.cellWidget(row, 3)
                     spinbox_left = self.table_widget.cellWidget(row, 5)
                     spinbox_right = self.table_widget.cellWidget(row, 7)
-                    
+
                     if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
                         spinbox_top.setValue(values[value_offset])
                         spinbox_bottom.setValue(values[value_offset + 1])
                         spinbox_left.setValue(values[value_offset + 2])
                         spinbox_right.setValue(values[value_offset + 3])
-            
+
             current_row += row_count
 
+    def _restore_polygon_values(self, saved_values):
+        """多边形 Tab: 恢复每个标签的所有 unit 值 (按 polygon_units 顺序)"""
+        if not saved_values:
+            return
+        seen = {}
+        for unit in self.polygon_units:
+            label = unit["label"]
+            if label not in saved_values:
+                continue
+            values = saved_values[label]
+            idx = seen.get(label, 0)
+            seen[label] = idx + 1
+            if idx < len(values):
+                try:
+                    unit["spinbox"].setValue(float(values[idx]))
+                except (ValueError, TypeError):
+                    pass
+
     def on_apply_current(self):
-        margins = self.get_margin_values()
-        self.apply_current.emit(margins)
+        if self.current_tab == "polygon":
+            self.apply_polygon_current.emit(self.get_margin_values())
+        else:
+            self.apply_current.emit(self.get_margin_values())
 
     def on_apply_selected(self):
-        margins = self.get_margin_values()
-        self.apply_selected.emit(margins)
+        if self.current_tab == "polygon":
+            self.apply_polygon_selected.emit(self.get_margin_values())
+        else:
+            self.apply_selected.emit(self.get_margin_values())
 
     def on_apply_all(self):
-        margins = self.get_margin_values()
-        self.apply_all.emit(margins)
+        if self.current_tab == "polygon":
+            self.apply_polygon_all.emit(self.get_margin_values())
+        else:
+            self.apply_all.emit(self.get_margin_values())
 
     def on_apply_range(self):
-        margins = self.get_margin_values()
         start_index = self.start_spinbox.value() - 1
         end_index = self.end_spinbox.value() - 1
         if start_index > end_index:
@@ -512,15 +744,32 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                 self, self.tr("范围无效"), self.tr("起始位置不能大于结束位置。")
             )
             return
-        self.apply_all_in_range.emit(margins, start_index, end_index)
+        if self.current_tab == "polygon":
+            self.apply_polygon_all_in_range.emit(
+                self.get_margin_values(), start_index, end_index
+            )
+        else:
+            self.apply_all_in_range.emit(
+                self.get_margin_values(), start_index, end_index
+            )
 
     def on_clear_all(self):
-        """清零所有行（包括两行）"""
+        """清零所有 spinbox（按 Tab 分发）"""
+        if self.current_tab == "polygon":
+            self._on_clear_all_polygon()
+        else:
+            self._on_clear_all_rect()
+
+    def _on_clear_all_rect(self):
         for i in range(self.table_widget.rowCount()):
             for j in range(1, 9, 2):
                 spinbox = self.table_widget.cellWidget(i, j)
                 if spinbox:
                     spinbox.setValue(0.0)
+
+    def _on_clear_all_polygon(self):
+        for unit in self.polygon_units:
+            unit["spinbox"].setValue(0.0)
 
     def refresh_colors(self):
         if not self.parent() or not hasattr(self.parent(), 'unique_label_list'):
@@ -537,12 +786,16 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         if set(current_labels) != set(existing_labels):
             self.update_labels(current_labels)
         else:
-            # 更新所有行的颜色
-            for i in range(self.table_widget.rowCount()):
-                label_item = self.table_widget.item(i, 0)
-                if label_item:
-                    label = label_item.text()
-                    self._update_label_color(label_item, label)
+            # 更新所有标签单元格的颜色
+            if self.current_tab == "polygon":
+                for unit in self.polygon_units:
+                    self._update_label_color(unit["label_item"], unit["label"])
+            else:
+                for i in range(self.table_widget.rowCount()):
+                    label_item = self.table_widget.item(i, 0)
+                    if label_item:
+                        label = label_item.text()
+                        self._update_label_color(label_item, label)
 
     def _update_label_color(self, label_item, label):
         label_exists_on_current_page = False
@@ -590,27 +843,53 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
     def eventFilter(self, source, event):
         if source is self.table_widget.viewport() and event.type() == QtCore.QEvent.MouseButtonPress:
             index = self.table_widget.indexAt(event.pos())
-            if index.isValid() and index.column() == 0:
+            # 多边形 Tab 的标签列是 col 0 和 col 2 (每行 2 个标签单元)
+            if index.isValid() and index.column() in (0, 2):
                 if event.button() == QtCore.Qt.LeftButton:
-                    self.on_apply_single_label(index.row())
+                    self.on_apply_single_label(index.row(), index.column())
                     return True
                 elif event.button() == QtCore.Qt.RightButton:
-                    self.on_apply_single_label_selected(index.row())
+                    self.on_apply_single_label_selected(index.row(), index.column())
                     return True
                 elif event.button() == QtCore.Qt.MidButton:
-                    self.clear_row(index.row())
+                    self.clear_row(index.row(), index.column())
                     return True
         return super(ExpandMarginsDialog, self).eventFilter(source, event)
 
-    def clear_row(self, row):
+    def clear_row(self, row, col=0):
+        """按当前 Tab 分发清零。
+        多边形 Tab 只清零当前 cell 的输入框 (整行 2 个 cell 互不影响)。
+        """
+        if self.current_tab == "polygon":
+            spinbox = self.table_widget.cellWidget(row, col + 1)
+            if spinbox:
+                spinbox.setValue(0.0)
+            return
+        self._clear_rect_row(row)
+
+    def _clear_rect_row(self, row):
         for j in range(1, 9, 2):
             spinbox = self.table_widget.cellWidget(row, j)
             if spinbox:
                 spinbox.setValue(0.0)
 
-    def on_apply_single_label_selected(self, row):
+    def on_apply_single_label_selected(self, row, col=0):
+        """按当前 Tab 分发：行内右键 = 应用到选中"""
+        if self.current_tab == "polygon":
+            self._apply_polygon_single_label_selected(row, col)
+        else:
+            self._apply_rect_single_label_selected(row)
+
+    def on_apply_single_label(self, row, col=0):
+        """按当前 Tab 分发：行内左键 = 应用到本页单个标签"""
+        if self.current_tab == "polygon":
+            self._apply_polygon_single_label(row, col)
+        else:
+            self._apply_rect_single_label(row)
+
+    def _apply_rect_single_label_selected(self, row):
         label = self.table_widget.item(row, 0).text()
-        
+
         # 找到这一行在该标签内的偏移量
         current_row = 0
         row_offset = 0
@@ -621,33 +900,33 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                     row_offset = row - current_row
                     break
             current_row += row_count
-        
+
         edges = ["Top", "Bottom", "Left", "Right"]
-        
+
         # 获取这一行的所有数值，考虑映射
         margins_tuple = [0.0, 0.0, 0.0, 0.0]
-        
+
         for edge_index, edge in enumerate(edges):
             spinbox_col = edge_index * 2 + 1
             button_col = edge_index * 2 + 2
-            
+
             # 检查是否有自定义映射
             actual_edge = self.edge_mapping.get((label, row_offset, button_col), edge)
             actual_edge_index = edges.index(actual_edge)
-            
+
             # 读取输入框的值
             spinbox = self.table_widget.cellWidget(row, spinbox_col)
             if spinbox:
                 value = spinbox.value()
                 # 累加到映射后的方向（如果多个输入框映射到同一方向，会累加）
                 margins_tuple[actual_edge_index] += value
-        
+
         margins = {label: tuple(margins_tuple)}
         self.apply_single_label_selected.emit(margins)
 
-    def on_apply_single_label(self, row):
+    def _apply_rect_single_label(self, row):
         label = self.table_widget.item(row, 0).text()
-        
+
         # 找到这一行在该标签内的偏移量
         current_row = 0
         row_offset = 0
@@ -658,29 +937,57 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                     row_offset = row - current_row
                     break
             current_row += row_count
-        
+
         edges = ["Top", "Bottom", "Left", "Right"]
-        
+
         # 获取这一行的所有数值，考虑映射
         margins_tuple = [0.0, 0.0, 0.0, 0.0]
-        
+
         for edge_index, edge in enumerate(edges):
             spinbox_col = edge_index * 2 + 1
             button_col = edge_index * 2 + 2
-            
+
             # 检查是否有自定义映射
             actual_edge = self.edge_mapping.get((label, row_offset, button_col), edge)
             actual_edge_index = edges.index(actual_edge)
-            
+
             # 读取输入框的值
             spinbox = self.table_widget.cellWidget(row, spinbox_col)
             if spinbox:
                 value = spinbox.value()
                 # 累加到映射后的方向（如果多个输入框映射到同一方向，会累加）
                 margins_tuple[actual_edge_index] += value
-        
+
         margins = {label: tuple(margins_tuple)}
         self.apply_single_label.emit(margins)
+
+    def _apply_polygon_single_label(self, row, col=0):
+        """多边形 Tab: 行内左键 = 本页单个标签 (按当前 cell 取值)"""
+        label_item = self.table_widget.item(row, col)
+        if label_item is None:
+            return
+        label = label_item.text()
+        spinbox = self.table_widget.cellWidget(row, col + 1)
+        if not spinbox:
+            return
+        value = spinbox.value()
+        if value == 0:
+            return
+        self.apply_polygon_single_label.emit({label: value})
+
+    def _apply_polygon_single_label_selected(self, row, col=0):
+        """多边形 Tab: 行内右键 = 选中单个标签 (按当前 cell 取值)"""
+        label_item = self.table_widget.item(row, col)
+        if label_item is None:
+            return
+        label = label_item.text()
+        spinbox = self.table_widget.cellWidget(row, col + 1)
+        if not spinbox:
+            return
+        value = spinbox.value()
+        if value == 0:
+            return
+        self.apply_polygon_single_label_selected.emit({label: value})
 
     def on_customize_edge_mapping(self, label, row_offset, col, default_edge):
         """Ctrl+左键自定义按钮实际操作的方向"""
@@ -952,63 +1259,91 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
         self.save_current_values()
     
     def save_current_values(self):
-        """保存当前的数值和行数到用户配置文件"""
+        """保存矩形 + 多边形两套配置到磁盘（一次 save_config 落盘）"""
         if not self.parent() or not hasattr(self.parent(), '_config'):
             return
-        
+        self._save_rect_values()
+        self._save_polygon_values()
+        save_config(self.parent()._config)
+
+    def _save_rect_values(self):
+        """保存矩形 Tab 的数值和行数到 _config（不落盘）"""
+        if not self.parent() or not hasattr(self.parent(), '_config'):
+            return
+
         # 保存行数
         self.parent()._config["expand_margins_label_row_counts"] = dict(self.label_row_counts)
-        
+
         # 保存数值
         margin_values = {}
         current_row = 0
-        
+
         for label in self.label_order:  # 使用保存的顺序
             row_count = self.label_row_counts.get(label, 2)
             values_list = []
-            
+
             for row_offset in range(row_count):
                 row = current_row + row_offset
                 if row >= self.table_widget.rowCount():
                     break
-                
+
                 spinbox_top = self.table_widget.cellWidget(row, 1)
                 spinbox_bottom = self.table_widget.cellWidget(row, 3)
                 spinbox_left = self.table_widget.cellWidget(row, 5)
                 spinbox_right = self.table_widget.cellWidget(row, 7)
-                
+
                 if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
                     top = float(spinbox_top.value())
                     bottom = float(spinbox_bottom.value())
                     left = float(spinbox_left.value())
                     right = float(spinbox_right.value())
                     values_list.extend([top, bottom, left, right])
-            
+
             if values_list:
                 margin_values[label] = values_list  # 保存为list而不是tuple，因为JSON不支持tuple
-            
+
             current_row += row_count
-        
+
         self.parent()._config["expand_margins_values"] = margin_values
-        
+
         # 保存方向映射（转换成可序列化格式）
         mappings_serializable = {f"{label},{offset},{col}": edge for (label, offset, col), edge in self.edge_mapping.items()}
         self.parent()._config["expand_margins_edge_mappings"] = mappings_serializable
-        
-        # 真正保存到磁盘
-        save_config(self.parent()._config)
-    
+
+    def _save_polygon_values(self):
+        """保存多边形 Tab 的数值到 _config (固定 2 unit/标签, 不再保存行数)。
+
+        仅在多边形 Tab 激活时从活着的 spinbox 读取; 否则用 _tab_cache 中缓存的值
+        (切走前已保存), 避免访问已被 Qt 销毁的 spinbox 导致 RuntimeError, 也不丢值。
+        _tab_cache 为空(从未进入多边形 Tab)时保留 _config 中已持久化的原值。"""
+        if not self.parent() or not hasattr(self.parent(), '_config'):
+            return
+
+        # 清理旧字段 (已废弃)
+        self.parent()._config.pop("expand_polygon_label_row_counts", None)
+
+        if self.current_tab == "polygon" and self.polygon_units:
+            vals = self._get_polygon_values_raw()
+            if vals:
+                self._tab_cache["polygon"] = vals
+                self.parent()._config["expand_polygon_values"] = vals
+        else:
+            cached = self._tab_cache.get("polygon")
+            if cached is not None:
+                self.parent()._config["expand_polygon_values"] = cached
+            # 否则保留 _config 中已持久化的原值, 不清空也不覆盖
+
     def save_edge_mappings(self):
         """保存方向映射到配置"""
         if not self.parent() or not hasattr(self.parent(), '_config'):
             return
-        
+
         # 将映射转换为可序列化的格式
         mappings_serializable = {f"{label},{offset},{col}": edge for (label, offset, col), edge in self.edge_mapping.items()}
         self.parent()._config["expand_margins_edge_mappings"] = mappings_serializable
-        
+
         save_config(self.parent()._config)
-    
+
     def update_edge_button_labels(self):
         """更新所有方向按钮的显示文字"""
         edge_translations = {
@@ -1085,10 +1420,15 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             current_row += row_count
 
     def load_saved_data(self):
-        """从用户配置文件加载保存的行数和映射"""
+        """加载矩形和多边形两套行数 + 矩形的 edge_mapping"""
+        self._load_saved_rect_data()
+        self._load_saved_polygon_data()
+
+    def _load_saved_rect_data(self):
+        """加载矩形的行数和方向映射"""
         if not self.parent() or not hasattr(self.parent(), '_config'):
             return
-        
+
         # 加载行数
         saved_row_counts = self.parent()._config.get("expand_margins_label_row_counts", {})
         if saved_row_counts and isinstance(saved_row_counts, dict):
@@ -1096,7 +1436,7 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
             for label in saved_row_counts.keys():
                 if isinstance(saved_row_counts[label], int) and saved_row_counts[label] >= 2:
                     self.label_row_counts[label] = saved_row_counts[label]
-        
+
         # 加载方向映射（但不更新按钮，因为按钮还没创建）
         mappings_serializable = self.parent()._config.get("expand_margins_edge_mappings", {})
         if mappings_serializable and isinstance(mappings_serializable, dict):
@@ -1116,44 +1456,56 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                         pass
                 except (ValueError, AttributeError):
                     pass
-    
-    def load_saved_margin_values(self):
-        """从用户配置文件加载保存的数值"""
+
+    def _load_saved_polygon_data(self):
+        """多边形 Tab 行数固定为 2 (每行容纳 2 unit),不再从配置加载行数。
+        仅清理已废弃的旧字段以避免占用磁盘空间。"""
         if not self.parent() or not hasattr(self.parent(), '_config'):
             return
-        
+        self.parent()._config.pop("expand_polygon_label_row_counts", None)
+
+    def load_saved_margin_values(self):
+        """路由器: 加载矩形和多边形两套数值"""
+        self._load_saved_rect_margin_values()
+        self._load_saved_polygon_margin_values()
+
+    def _load_saved_rect_margin_values(self):
+        """从用户配置文件加载矩形的数值"""
+        if not self.parent() or not hasattr(self.parent(), '_config'):
+            return
+
         # 加载数值
         saved_values = self.parent()._config.get("expand_margins_values", {})
         if not saved_values or not isinstance(saved_values, dict):
             return
-        
+
         current_row = 0
         for label in self.label_order:  # 使用保存的顺序
             if label not in saved_values:
                 current_row += self.label_row_counts.get(label, 2)
                 continue
-            
+
             values = saved_values[label]
             if not isinstance(values, (list, tuple)):
                 current_row += self.label_row_counts.get(label, 2)
                 continue
-            
+
             row_count = self.label_row_counts.get(label, 2)
-            
+
             # 每行4个值
             for row_offset in range(row_count):
                 row = current_row + row_offset
                 if row >= self.table_widget.rowCount():
                     break
-                
+
                 value_offset = row_offset * 4
-                
+
                 if value_offset + 3 < len(values):
                     spinbox_top = self.table_widget.cellWidget(row, 1)
                     spinbox_bottom = self.table_widget.cellWidget(row, 3)
                     spinbox_left = self.table_widget.cellWidget(row, 5)
                     spinbox_right = self.table_widget.cellWidget(row, 7)
-                    
+
                     if spinbox_top and spinbox_bottom and spinbox_left and spinbox_right:
                         try:
                             spinbox_top.setValue(float(values[value_offset]))
@@ -1162,8 +1514,19 @@ class ExpandMarginsDialog(QtWidgets.QDialog):
                             spinbox_right.setValue(float(values[value_offset + 3]))
                         except (ValueError, TypeError):
                             pass
-            
+
             current_row += row_count
+
+    def _load_saved_polygon_margin_values(self):
+        """从用户配置文件加载多边形 Tab 的数值"""
+        if not self.parent() or not hasattr(self.parent(), '_config'):
+            return
+
+        saved_values = self.parent()._config.get("expand_polygon_values", {})
+        if not saved_values or not isinstance(saved_values, dict):
+            return
+
+        self._restore_polygon_values(saved_values)
 
     def closeEvent(self, event):
         self.save_window_position()

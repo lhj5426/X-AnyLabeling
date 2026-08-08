@@ -166,31 +166,33 @@ def generate_mask_from_yolo(image_path, yolo_labels, model_path, output_path, pa
             mask = result_mask
             print(f"[CTD] ✅ 方向延伸完成", flush=True)
 
-        # 根据格式生成不同的掩膜图
+        # 统一合成：根据背景/掩膜颜色和透明度生成掩膜图
         print(f"[CTD] 生成掩膜图...", flush=True)
-        mask_format = params.get('format', 'ballons')
-        text_color = params.get('text_color', [255, 255, 255])  # RGB
-        text_alpha = params.get('text_alpha', 255)  # 0-255
+        bg_bgra = params.get('bg_bgra', [0, 0, 0, 255])
+        mask_bgra = params.get('mask_bgra', [255, 255, 255, 255])
 
-        if mask_format == 'imagetrans':
-            print(f"[CTD] 使用ImageTrans格式（透明背景 + RGB{text_color}, Alpha={text_alpha}）", flush=True)
-            # ImageTrans格式：透明背景 + 自定义颜色文字区域
-            # 创建4通道图像（BGRA）
-            mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
+        # 创建4通道图像（BGRA），背景铺底
+        mask_rgba = np.zeros((img_h, img_w, 4), dtype=np.uint8)
+        mask_rgba[..., 0] = bg_bgra[0]
+        mask_rgba[..., 1] = bg_bgra[1]
+        mask_rgba[..., 2] = bg_bgra[2]
+        mask_rgba[..., 3] = bg_bgra[3]
 
-            # 将掩膜区域填充为指定颜色和透明度
-            mask_indices = mask > 127
-            mask_rgba[mask_indices] = [text_color[2], text_color[1], text_color[0], text_alpha]  # BGRA
+        # 掩膜区域填充为指定颜色和透明度
+        mask_indices = mask > 127
+        if mask_indices.any():
+            mask_rgba[mask_indices, 0] = mask_bgra[0]
+            mask_rgba[mask_indices, 1] = mask_bgra[1]
+            mask_rgba[mask_indices, 2] = mask_bgra[2]
+            mask_rgba[mask_indices, 3] = mask_bgra[3]
 
-            # 保存为PNG（支持透明度）
-            cv2.imwrite(output_path, mask_rgba)
-            print(f"[CTD] ImageTrans掩膜已保存: {output_path}", flush=True)
-        else:
-            print(f"[CTD] 使用BallonsTranslator格式（黑背景 + 白色文字）", flush=True)
-            # BallonsTranslator格式：黑背景 + 白色文字区域
-            # mask已经是黑背景白字，直接保存
-            cv2.imwrite(output_path, mask)
-            print(f"[CTD] BallonsTranslator掩膜已保存: {output_path}", flush=True)
+        # 保存为PNG（支持透明度）
+        cv2.imwrite(output_path, mask_rgba)
+        print(
+            f"[CTD] 掩膜已保存: BG{bg_bgra[:3]}@{bg_bgra[3]} | "
+            f"Mask{mask_bgra[:3]}@{mask_bgra[3]}",
+            flush=True,
+        )
 
         # 提取轮廓（用于多边形显示）
         print(f"[CTD] 提取多边形轮廓...", flush=True)
