@@ -13,21 +13,20 @@ YSG-AnyLabeling 魔改版 基于250903更新的源码进行魔改
 
 专门为
 
-开源
+自训练模型
 
-https://github.com/dmMaze/BallonsTranslator
+https://github.com/lhj5426/YSG
 
-和付费
+打造的专属个人座驾 
 
-https://www.basiccat.org/zh/imagetrans/
+内置 多种漫画开源项目的 检测模型 OCR模型 掩膜生成模型 和算法 
 
-漫画翻译工具 的前置检测而魔改的版本
+完全以更好的 自由度更高的 漫画前置检测 为目的而改造
 
-漫画翻译的所有的前置检测任务都交给魔改版X-AnyLabeling
+真正的漫画工具只负责翻译 嵌字 
 
-真正的漫画工具只负责OCR 翻译 嵌字 
+漫画翻译的所有的前置检测任务都交给魔改版YSG-AnyLabeling
 
-([原版](https://github.com/CVHub520/X-AnyLabeling/)已支持使用PPV5ocr 懒得移植过来 魔改版 原版双持也不是不可以)
 
 并且可以当作一款漫画阅读工具
 
