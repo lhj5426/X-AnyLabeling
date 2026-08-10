@@ -1,6 +1,6 @@
 ﻿# -*- coding: utf-8 -*-
-__appname__ = "Hmogai_260801_X-AnyLabeling"
+__appname__ = "YSG-AnyLabeling"
 __appdescription__ = "Advanced Auto Labeling Solution with Added Features"
-__version__ = "3.2.2"
+__version__ = "9.0.0"
 __preferred_device__ = "GPU"  # GPU or CPU
-__url__ = "https://github.com/CVHub520/X-AnyLabeling"
+__url__ = "https://t.me/yinshuguan"

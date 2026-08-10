@@ -204,9 +204,9 @@ def main():
 
     logger.setLevel(getattr(logging, logger_level.upper()))
     logger.info(
-        f"🚀 {gradient_text(f'X-AnyLabeling v{__version__} launched!')}"
+        f"{gradient_text(f'{__appname__} v{__version__}')}"
     )
-    logger.info(f"⭐ If you like it, give us a star: {__url__}")
+    logger.info(f"{__url__}")
     config_file_or_yaml = resolve_config_file(config_file_or_yaml)
     set_active_config_file(config_file_or_yaml)
     anylabeling_config.current_config_file = config_file_or_yaml
