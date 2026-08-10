@@ -6,7 +6,7 @@
 
 
 
-X-AnyLabeling 魔改版 基于250903更新的源码进行魔改
+YSG-AnyLabeling 魔改版 基于250903更新的源码进行魔改
 
 由淫书馆TG频道 https://t.me/yinshuguan 
 <img width="1920" height="1050" alt="image" src="https://github.com/user-attachments/assets/cbef7b26-058e-4881-bd3e-ab5a2a201d24" />
