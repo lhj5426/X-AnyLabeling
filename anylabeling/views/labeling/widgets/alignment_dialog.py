@@ -68,6 +68,7 @@ class AlignmentDialog(QtWidgets.QDialog):
     unify_width = QtCore.pyqtSignal(bool)
     unify_angle = QtCore.pyqtSignal(bool)
     fix_direction = QtCore.pyqtSignal(str)  # 修复方向信号，参数: "current", "selected", "range", "all"
+    manual_fix_direction = QtCore.pyqtSignal(bool)  # 手动修复方向信号（独立按钮，按参照物处理，不受表格约束；True=左键退出参照，False=右键保持参照）
     fix_direction_range = QtCore.pyqtSignal(int, int)  # 修复方向范围信号: (起始索引, 结束索引)
     push_out = QtCore.pyqtSignal(bool)  # 矩形弹出/分离信号（依赖参照物）
     push_out_all = QtCore.pyqtSignal()  # 整页矩形弹出分离信号（独立功能）
@@ -278,9 +279,9 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_unify_angle.setFixedHeight(self.btn_unify_height.sizeHint().height())  # 和统一高度按钮一样高
         angle_layout.addWidget(self.btn_unify_angle)
         
-        # 修复方向按钮（独立功能，只处理选中的旋转矩形）
-        self.btn_fix_direction = QtWidgets.QPushButton(self.tr("修复方向"))
-        self.btn_fix_direction.setToolTip(self.tr("用当前角度重建选中的旋转矩形，修复方向"))
+        # 修复方向按钮（独立功能，只处理选中的旋转矩形，左键退出参照模式，右键保持）
+        self.btn_fix_direction = AlignmentButton(self.tr("修复方向"))
+        self.btn_fix_direction.setToolTip(self.tr("左键: 执行后自动退出模式\n右键: 执行后保持模式"))
         self.btn_fix_direction.setFixedHeight(self.btn_unify_height.sizeHint().height())
         angle_layout.addWidget(self.btn_fix_direction)
         
@@ -541,7 +542,9 @@ class AlignmentDialog(QtWidgets.QDialog):
         self.btn_unify_angle.right_clicked.connect(lambda: self.unify_angle.emit(False))
 
         # Connect fix direction button (只处理选中的旋转矩形)
-        self.btn_fix_direction.clicked.connect(lambda: self.fix_direction.emit("selected"))
+        # 独立修复方向按钮：手动选参照和目标，不受表格约束
+        self.btn_fix_direction.left_clicked.connect(lambda: self.manual_fix_direction.emit(True))
+        self.btn_fix_direction.right_clicked.connect(lambda: self.manual_fix_direction.emit(False))
 
         # Connect push out buttons (独立功能)
         self.btn_push_out_selected.clicked.connect(self.push_out_selected.emit)
@@ -588,6 +591,19 @@ class AlignmentDialog(QtWidgets.QDialog):
                             'height': height_spin.value()
                         }
         return labels_data
+
+    def get_checked_labels_from_table(self):
+        """获取表格中勾选的标签集合"""
+        labels = set()
+        for row in range(self.size_label_table.rowCount()):
+            checkbox_widget = self.size_label_table.cellWidget(row, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QtWidgets.QCheckBox)
+                if checkbox and checkbox.isChecked():
+                    label_item = self.size_label_table.item(row, 1)
+                    if label_item:
+                        labels.add(label_item.text())
+        return labels
 
     def _select_all_size_labels(self):
         """全选标签"""
@@ -666,9 +682,14 @@ class AlignmentDialog(QtWidgets.QDialog):
 
     def _on_fix_direction_mode_changed(self, checked):
         """当修复方向模式复选框状态改变时更新UI"""
-        # 禁用/启用宽高输入框（修复方向不需要）
-        self.size_width_input.setEnabled(not checked)
-        self.size_height_input.setEnabled(not checked)
+        # 禁用/启用标签表格中的宽高输入框（修复方向不需要）
+        for row in range(self.size_label_table.rowCount()):
+            width_spin = self.size_label_table.cellWidget(row, 2)
+            height_spin = self.size_label_table.cellWidget(row, 3)
+            if width_spin:
+                width_spin.setEnabled(not checked)
+            if height_spin:
+                height_spin.setEnabled(not checked)
         
         # 更新按钮样式以区分模式
         if checked:

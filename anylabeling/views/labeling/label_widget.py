@@ -6269,6 +6269,7 @@ class LabelingWidget(QtWidgets.QWidget):
             self.alignment_dialog.unify_angle.connect(lambda auto_exit: self._perform_alignment('unify_angle', auto_exit))
             # Connect fix direction signals
             self.alignment_dialog.fix_direction.connect(self._fix_shape_direction)
+            self.alignment_dialog.manual_fix_direction.connect(self._manual_fix_direction)
             self.alignment_dialog.fix_direction_range.connect(self._fix_shape_direction_range)
             # Connect push out signals (独立功能)
             self.alignment_dialog.push_out_selected.connect(self._push_out_selected_shapes)
@@ -6752,14 +6753,29 @@ class LabelingWidget(QtWidgets.QWidget):
                         if new_height < 1:
                             new_height = 1
                         
-                        # 重建旋转矩形
+                        # 检测原始顶点顺序（用叉积：(p1-p0) × (p3-p0)）
+                        # 屏幕坐标系下：cross < 0 → CCW，cross >= 0 → CW
+                        _op0, _op1, _op2, _op3 = shape.points[0], shape.points[1], shape.points[2], shape.points[3]
+                        _v1x, _v1y = _op1.x() - _op0.x(), _op1.y() - _op0.y()
+                        _v2x, _v2y = _op3.x() - _op0.x(), _op3.y() - _op0.y()
+                        _is_ccw = (_v1x * _v2y - _v1y * _v2x) < 0
+                        
+                        # 重建旋转矩形，保留原始顶点顺序
                         half_w = new_width / 2.0
                         half_h = new_height / 2.0
                         
-                        p0_local = QtCore.QPointF(-half_w, -half_h)
-                        p1_local = QtCore.QPointF(half_w, -half_h)
-                        p2_local = QtCore.QPointF(half_w, half_h)
-                        p3_local = QtCore.QPointF(-half_w, half_h)
+                        if _is_ccw:
+                            # CCW 规范顺序（局部坐标）：BL, BR, TR, TL
+                            p0_local = QtCore.QPointF(-half_w, half_h)
+                            p1_local = QtCore.QPointF(half_w, half_h)
+                            p2_local = QtCore.QPointF(half_w, -half_h)
+                            p3_local = QtCore.QPointF(-half_w, -half_h)
+                        else:
+                            # CW 规范顺序（局部坐标）：TL, TR, BR, BL
+                            p0_local = QtCore.QPointF(-half_w, -half_h)
+                            p1_local = QtCore.QPointF(half_w, -half_h)
+                            p2_local = QtCore.QPointF(half_w, half_h)
+                            p3_local = QtCore.QPointF(-half_w, half_h)
                         
                         def rot(pt):
                             return QtCore.QPointF(
@@ -6864,7 +6880,13 @@ class LabelingWidget(QtWidgets.QWidget):
                     elif mode == 'unify_height':
                         new_intrinsic_height = ref_intrinsic_height
 
-                    # Reconstruct the rotated rectangle's points using math rotation
+                    # 检测原始顶点顺序
+                    _op0, _op1, _op2, _op3 = shape.points[0], shape.points[1], shape.points[2], shape.points[3]
+                    _v1x, _v1y = _op1.x() - _op0.x(), _op1.y() - _op0.y()
+                    _v2x, _v2y = _op3.x() - _op0.x(), _op3.y() - _op0.y()
+                    _is_ccw = (_v1x * _v2y - _v1y * _v2x) < 0
+
+                    # Reconstruct the rotated rectangle's points using math rotation, 保留原始顶点顺序
                     half_w = new_intrinsic_width / 2.0
                     half_h = new_intrinsic_height / 2.0
                     angle = shape.direction
@@ -6873,10 +6895,18 @@ class LabelingWidget(QtWidgets.QWidget):
                     sin_a = math.sin(angle)
 
                     # Local, centered at (0,0)
-                    p0_local = QtCore.QPointF(-half_w, -half_h)
-                    p1_local = QtCore.QPointF(half_w, -half_h)
-                    p2_local = QtCore.QPointF(half_w, half_h)
-                    p3_local = QtCore.QPointF(-half_w, half_h)
+                    if _is_ccw:
+                        # CCW 规范顺序：BL, BR, TR, TL
+                        p0_local = QtCore.QPointF(-half_w, half_h)
+                        p1_local = QtCore.QPointF(half_w, half_h)
+                        p2_local = QtCore.QPointF(half_w, -half_h)
+                        p3_local = QtCore.QPointF(-half_w, -half_h)
+                    else:
+                        # CW 规范顺序：TL, TR, BR, BL
+                        p0_local = QtCore.QPointF(-half_w, -half_h)
+                        p1_local = QtCore.QPointF(half_w, -half_h)
+                        p2_local = QtCore.QPointF(half_w, half_h)
+                        p3_local = QtCore.QPointF(-half_w, half_h)
 
                     def rot(pt):
                         return QtCore.QPointF(
@@ -6945,19 +6975,33 @@ class LabelingWidget(QtWidgets.QWidget):
                         ref_h = utils.distance(self.reference_shape.points[2] - self.reference_shape.points[1])
                         ref_half_w = ref_w / 2.0
                         ref_half_h = ref_h / 2.0
-                        
-                        ref_p0_local = QtCore.QPointF(-ref_half_w, -ref_half_h)
-                        ref_p1_local = QtCore.QPointF(ref_half_w, -ref_half_h)
-                        ref_p2_local = QtCore.QPointF(ref_half_w, ref_half_h)
-                        ref_p3_local = QtCore.QPointF(-ref_half_w, ref_half_h)
-                        
+
+                        # 检测参照物原始顶点顺序
+                        _rop0, _rop1, _rop2, _rop3 = self.reference_shape.points[0], self.reference_shape.points[1], self.reference_shape.points[2], self.reference_shape.points[3]
+                        _rv1x, _rv1y = _rop1.x() - _rop0.x(), _rop1.y() - _rop0.y()
+                        _rv2x, _rv2y = _rop3.x() - _rop0.x(), _rop3.y() - _rop0.y()
+                        _ref_is_ccw = (_rv1x * _rv2y - _rv1y * _rv2x) < 0
+
+                        if _ref_is_ccw:
+                            # CCW 规范：BL, BR, TR, TL
+                            ref_p0_local = QtCore.QPointF(-ref_half_w, ref_half_h)
+                            ref_p1_local = QtCore.QPointF(ref_half_w, ref_half_h)
+                            ref_p2_local = QtCore.QPointF(ref_half_w, -ref_half_h)
+                            ref_p3_local = QtCore.QPointF(-ref_half_w, -ref_half_h)
+                        else:
+                            # CW 规范：TL, TR, BR, BL
+                            ref_p0_local = QtCore.QPointF(-ref_half_w, -ref_half_h)
+                            ref_p1_local = QtCore.QPointF(ref_half_w, -ref_half_h)
+                            ref_p2_local = QtCore.QPointF(ref_half_w, ref_half_h)
+                            ref_p3_local = QtCore.QPointF(-ref_half_w, ref_half_h)
+
                         def rot_ref(pt):
                             return QtCore.QPointF(
                                 pt.x() * cos_a - pt.y() * sin_a + ref_center.x(),
                                 pt.x() * sin_a + pt.y() * cos_a + ref_center.y(),
                             )
-                        
-                        self.reference_shape.points = [rot_ref(ref_p0_local), rot_ref(ref_p1_local), 
+
+                        self.reference_shape.points = [rot_ref(ref_p0_local), rot_ref(ref_p1_local),
                                                        rot_ref(ref_p2_local), rot_ref(ref_p3_local)]
                         self.alignment_dialog.log(self.tr("参照矩形方向已同步调整"))
                     
@@ -7022,10 +7066,50 @@ class LabelingWidget(QtWidgets.QWidget):
             shape.fill = True
         self.canvas.update()
 
+    def _manual_fix_direction(self, auto_exit=True):
+        """手动修复方向按钮（独立功能，按参照物处理）。
+        
+        处理画布上选中的旋转矩形，不受表格勾选标签约束。
+        有参照物时对齐到参照物方向，无参照物时标准化为 CW。
+        
+        Args:
+            auto_exit: True（左键）= 执行后退出参照模式；False（右键）= 保持参照模式
+        """
+        if not self.alignment_dialog:
+            return
+        
+        self.alignment_dialog.log_widget.clear()
+        self.alignment_dialog.log(self.tr("正在处理选中的旋转矩形..."))
+        
+        shapes_to_process = [s for s in self.canvas.selected_shapes if s.shape_type == 'rotation']
+        if not shapes_to_process:
+            self.alignment_dialog.log(self.tr("错误: 没有选中任何旋转矩形。"))
+            return
+        
+        # 获取参照角度（如果有参照物）
+        ref_angle = None
+        if self.reference_shape and self.reference_shape.shape_type == 'rotation':
+            ref_angle = self.reference_shape.direction
+        
+        # 获取旋转标签过滤（从输入框，不读表格）
+        target_labels = self.alignment_dialog.get_angle_target_labels()
+        
+        # 调用 batch 处理
+        processed_count = self._fix_shapes_direction_batch(shapes_to_process, target_labels, ref_angle)
+        
+        if processed_count and processed_count > 0:
+            self.set_dirty()
+            self.canvas.repaint()
+            self.alignment_dialog.log(self.tr("操作完成，共修复了 {count} 个矩形的方向。").format(count=processed_count))
+            # 左键：退出参照模式
+            if auto_exit:
+                self.on_alignment_dialog_finished()
+    
     def _fix_shape_direction(self, scope="selected"):
         """修复旋转矩形的方向。
         
-        用当前的角度值重建矩形，使方向标准化（和手动调整角度一样的效果）。
+        如果有参照物，将目标矩形的方向对齐到参照物方向；
+        如果没有参照物，仅标准化顶点顺序。
         
         Args:
             scope: "current" 本页, "selected" 选中, "all" 全部
@@ -7035,8 +7119,13 @@ class LabelingWidget(QtWidgets.QWidget):
         
         self.alignment_dialog.log_widget.clear()
         
-        # 获取旋转标签过滤
-        target_labels = self.alignment_dialog.get_angle_target_labels()
+        # 获取旋转标签过滤（从表格勾选项）
+        target_labels = self.alignment_dialog.get_checked_labels_from_table()
+        
+        # 获取参照角度（如果有参照物）
+        ref_angle = None
+        if self.reference_shape and self.reference_shape.shape_type == 'rotation':
+            ref_angle = self.reference_shape.direction
         
         if scope == "current":
             # 本页所有旋转矩形
@@ -7055,8 +7144,10 @@ class LabelingWidget(QtWidgets.QWidget):
         else:
             return
         
-        processed_count = self._fix_shapes_direction_batch(shapes_to_process, target_labels)
+        processed_count = self._fix_shapes_direction_batch(shapes_to_process, target_labels, ref_angle)
         
+        if processed_count is None:
+            return
         if processed_count > 0:
             self.set_dirty()
             self.canvas.repaint()
@@ -7071,8 +7162,8 @@ class LabelingWidget(QtWidgets.QWidget):
         
         self.alignment_dialog.log_widget.clear()
         
-        # 获取旋转标签过滤
-        target_labels = self.alignment_dialog.get_angle_target_labels()
+        # 获取旋转标签过滤（从表格勾选项）
+        target_labels = self.alignment_dialog.get_checked_labels_from_table()
         
         total_processed = 0
         total_files = end_index - start_index + 1
@@ -7257,19 +7348,34 @@ class LabelingWidget(QtWidgets.QWidget):
         shape_data["points"] = new_points
         return True
 
-    def _fix_shapes_direction_batch(self, shapes, target_labels):
-        """批量修复shapes的方向，返回处理数量。"""
+    def _fix_shapes_direction_batch(self, shapes, target_labels, ref_angle=None):
+        """批量修复shapes的方向，返回处理数量。
+        
+        Args:
+            shapes: 要处理的形状列表
+            target_labels: 目标标签过滤列表（必须非空）
+            ref_angle: 参照角度（弧度）。如果提供，所有形状对齐到此角度；否则用各形状自身角度标准化。
+        """
+        # target_labels 为空时直接返回
+        if not target_labels:
+            return
+        
         processed_count = 0
         
         for shape in shapes:
             # 标签过滤
-            if target_labels and shape.label not in target_labels:
-                if self.alignment_dialog:
-                    self.alignment_dialog.log(self.tr("跳过 '{label}': 不在旋转标签列表中").format(label=shape.label))
+            if shape.label not in target_labels:
                 continue
             
-            # 获取当前角度
-            current_angle = shape.direction
+            # 获取目标角度：优先使用参照角度
+            if ref_angle is not None:
+                target_angle = ref_angle
+                # 有参照物：保留各形状原始顶点顺序，避免标签互换
+                preserve_order = True
+            else:
+                target_angle = shape.direction
+                # 无参照物：强制标准化为 CW（上右下左）顺序
+                preserve_order = False
             
             # 获取中心点
             center_x = (shape.points[0].x() + shape.points[1].x() + shape.points[2].x() + shape.points[3].x()) / 4.0
@@ -7282,18 +7388,37 @@ class LabelingWidget(QtWidgets.QWidget):
             width = edge1
             height = edge2
             
-            # 用当前角度重建矩形
+            # 检测原始顶点顺序
+            _op0, _op1, _op2, _op3 = shape.points[0], shape.points[1], shape.points[2], shape.points[3]
+            _v1x, _v1y = _op1.x() - _op0.x(), _op1.y() - _op0.y()
+            _v2x, _v2y = _op3.x() - _op0.x(), _op3.y() - _op0.y()
+            _is_ccw = (_v1x * _v2y - _v1y * _v2x) < 0
+
+            # 用目标角度重建矩形
             half_w = width / 2.0
             half_h = height / 2.0
             
-            cos_a = math.cos(current_angle)
-            sin_a = math.sin(current_angle)
+            cos_a = math.cos(target_angle)
+            sin_a = math.sin(target_angle)
             
-            # 标准顶点顺序（局部坐标）
-            p0_local = QtCore.QPointF(-half_w, -half_h)  # 左上
-            p1_local = QtCore.QPointF(half_w, -half_h)   # 右上
-            p2_local = QtCore.QPointF(half_w, half_h)    # 右下
-            p3_local = QtCore.QPointF(-half_w, half_h)   # 左下
+            if preserve_order and _is_ccw:
+                # 保留原始 CCW 顺序：BL, BR, TR, TL（有参照物时，不调方向角度）
+                p0_local = QtCore.QPointF(-half_w, half_h)
+                p1_local = QtCore.QPointF(half_w, half_h)
+                p2_local = QtCore.QPointF(half_w, -half_h)
+                p3_local = QtCore.QPointF(-half_w, -half_h)
+            else:
+                # CW 规范顺序，根据方向角度修正顶点顺序
+                # 保证 rotation 后 上/下/左/右 标签在视觉正确位置
+                cw_base = [
+                    QtCore.QPointF(-half_w, -half_h),  # TL
+                    QtCore.QPointF(half_w, -half_h),   # TR
+                    QtCore.QPointF(half_w, half_h),    # BR
+                    QtCore.QPointF(-half_w, half_h),   # BL
+                ]
+                shift = int(round(target_angle / (math.pi / 2))) % 4
+                shifted = cw_base[-shift:] + cw_base[:-shift]
+                p0_local, p1_local, p2_local, p3_local = shifted
             
             def rot(pt):
                 return QtCore.QPointF(
@@ -7302,6 +7427,14 @@ class LabelingWidget(QtWidgets.QWidget):
                 )
             
             shape.points = [rot(p0_local), rot(p1_local), rot(p2_local), rot(p3_local)]
+            # 从实际顶点重新计算方向角度，保证 direction 与视觉效果一致
+            new_direction = math.atan2(
+                shape.points[1].y() - shape.points[0].y(),
+                shape.points[1].x() - shape.points[0].x()
+            )
+            if new_direction < 0:
+                new_direction += 2 * math.pi
+            shape.direction = new_direction
             processed_count += 1
             if self.alignment_dialog:
                 self.alignment_dialog.log(self.tr("已修复 '{label}' 的方向").format(label=shape.label))
