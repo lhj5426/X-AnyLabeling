@@ -9,7 +9,8 @@
 YSG-AnyLabeling 魔改版 基于250903更新的源码进行魔改
 
 由淫书馆TG频道 https://t.me/yinshuguan 
-<img width="1920" height="1050" alt="image" src="https://github.com/user-attachments/assets/cbef7b26-058e-4881-bd3e-ab5a2a201d24" />
+
+<img width="1920" height="1050" alt="image" src="https://github.com/user-attachments/assets/8e5f1655-75e8-41ac-a6fc-8cf56c65171c" />
 
 专门为
 
