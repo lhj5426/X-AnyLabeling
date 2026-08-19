@@ -237,8 +237,8 @@ class Canvas(
         
         # Initialize overlap color from configuration
         self.overlap_color = get_overlap_color(self._config)
-        # Initialize overlap display toggle from configuration (default: enabled)
-        self.show_overlap = self._config.get("show_overlap", True)
+        # Overlap geometry is quadratic, so keep it opt-in unless saved.
+        self.show_overlap = self._config.get("show_overlap", False)
 
         # Initialize alignment tool colors and line widths from configuration
         shape_config = self._config.get("shape", {})
@@ -1937,9 +1937,11 @@ class Canvas(
             return True
         return False
 
-    def _paint_brush_overlays(self, p):
+    def _paint_brush_overlays(self, p, shapes=None):
         """Paint live mask overlays for shapes being brush-edited."""
-        for shape in self.shapes:
+        if shapes is None:
+            shapes = self.shapes
+        for shape in shapes:
             if not getattr(shape, "_brush_using_mask", False):
                 continue
             if getattr(shape, "mask", None) is None or not shape.visible:
@@ -2490,17 +2492,37 @@ class Canvas(
 
         return shapes_on_line
 
+    @staticmethod
+    def _shape_near_point(shape, point, margin):
+        """Quickly reject shapes that cannot be hit near the mouse point."""
+        points = getattr(shape, "points", None)
+        if not points:
+            return False
+        if shape.shape_type == "circle" and len(points) == 2:
+            bounds = shape.get_circle_rect_from_line(points)
+            if bounds is None:
+                return False
+        else:
+            min_x = min(p.x() for p in points)
+            max_x = max(p.x() for p in points)
+            min_y = min(p.y() for p in points)
+            max_y = max(p.y() for p in points)
+            bounds = QtCore.QRectF(
+                min_x, min_y, max(max_x - min_x, 1.0), max(max_y - min_y, 1.0)
+            )
+        bounds.adjust(-margin, -margin, margin, margin)
+        return bounds.contains(point)
+
     def un_highlight(self):
         """Unhighlight shape/vertex/edge"""
         if self.h_hape:
             self.h_hape.highlight_clear()
+            self.h_hape.is_hovered = False
             self.update()
         self.prev_h_shape = self.h_hape
         self.prev_h_vertex = self.h_vertex
         self.prev_h_edge = self.h_edge
         self.h_hape = self.h_vertex = self.h_edge = None
-        for shape in self.shapes:
-            shape.is_hovered = False
 
     def selected_vertex(self):
         """Check if selected a vertex"""
@@ -2596,7 +2618,7 @@ class Canvas(
                 QtCore.Qt.LeftButton & ev.buttons()
             ):
                 self._drag_magic_wand(ev.localPos())
-            self.repaint()
+            self.update()
             return
 
         # 发射鼠标位置信号（用于导航器显示）
@@ -2610,7 +2632,7 @@ class Canvas(
         # Handle Alt+drag selection box mode
         if self.selection_box_mode:
             self.selection_box_end = pos
-            self.repaint()
+            self.update()
             return
 
         # Handle Shift+drag path selection mode
@@ -2618,7 +2640,7 @@ class Canvas(
             self.path_selection_points.append(pos)
             # Check if path intersects any shapes and highlight them
             self.update_path_highlights()
-            self.repaint()
+            self.update()
             return
 
         # Handle Ctrl+drag path selection mode (hide even-numbered shapes)
@@ -2626,7 +2648,7 @@ class Canvas(
             self.ctrl_path_selection_points.append(pos)
             # Check if path intersects any shapes and track intersection order
             self.update_ctrl_path_intersections()
-            self.repaint()
+            self.update()
             return
 
         # Handle Alt+RightButton delete path selection mode
@@ -2634,14 +2656,14 @@ class Canvas(
             self.delete_path_selection_points.append(pos)
             # Check if path intersects any shapes
             self.update_delete_path_intersections()
-            self.repaint()
+            self.update()
             return
 
         # 记录hover状态变化前的状态
         prev_hover_shape = self.h_hape
 
         self.prev_move_point = pos
-        self.repaint()
+        self.update()
 
         # Handle auto decode mode
         if (
@@ -2879,7 +2901,7 @@ class Canvas(
             elif self.create_mode == "point":
                 self.line.points = [self.current[0]]
                 self.line.close()
-            self.repaint()
+            self.update()
             self.current.highlight_clear()
             return
 
@@ -2888,12 +2910,12 @@ class Canvas(
             if self.selected_shapes_copy and self.prev_point:
                 self.override_cursor(CURSOR_MOVE)
                 self.bounded_move_shapes(self.selected_shapes_copy, pos)
-                self.repaint()
+                self.update()
             elif self.selected_shapes:
                 self.selected_shapes_copy = [
                     s.copy() for s in self.selected_shapes
                 ]
-                self.repaint()
+                self.update()
             return
 
         # Polygon/Vertex moving and canvas panning.
@@ -2902,7 +2924,7 @@ class Canvas(
                 self.is_move_editing = False
                 try:
                     self.bounded_move_vertex(pos)
-                    self.repaint()
+                    self.update()
                     self.moving_shape = True
                 except IndexError:
                     return
@@ -2915,7 +2937,7 @@ class Canvas(
             elif self.selected_shapes and self.prev_point and not self.alignment_mode_active:
                 self.override_cursor(CURSOR_MOVE)
                 self.bounded_move_shapes(self.selected_shapes, pos)
-                self.repaint()
+                self.update()
                 self.moving_shape = True
                 if self.selected_shapes[-1].shape_type == "rectangle":
                     p1 = self.selected_shapes[-1][0]
@@ -2958,19 +2980,27 @@ class Canvas(
         # Update shape/vertex fill and tooltip value accordingly.
         self.setToolTip(self.tr(""))
         
-        # 首先清除所有形状的hover状态，确保只有一个形状被hover
-        for shape in self.shapes:
-            shape.is_hovered = False
+        if self.h_hape:
+            self.h_hape.is_hovered = False
 
-        for shape in reversed([s for s in self.shapes if self.is_visible(s)]):
+        hit_margin = self.epsilon / self.scale
+        for shape in reversed(self.shapes):
+            if not self.is_visible(shape) or not self._shape_near_point(
+                shape, pos, hit_margin
+            ):
+                continue
             # Do not interact with locked shapes on hover
             if shape.is_label_locked():
                 continue
 
             # Look for a nearby vertex to highlight. If that fails,
             # check if we happen to be inside a shape.
-            index = shape.nearest_vertex(pos, self.epsilon / self.scale)
-            index_edge = shape.nearest_edge(pos, self.epsilon / self.scale)
+            index = shape.nearest_vertex(pos, hit_margin)
+            index_edge = (
+                shape.nearest_edge(pos, hit_margin)
+                if index is None and shape.can_add_point()
+                else None
+            )
             if index is not None:
                 if self.selected_vertex():
                     self.h_hape.highlight_clear()
@@ -3482,7 +3512,7 @@ class Canvas(
                 )
                 self.prev_point = pos
                 self.prev_pan_point = ev.localPos()
-                self.repaint()
+                self.update()
         elif ev.button() == QtCore.Qt.RightButton and self.editing():
             group_mode = int(ev.modifiers()) == QtCore.Qt.ControlModifier
             if not self.selected_shapes or (
@@ -3492,7 +3522,7 @@ class Canvas(
                 self.select_shape_point(
                     pos, multiple_selection_mode=group_mode
                 )
-                self.repaint()
+                self.update()
             self.prev_point = pos
 
     # QT Overload
@@ -3563,7 +3593,7 @@ class Canvas(
             ):
                 # Cancel the move by deleting the shadow copy.
                 self.selected_shapes_copy = []
-                self.repaint()
+                self.update()
         elif ev.button() == QtCore.Qt.LeftButton:
             if self.editing():
                 if (
@@ -3666,7 +3696,7 @@ class Canvas(
 
         # Reset selection box mode
         self.selection_box_mode = False
-        self.repaint()
+        self.update()
 
     def shape_intersects_rect(self, shape, rect):
         """Check if a shape intersects with the selection rectangle"""
@@ -3860,7 +3890,7 @@ class Canvas(
         self.path_selection_mode = False
         self.path_selection_points = []
         self.path_highlighted_shapes.clear()
-        self.repaint()
+        self.update()
 
     def update_ctrl_path_intersections(self):
         """Update intersected shapes list based on current Ctrl+drag path, ordered by intersection position along path"""
@@ -4012,7 +4042,7 @@ class Canvas(
         self.ctrl_path_selection_mode = False
         self.ctrl_path_selection_points = []
         self.ctrl_path_intersected_shapes = []
-        self.repaint()
+        self.update()
 
     def update_delete_path_intersections(self):
         """Update intersected shapes list for Alt+RightButton delete path, ordered by intersection position along path.
@@ -4067,7 +4097,7 @@ class Canvas(
         self.delete_path_selection_mode = False
         self.delete_path_selection_points = []
         self.delete_path_intersected_shapes = []
-        self.repaint()
+        self.update()
 
     def shape_intersects_path(self, shape, path_points):
         """Check if a shape intersects with the given path"""
@@ -4251,7 +4281,7 @@ class Canvas(
             for i, shape in enumerate(self.selected_shapes_copy):
                 self.selected_shapes[i].points = shape.points
         self.selected_shapes_copy = []
-        self.repaint()
+        self.update()
         self.store_shapes()
         return True
 
@@ -4304,10 +4334,14 @@ class Canvas(
         self.update()
 
     def select_all_visible_shapes(self):
-        """Select all visible shapes on canvas"""
+        """Select all visible shapes with one canvas refresh."""
         visible_shapes = [shape for shape in self.shapes if self.is_visible(shape)]
-        if visible_shapes:
-            self.select_shapes(visible_shapes)
+        if not visible_shapes:
+            return
+        self.set_hiding()
+        self.selected_shapes = visible_shapes
+        self.selection_changed.emit(visible_shapes)
+        self.update()
 
     def select_shape_point(self, point, multiple_selection_mode):
         """Select the first shape created which contains this point."""
@@ -4898,7 +4932,7 @@ class Canvas(
         for shape in self.selected_shapes:
             shape.move_by(dp)
         self.parent.set_dirty()
-        self.repaint()
+        self.update()
 
     def rotate_by_keyboard(self, theta: float):
         """Rotate selected shapes by keyboard."""
@@ -4908,7 +4942,7 @@ class Canvas(
             if shape.shape_type == "rotation":
                 self.bounded_rotate_shapes(i, shape, theta)
         self.parent.set_dirty()
-        self.repaint()
+        self.update()
 
     def rotate_point(self, p, center, theta):
         order = p - center
@@ -4959,18 +4993,17 @@ class Canvas(
             self.update()
 
     def delete_selected(self):
-        """Remove selected shapes"""
-        deleted_shapes = []
-        if self.selected_shapes:
-            for shape in self.selected_shapes:
-                self.shapes.remove(shape)
-                deleted_shapes.append(shape)
-            self.store_shapes()
-            self.selected_shapes = []
-            # 清除间距线缓存，避免删除矩形后间距线残留
-            self.spacing_guide_lines = []
-            self.spacing_guide_snap_offset = None
-            self.update()
+        """Remove selected shapes with one list rebuild and one refresh."""
+        if not self.selected_shapes:
+            return []
+        selected_ids = {id(shape) for shape in self.selected_shapes}
+        deleted_shapes = [shape for shape in self.shapes if id(shape) in selected_ids]
+        self.shapes[:] = [shape for shape in self.shapes if id(shape) not in selected_ids]
+        self.store_shapes()
+        self.selected_shapes = []
+        self.spacing_guide_lines = []
+        self.spacing_guide_snap_offset = None
+        self.update()
         return deleted_shapes
 
     def delete_shape(self, shape):
@@ -5017,25 +5050,33 @@ class Canvas(
         # orphaned overlap region.  Use Canvas.is_visible() instead of only
         # Shape.visible because per-shape visibility is also tracked in
         # self.visible by set_shape_visible().
-        shapes = [shape for shape in shapes if self.is_visible(shape)]
+        shapes = [
+            shape
+            for shape in shapes
+            if self.is_visible(shape)
+            and shape.shape_type in ["rectangle", "rotation"]
+            and getattr(shape, "label", None)
+            and shape.points
+        ]
+        bounds = {id(shape): shape.bounding_rect() for shape in shapes}
+        shapes.sort(key=lambda shape: (shape.label, bounds[id(shape)].left()))
         overlap_regions = []
         if len(shapes) < 2:
             return overlap_regions
 
         for i, shape1 in enumerate(shapes):
-            if shape1.shape_type not in ["rectangle", "rotation"]:
-                continue
-            if not hasattr(shape1, 'label') or not shape1.label:
-                continue
-            path1 = shape1.make_path()
+            bounds1 = bounds[id(shape1)]
+            path1 = None
             for shape2 in shapes[i + 1:]:
-                if shape2.shape_type not in ["rectangle", "rotation"]:
-                    continue
-                if not hasattr(shape2, 'label') or not shape2.label:
-                    continue
-                # 检查标签是否相同
                 if shape1.label != shape2.label:
+                    break
+                bounds2 = bounds[id(shape2)]
+                if bounds2.left() > bounds1.right():
+                    break
+                if not bounds1.intersects(bounds2):
                     continue
+                if path1 is None:
+                    path1 = shape1.make_path()
                 path2 = shape2.make_path()
                 # 计算两个路径的交集
                 overlap_path = path1.intersected(path2)
@@ -5043,25 +5084,43 @@ class Canvas(
                     overlap_regions.append(overlap_path)
         return overlap_regions
 
-    @staticmethod
-    def _draw_non_accumulating_highlight_fills(painter, shapes):
+    def _draw_non_accumulating_highlight_fills(self, painter, shapes):
         """Fill each highlighted label/color union once without alpha stacking."""
-        fill_groups = {}
+        fill_items = []
         for shape in shapes:
             fill_color = shape.effective_fill_color()
             if fill_color is None or not shape.points:
                 continue
-            color_key = fill_color.rgba()
-            group_key = (shape.label, color_key)
             shape_path = shape.make_path()
             if shape_path.isEmpty():
                 continue
-            if group_key in fill_groups:
-                fill_groups[group_key][0] = fill_groups[group_key][0].united(
-                    shape_path
+            fill_items.append(
+                (
+                    id(shape),
+                    shape.label,
+                    fill_color.rgba(),
+                    getattr(shape, "_path_cache_key", None),
+                    shape_path,
+                    fill_color,
                 )
-            else:
-                fill_groups[group_key] = [shape_path, fill_color]
+            )
+
+        cache_key = tuple(item[:4] for item in fill_items)
+        if cache_key == getattr(self, "_highlight_fill_cache_key", None):
+            fill_groups = self._highlight_fill_cache
+        else:
+            fill_groups = {}
+            for _, label, color_key, _, shape_path, fill_color in fill_items:
+                group_key = (label, color_key)
+                if group_key in fill_groups:
+                    fill_groups[group_key][0].addPath(shape_path)
+                else:
+                    combined_path = QtGui.QPainterPath()
+                    combined_path.setFillRule(Qt.WindingFill)
+                    combined_path.addPath(shape_path)
+                    fill_groups[group_key] = [combined_path, fill_color]
+            self._highlight_fill_cache_key = cache_key
+            self._highlight_fill_cache = fill_groups
 
         for fill_path, fill_color in fill_groups.values():
             painter.fillPath(fill_path, fill_color)
@@ -5099,8 +5158,68 @@ class Canvas(
         Shape.scale = self.scale
         
         # 找到所有重叠区域
-        overlap_regions = self._find_overlapping_areas(self.shapes)
+        inverse_transform, invertible = p.worldTransform().inverted()
+        if invertible:
+            viewport_rect = inverse_transform.mapRect(
+                QtCore.QRectF(self.rect())
+            )
+            margin = max(2.0, 12.0 / max(self.scale, 1e-6))
+            viewport_rect.adjust(-margin, -margin, margin, margin)
+        else:
+            viewport_rect = QtCore.QRectF(self.pixmap.rect())
 
+        def shape_in_viewport(shape):
+            points = getattr(shape, "points", None)
+            if not points:
+                return False
+            if shape.shape_type == "circle" and len(points) == 2:
+                bounds = shape.get_circle_rect_from_line(points)
+                return bounds is not None and bounds.intersects(viewport_rect)
+            min_x = min(point.x() for point in points)
+            max_x = max(point.x() for point in points)
+            min_y = min(point.y() for point in points)
+            max_y = max(point.y() for point in points)
+            bounds = QtCore.QRectF(
+                min_x,
+                min_y,
+                max(max_x - min_x, 1.0),
+                max(max_y - min_y, 1.0),
+            )
+            return bounds.intersects(viewport_rect)
+
+        viewport_shapes = [
+            shape
+            for shape in self.shapes
+            if self.is_visible(shape) and shape_in_viewport(shape)
+        ]
+
+        # Cache overlap geometry across repaint-only events such as hover and pan.
+        if self.show_overlap:
+            overlap_shapes = [
+                shape
+                for shape in viewport_shapes
+                if shape.shape_type in ["rectangle", "rotation"]
+                and getattr(shape, "label", None)
+                and shape.points
+            ]
+            overlap_key = tuple(
+                (
+                    id(shape),
+                    shape.label,
+                    shape.shape_type,
+                    tuple((point.x(), point.y()) for point in shape.points),
+                )
+                for shape in overlap_shapes
+            )
+            if overlap_key != getattr(self, "_overlap_cache_key", None):
+                self._overlap_cache_key = overlap_key
+                self._overlap_cache_regions = self._find_overlapping_areas(
+                    overlap_shapes
+                )
+
+            overlap_regions = getattr(self, "_overlap_cache_regions", [])
+        else:
+            overlap_regions = []
         # Draw loading/waiting screen
         if self.is_loading:
             # Draw a semi-transparent rectangle
@@ -5263,12 +5382,19 @@ class Canvas(
 
         paintable_shapes = [
             shape
-            for shape in self.shapes
+            for shape in viewport_shapes
             if (shape.selected or not self._hide_backround)
-            and self.is_visible(shape)
             and not getattr(shape, "_brush_using_mask", False)
         ]
+        single_selected_shape = (
+            self.selected_shapes[0] if len(self.selected_shapes) == 1 else None
+        )
+        for shape in self.shapes:
+            shape._suppress_handles = False
         for shape in paintable_shapes:
+            shape._suppress_handles = (
+                shape.label == "mask" and shape is not single_selected_shape
+            )
             shape.fill = self._fill_drawing and (
                 shape.selected or shape == self.h_hape
             )
@@ -5278,10 +5404,8 @@ class Canvas(
         # on the original per-shape path.
         if Shape.highlighting_enabled:
             self._draw_non_accumulating_highlight_fills(p, paintable_shapes)
-        for shape in self.shapes:
-            if (
-                shape.selected or not self._hide_backround
-            ) and self.is_visible(shape):
+        for shape in paintable_shapes:
+            if shape.selected or not self._hide_backround:
                 shape.fill = self._fill_drawing and (
                     shape.selected or shape == self.h_hape
                 )
@@ -5338,7 +5462,7 @@ class Canvas(
         locked_labels = {label.strip() for label in locked_labels_str.split(',') if label.strip()}
         locked_hide_info = self._config.get("locked_hide_info", False)
         
-        for shape in self.shapes:
+        for shape in viewport_shapes:
             if (
                 shape.shape_type == "rotation"
                 and len(shape.points) == 4
@@ -5405,7 +5529,7 @@ class Canvas(
         # 绘制旋转矩形的边方向标识（圆球样式）
         if self.show_edge_direction:
             p.save()  # 保存画笔状态，避免污染后续绘制
-            for shape in self.shapes:
+            for shape in viewport_shapes:
                 if not self.is_visible(shape) or shape.shape_type != 'rotation':
                     continue
                 if len(shape.points) != 4:
@@ -5494,7 +5618,7 @@ class Canvas(
                     "Arial", int(max(6.0, int(round(8.0 / Shape.scale))))
                 )
             )
-            for shape in self.shapes:
+            for shape in viewport_shapes:
                 if not self.is_visible(shape) or shape.shape_type not in ['rectangle', 'rotation']:
                     continue
                 
@@ -5545,7 +5669,7 @@ class Canvas(
                     p.drawText(base_pos, text)
 
         # Draw live brush-edit overlays on top of the regular shapes.
-        self._paint_brush_overlays(p)
+        self._paint_brush_overlays(p, viewport_shapes)
         self._paint_magic_wand_overlay(p)
 
         if self.current:
@@ -6147,7 +6271,7 @@ class Canvas(
                 p.restore()
 
             p.save()
-            for shape in self.shapes:
+            for shape in viewport_shapes:
                 if not shape.visible:
                     continue
                 description = shape.description
@@ -6241,15 +6365,7 @@ class Canvas(
                 )
             )
             labels = []
-            shape_orders = {}
-            if self.show_order:
-                label_counters_for_ordering = {}
-                for i, shape_in_list in enumerate(self.shapes):
-                    label = shape_in_list.label
-                    label_counters_for_ordering[label] = label_counters_for_ordering.get(label, 0) + 1
-                    shape_orders[id(shape_in_list)] = (i + 1, label_counters_for_ordering[label])
-
-            for shape in self.shapes:
+            for shape in viewport_shapes:
                 if not self.is_visible(shape):
                     continue
                 d_react = shape.point_size / shape.scale
@@ -6258,6 +6374,7 @@ class Canvas(
                     "AUTOLABEL_OBJECT",
                     "AUTOLABEL_ADD",
                     "AUTOLABEL_REMOVE",
+                    "mask",
                 ]:
                     continue
 
@@ -6331,14 +6448,14 @@ class Canvas(
 
             pen = QtGui.QPen(QtGui.QColor("#000000"), 8, Qt.SolidLine)
             p.setPen(pen)
-            for _, _, text_pos, label_text in labels:
+            for shape, _, text_pos, label_text in labels:
                 if not shape.visible:
                     continue
                 p.drawText(text_pos, label_text)
 
         # Draw order numbers as blue circles at shape centers (新的序号显示方式)
         if self.show_order:
-            self.draw_order_circles(p)
+            self.draw_order_circles(p, viewport_shapes)
 
         # Draw alignment badges (reference "参" + target "对") at top layer
         # Only when reference is selected (alignment mode active)
@@ -6473,7 +6590,7 @@ class Canvas(
             p.setFont(font)
             attributes_list = []
 
-            for shape in self.shapes:
+            for shape in viewport_shapes:
                 if not shape.visible:
                     continue
                 if not hasattr(shape, "attributes") or not shape.attributes:
@@ -7125,10 +7242,12 @@ class Canvas(
 
         p.restore()
 
-    def draw_order_circles(self, p):
+    def draw_order_circles(self, p, viewport_shapes=None):
         """Draw order numbers as blue circles at shape centers"""
         if not self.shapes:
             return
+        if viewport_shapes is None:
+            viewport_shapes = self.shapes
 
         # Reset painter transform to draw in screen coordinates (fixed pixel size)
         p.save()
@@ -7155,6 +7274,8 @@ class Canvas(
         shape_orders = {}
         order_index = 0
         for shape in self.shapes:
+            if shape.label == "mask":
+                continue
             # 如果启用了锁定后不显示序号，跳过锁定的标签
             if locked_hide_order and shape.label in locked_labels:
                 # 检查是否被会话解锁
@@ -7167,10 +7288,10 @@ class Canvas(
             shape_orders[id(shape)] = (order_index, label_counters[label])
 
         # Draw order circles for visible shapes
-        for shape in self.shapes:
+        for shape in viewport_shapes:
             if not self.is_visible(shape):
                 continue
-            if shape.label in ["AUTOLABEL_OBJECT", "AUTOLABEL_ADD", "AUTOLABEL_REMOVE"]:
+            if shape.label in ["mask", "AUTOLABEL_OBJECT", "AUTOLABEL_ADD", "AUTOLABEL_REMOVE"]:
                 continue
 
             global_order, label_order = shape_orders.get(id(shape), (0, 0))
@@ -8443,7 +8564,7 @@ class Canvas(
         if self.edge_connections:
             self._sync_connected_shapes_on_keyboard_move(self.selected_shapes, offset)
 
-        self.repaint()
+        self.update()
         self.moving_shape = True
 
     def _collect_connected_for_move(self, shapes):
@@ -8506,7 +8627,7 @@ class Canvas(
             for i, shape in enumerate(self.selected_shapes):
                 if shape._shape_type == "rotation":
                     self.bounded_rotate_shapes(i, shape, theta)
-                    self.repaint()
+                    self.update()
                     self.rotating_shape = True
 
     def set_shape_rotation(self, shape, angle_radians):
@@ -8717,7 +8838,7 @@ class Canvas(
         # Cancel selection box mode if Alt key is released
         if ev.key() == QtCore.Qt.Key_Alt and self.selection_box_mode:
             self.selection_box_mode = False
-            self.repaint()
+            self.update()
             return
 
         # Cancel path selection modes if Shift key is released
@@ -8726,13 +8847,13 @@ class Canvas(
             if self.path_selection_mode:
                 self.path_selection_mode = False
                 self.path_highlighted_shapes.clear()
-                self.repaint()
+                self.update()
                 return
             if self.ctrl_path_selection_mode:
                 self.ctrl_path_selection_mode = False
                 self.ctrl_path_selection_points = []
                 self.ctrl_path_intersected_shapes = []
-                self.repaint()
+                self.update()
                 return
 
         # Cancel delete path selection mode if Alt key is released
@@ -8740,7 +8861,7 @@ class Canvas(
             self.delete_path_selection_mode = False
             self.delete_path_selection_points = []
             self.delete_path_intersected_shapes = []
-            self.repaint()
+            self.update()
             return
 
         modifiers = ev.modifiers()

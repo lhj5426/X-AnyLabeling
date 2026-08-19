@@ -11,6 +11,15 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QVBoxLayout,
     QWidget,
+    QFormLayout,
+    QGridLayout,
+    QLabel,
+    QLineEdit,
+    QDoubleSpinBox,
+    QSpinBox,
+    QSizePolicy,
+    QDialogButtonBox,
+    QMessageBox,
 )
 
 from anylabeling.services.auto_labeling.model_manager import ModelManager
@@ -272,6 +281,20 @@ class AutoLabelingWidget(QWidget):
         self.button_filter_classes.clicked.connect(self.on_filter_classes_clicked)
         self.button_filter_classes.setToolTip(
             self.tr("Configure which labels to display in detection results")
+        )
+
+        # Koharu only: choose which classes produce mask polygons.
+        self.button_mask_classes.setStyleSheet(get_normal_button_style())
+        self.button_mask_classes.clicked.connect(self.on_mask_classes_clicked)
+        self.button_mask_classes.setToolTip(
+            self.tr("选择要生成掩膜多边形的标签")
+        )
+
+        # Koharu only: edit model numeric parameters in the current session.
+        self.button_koharu_settings.setStyleSheet(get_normal_button_style())
+        self.button_koharu_settings.clicked.connect(self.on_koharu_settings_clicked)
+        self.button_koharu_settings.setToolTip(
+            self.tr("设置 Koharu 检测和掩膜参数")
         )
 
         # --- Configuration for: button_set_api_token ---
@@ -1242,9 +1265,9 @@ class AutoLabelingWidget(QWidget):
                 self.model_manager.loaded_model_config["type"]
                 in _AUTO_LABELING_IOU_MODELS
             ):
-                initial_iou_value = self.model_manager.loaded_model_config[
-                    "iou_threshold"
-                ]
+                initial_iou_value = self.model_manager.loaded_model_config.get(
+                    "iou_threshold", 0.50
+                )
                 self.edit_iou.setValue(initial_iou_value)
             else:
                 initial_iou_value = 0.0
@@ -1457,6 +1480,8 @@ class AutoLabelingWidget(QWidget):
             "button_set_api_token",
             "button_reset_tracker",
             "button_filter_classes",
+            "button_mask_classes",
+            "button_koharu_settings",
             "toggle_use_existing_boxes",
             "toggle_keep_original_boxes",
             "button_color_only",
@@ -1947,6 +1972,185 @@ class AutoLabelingWidget(QWidget):
 
         # 使用 show() 而不是 exec_()，实现非模态显示
         dialog.show()
+
+    def on_mask_classes_clicked(self):
+        """Configure mask polygon generation for Koharu only."""
+        model_config = self.model_manager.loaded_model_config
+        if not model_config or model_config.get("type") != "koharu_rfdetr_seg":
+            return
+
+        all_classes = [
+            name for name in _normalize_classes(model_config.get("classes", []))
+            if name != "panel"
+        ]
+        if not all_classes:
+            return
+        current = model_config.get("mask_classes")
+        current_classes = [] if current is None else list(current)
+        dialog = FilterClassesDialog(
+            all_classes=all_classes,
+            current_filter_classes=current_classes,
+            extra_labels_from_yaml=[],
+            on_yaml_import=None,
+            on_apply=self.apply_mask_classes,
+            info_text=self.tr("选择要生成掩膜多边形的标签"),
+            parent=self,
+        )
+        dialog.show()
+
+    def apply_mask_classes(self, selected_classes):
+        """Apply mask polygon generation classes for Koharu only."""
+        model_config = self.model_manager.loaded_model_config
+        if not model_config or model_config.get("type") != "koharu_rfdetr_seg":
+            return
+        selected_classes = [name for name in (selected_classes or []) if name != "panel"]
+        model_config["mask_classes"] = selected_classes
+        model = model_config.get("model")
+        if model is not None:
+            model.set_auto_labeling_mask_classes(selected_classes)
+        if selected_classes:
+            logger.info(f"Koharu 掩膜类别已更新：{selected_classes}")
+        else:
+            logger.info("Koharu：未勾选任何标签，不生成掩膜")
+
+    def on_koharu_settings_clicked(self):
+        """Show the numeric settings dialog for Koharu RF-DETR only."""
+        model_config = self.model_manager.loaded_model_config
+        if not model_config or model_config.get("type") != "koharu_rfdetr_seg":
+            return
+        model = model_config.get("model")
+        if model is None or not hasattr(model, "get_koharu_settings"):
+            return
+
+        if getattr(self, "_koharu_settings_dialog", None) is not None:
+            dialog = self._koharu_settings_dialog
+            if dialog.isVisible():
+                dialog.showNormal()
+                dialog.raise_()
+                dialog.activateWindow()
+                return
+
+        settings = model.get_koharu_settings()
+        dialog = QDialog(self)
+        self._koharu_settings_dialog = dialog
+        dialog.setWindowTitle(self.tr("参数设置"))
+        dialog.setWindowFlags(
+            Qt.Window
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowCloseButtonHint
+        )
+        dialog.setModal(False)
+        dialog.resize(210, 375)
+        dialog.setMinimumSize(190, 300)
+        dialog_layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        form.setVerticalSpacing(3)
+        form.setHorizontalSpacing(8)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        edits = {}
+
+        fields = [
+            ("置信度", "conf_threshold", settings["conf_threshold"]),
+            ("IoU", "iou_threshold", settings["iou_threshold"]),
+            ("包含率", "containment_threshold", settings["containment_threshold"]),
+            ("最大数量", "num_select", settings["num_select"]),
+            ("掩膜阈值", "mask_threshold", settings["mask_threshold"]),
+            ("多边形系数", "polygon_epsilon_factor", settings["polygon_epsilon_factor"]),
+            ("多边形最小面积", "polygon_min_area", settings["polygon_min_area"]),
+            ("膨胀核大小", "text_mask_dilate_kernel_size", settings["text_mask_dilate_kernel_size"]),
+            ("膨胀次数", "text_mask_dilate_iterations", settings["text_mask_dilate_iterations"]),
+            ("text", "class_threshold_0", settings["class_thresholds"].get(0, 0.25)),
+            ("onomatopoeia", "class_threshold_1", settings["class_thresholds"].get(1, 0.20)),
+            ("bubble", "class_threshold_2", settings["class_thresholds"].get(2, 0.50)),
+            ("panel", "class_threshold_3", settings["class_thresholds"].get(3, 0.50)),
+        ]
+        float_keys = {
+            "conf_threshold",
+            "iou_threshold",
+            "containment_threshold",
+            "mask_threshold",
+            "polygon_epsilon_factor",
+            "polygon_min_area",
+            "class_threshold_0",
+            "class_threshold_1",
+            "class_threshold_2",
+            "class_threshold_3",
+        }
+        int_keys = {
+            "num_select",
+            "text_mask_dilate_kernel_size",
+            "text_mask_dilate_iterations",
+        }
+        for label, key, value in fields:
+            if key in float_keys:
+                edit = QDoubleSpinBox()
+                edit.setDecimals(4 if key == "polygon_epsilon_factor" else 2)
+                edit.setRange(-1000000000.0, 1000000000.0)
+                edit.setSingleStep(0.0001 if key == "polygon_epsilon_factor" else 0.01)
+                edit.setValue(float(value))
+            elif key in int_keys:
+                edit = QSpinBox()
+                edit.setRange(1, 1000000000)
+                edit.setSingleStep(1)
+                edit.setValue(int(value))
+            else:
+                edit = QLineEdit(str(value))
+            edit.setFixedHeight(22)
+            edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            edits[key] = edit
+            form.addRow(self.tr(label), edit)
+
+        dialog_layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dialog
+        )
+        buttons.button(QDialogButtonBox.Ok).setText(self.tr("应用"))
+        buttons.button(QDialogButtonBox.Cancel).setText(self.tr("关闭"))
+        dialog_layout.addWidget(buttons)
+
+        def apply_settings():
+            try:
+                float_keys = [
+                    "conf_threshold", "iou_threshold", "containment_threshold",
+                    "mask_threshold", "polygon_epsilon_factor", "polygon_min_area",
+                ]
+                int_keys = [
+                    "num_select",
+                    "text_mask_dilate_kernel_size", "text_mask_dilate_iterations",
+                ]
+                values = dict(settings)
+                for key in float_keys:
+                    values[key] = float(edits[key].text().strip())
+                for key in int_keys:
+                    values[key] = int(edits[key].text().strip())
+                values["class_thresholds"] = {
+                    index: float(edits[f"class_threshold_{index}"].text().strip())
+                    for index in range(4)
+                }
+                model.set_koharu_settings(values)
+                model_config["koharu_settings"] = values
+                logger.info(f"参数已应用：{values}")
+            except ValueError:
+                QMessageBox.warning(
+                    dialog, self.tr("参数错误"), self.tr("请输入有效的数字")
+                )
+
+        buttons.accepted.connect(apply_settings)
+        buttons.rejected.connect(dialog.close)
+        dialog.finished.connect(
+            lambda _result: setattr(self, "_koharu_settings_dialog", None)
+        )
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    @staticmethod
+    def _make_koharu_threshold_edit(edits, settings, index):
+        key = f"class_threshold_{index}"
+        edit = QLineEdit(str(settings["class_thresholds"].get(index, 0.5)))
+        edits[key] = edit
+        return edit
 
     def apply_filter_classes(self, selected_classes):
         """应用过滤类别设置"""

@@ -894,12 +894,23 @@ class LabelingWidget(QtWidgets.QWidget):
         self.btn_select_all_shapes = ShrinkablePushButton(self.tr("全选"))
         self.btn_select_all_shapes.setToolTip(self.tr("选择所有对象"))
         def select_all_objects():
-            for item in self.label_list:
-                item.setCheckState(Qt.Checked)
-            # 同步更新 visibility_shapes_mode action 的状态
+            model = self.label_list.model()
+            self.label_list.setUpdatesEnabled(False)
+            model.blockSignals(True)
+            try:
+                for row in range(len(self.label_list)):
+                    item = self.label_list[row]
+                    item.setCheckState(Qt.Checked)
+                    shape = item.shape()
+                    if shape is not None:
+                        shape.visible = True
+            finally:
+                model.blockSignals(False)
+                self.label_list.setUpdatesEnabled(True)
             if self.canvas.shapes:
                 self._config["show_shapes"] = True
                 self.actions.visibility_shapes_mode.setChecked(True)
+            self.canvas.update()
         self.btn_select_all_shapes.clicked.connect(select_all_objects)
 
         self.btn_invert_selection_shapes = ShrinkablePushButton(self.tr("反选"))
@@ -11787,23 +11798,36 @@ class LabelingWidget(QtWidgets.QWidget):
     # React to canvas signals.
     def shape_selection_changed(self, selected_shapes):
         self._no_selection_slot = True
-        for shape in self.canvas.shapes:
-            shape.is_mouse_selected = False
-        for shape in self.canvas.selected_shapes:
+        previous = getattr(self.canvas, "selected_shapes", [])
+        for shape in previous:
             shape.selected = False
-        self.label_list.clearSelection()
-        self.canvas.selected_shapes = selected_shapes
+            shape.is_mouse_selected = False
+        self.canvas.selected_shapes = list(selected_shapes)
         allow_merge_shape_type = {"rectangle": 0, "polygon": 0, "rotation": 0}
-        for shape in self.canvas.selected_shapes:
-            shape.selected = True
-            shape.is_mouse_selected = True
-            if shape.shape_type in ["rectangle", "polygon", "rotation"]:
-                allow_merge_shape_type[shape.shape_type] += 1
-            item = self.label_list.find_item_by_shape(shape)
-            # NOTE: Handle the case when the shape is not found
-            if item is not None:
-                self.label_list.select_item(item)
-                self.label_list.scroll_to_item(item)
+        self.label_list.setUpdatesEnabled(False)
+        selection_model = self.label_list.selectionModel()
+        selection_model.blockSignals(True)
+        try:
+            selection_model.clearSelection()
+            item_by_shape = {
+                id(self.label_list[row].shape()): self.label_list[row]
+                for row in range(len(self.label_list))
+            }
+            for shape in self.canvas.selected_shapes:
+                shape.selected = True
+                shape.is_mouse_selected = True
+                if shape.shape_type in allow_merge_shape_type:
+                    allow_merge_shape_type[shape.shape_type] += 1
+                item = item_by_shape.get(id(shape))
+                if item is not None:
+                    self.label_list.select_item(item)
+            if len(self.canvas.selected_shapes) == 1:
+                item = item_by_shape.get(id(self.canvas.selected_shapes[0]))
+                if item is not None:
+                    self.label_list.scroll_to_item(item)
+        finally:
+            selection_model.blockSignals(False)
+            self.label_list.setUpdatesEnabled(True)
         self._no_selection_slot = False
 
         # Log target selection count in alignment mode
@@ -12462,9 +12486,24 @@ class LabelingWidget(QtWidgets.QWidget):
         return None
 
     def remove_labels(self, shapes):
-        for shape in shapes:
-            item = self.label_list.find_item_by_shape(shape)
-            self.label_list.remove_item(item)
+        if not shapes:
+            return
+        shape_ids = {id(shape) for shape in shapes}
+        rows = []
+        for row in range(len(self.label_list)):
+            item = self.label_list[row]
+            shape = item.shape()
+            if shape is not None and id(shape) in shape_ids:
+                rows.append(row)
+        model = self.label_list.model()
+        self.label_list.setUpdatesEnabled(False)
+        model.blockSignals(True)
+        try:
+            for row in reversed(rows):
+                model.removeRows(row, 1)
+        finally:
+            model.blockSignals(False)
+            self.label_list.setUpdatesEnabled(True)
         self.update_combo_box()
         self.update_gid_box()
         self._update_all_item_orders()
@@ -13341,15 +13380,22 @@ class LabelingWidget(QtWidgets.QWidget):
 
     def update_label_visibility(self, label, is_visible):
         """标签区勾选同步到对象区，并同步可见性"""
-        for item in self.label_list:
-            shape = item.shape()
-            if shape.label == label:
-                # 更新对象区的勾选状态
-                item.setCheckState(Qt.Checked if is_visible else Qt.Unchecked)
+        previous_blocked = self.label_list.blockSignals(True)
+        self.label_list.setUpdatesEnabled(False)
+        try:
+            check_state = Qt.Checked if is_visible else Qt.Unchecked
+            for item in self.label_list:
+                shape = item.shape()
+                if shape.label != label:
+                    continue
+                item.setCheckState(check_state)
                 shape.visible = is_visible
-                self.canvas.set_shape_visible(shape, is_visible)
+                self.canvas.visible[shape] = is_visible
+        finally:
+            self.label_list.blockSignals(previous_blocked)
+            self.label_list.setUpdatesEnabled(True)
 
-        # 更新导航器显示
+        self.canvas.update()
         self.update_navigator_shapes()
 
     def delete_current_page_shapes_by_label(self, label):

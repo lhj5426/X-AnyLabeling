@@ -80,6 +80,10 @@ _CUSTOM_MODELS = [
     "yoloe",
     "manga_ocr",
     "comic_text_detector",
+    "rfdetr_seg",
+    "koharu_rfdetr_seg",
+    "dfine_seg",
+    "rio_detr",
 ]
 
 
@@ -186,6 +190,10 @@ _AUTO_LABELING_CONF_MODELS = [
     "ppocr_v6",
     "manga_ocr",
     "comic_text_detector",
+    "rfdetr_seg",
+    "koharu_rfdetr_seg",
+    "dfine_seg",
+    "rio_detr",
 ]
 
 
@@ -226,6 +234,11 @@ _AUTO_LABELING_IOU_MODELS = [
     "yolo26_pose",
     "yoloe",
     "comic_text_detector",
+    "rfdetr",
+    "rfdetr_seg",
+    "koharu_rfdetr_seg",
+    "dfine_seg",
+    "rio_detr",
 ]
 
 
@@ -279,6 +292,10 @@ _AUTO_LABELING_PRESERVE_EXISTING_ANNOTATIONS_STATE_MODELS = [
     "manga_ocr",
     "segment_anything_2_video",
     "comic_text_detector",
+    "rfdetr_seg",
+    "koharu_rfdetr_seg",
+    "dfine_seg",
+    "rio_detr",
 ]
 
 

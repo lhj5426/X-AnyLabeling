@@ -431,6 +431,26 @@
       </widget>
      </item>
      <item>
+      <widget class="QPushButton" name="button_mask_classes">
+       <property name="text">
+        <string>生成掩膜</string>
+       </property>
+       <property name="toolTip">
+        <string>选择要生成掩膜多边形的类别</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="button_koharu_settings">
+       <property name="text">
+        <string>参数调整</string>
+       </property>
+       <property name="toolTip">
+        <string>调整Koharu检测和掩膜参数</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="QPushButton" name="toggle_use_existing_boxes">
        <property name="text">
         <string>检测+OCR</string>

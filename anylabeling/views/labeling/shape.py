@@ -130,6 +130,9 @@ class Shape:
         self.is_manually_locked = False # Initialize manual lock status (for individual shape locking)
         self.kie_linking = kie_linking
         self.points = []
+        self._path_cache_key = None
+        self._path_cache = None
+        self._suppress_handles = False
         self.fill = True
         self.selected = True
         self.is_mouse_selected = False
@@ -367,6 +370,8 @@ class Shape:
 
     def should_draw_point(self):
         """判断是否应该绘制圆形控制点（顶点）"""
+        if getattr(self, "_suppress_handles", False):
+            return False
         # 检查是否是锁定的标签
         if self.is_label_locked():
             # 不勾选：完全不显示；勾选：跟随高亮/非高亮设置
@@ -387,6 +392,8 @@ class Shape:
     
     def should_draw_square(self):
         """判断是否应该绘制方形控制块（边中点）"""
+        if getattr(self, "_suppress_handles", False):
+            return False
         # 检查是否是锁定的标签
         if self.is_label_locked():
             # 不勾选：完全不显示；勾选：跟随高亮/非高亮设置
@@ -1302,6 +1309,14 @@ class Shape:
 
     def make_path(self):
         """Create a path from shape"""
+        if not self.points:
+            return QtGui.QPainterPath()
+        cache_key = (
+            self.shape_type,
+            tuple((point.x(), point.y()) for point in self.points),
+        )
+        if cache_key == self._path_cache_key and self._path_cache is not None:
+            return self._path_cache
         if self.shape_type == "rectangle":
             path = QtGui.QPainterPath(self.points[0])
             for p in self.points[1:]:
@@ -1317,7 +1332,9 @@ class Shape:
             for p in self.points[1:]:
                 path.lineTo(p)
             path.closeSubpath()  # 闭合路径，确保重叠检测正确
-        return path
+        self._path_cache_key = cache_key
+        self._path_cache = path
+        return self._path_cache
 
     def bounding_rect(self):
         """Return bounding rectangle of the shape"""
@@ -1426,7 +1443,19 @@ class Shape:
             Uses deep copy to ensure complete independence between shapes.
             All nested objects (points, attributes, etc.) are also copied.
         """
-        return copy.deepcopy(self)
+        cache_key = self._path_cache_key
+        cache_path = self._path_cache
+        self._path_cache_key = None
+        self._path_cache = None
+        try:
+            copied_shape = copy.deepcopy(self)
+        finally:
+            self._path_cache_key = cache_key
+            self._path_cache = cache_path
+
+        copied_shape._path_cache_key = None
+        copied_shape._path_cache = None
+        return copied_shape
 
     def __len__(self):
         return len(self.points)
