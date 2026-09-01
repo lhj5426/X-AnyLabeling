@@ -2417,3 +2417,79 @@ def export_manga_translator_folder_annotation(self):
             icon=new_icon_path("error", "svg"),
         )
         popup.show_popup(self, position="center")
+
+
+def upload_manga109_annotation(self):
+    """导入 Manga109-s 数据集的 XML 标注文件"""
+    if not _check_filename_exist(self):
+        return
+
+    filter = "Manga109 XML (*.xml);;All Files (*)"
+    input_file, _ = QtWidgets.QFileDialog.getOpenFileName(
+        self,
+        self.tr("选择 Manga109 标注 XML 文件"),
+        "",
+        filter,
+    )
+
+    if not input_file:
+        return
+
+    image_dir_path = osp.dirname(self.filename)
+    output_dir_path = image_dir_path
+    if self.output_dir:
+        output_dir_path = self.output_dir
+
+    response = QtWidgets.QMessageBox()
+    response.setIcon(QtWidgets.QMessageBox.Warning)
+    response.setWindowTitle(self.tr("警告"))
+    response.setText(self.tr("当前标注将会丢失"))
+    response.setInformativeText(
+        self.tr(
+            "您将要为此任务上传新的标注。是否继续？"
+        )
+    )
+    response.setStandardButtons(
+        QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Ok
+    )
+    response.setStyleSheet(get_msg_box_style())
+
+    if response.exec_() != QtWidgets.QMessageBox.Ok:
+        return
+
+    try:
+        converter = LabelConverter()
+        success_count, fail_count, output_files = converter.manga109_to_custom(
+            input_xml=input_file,
+            image_dir_path=image_dir_path,
+            output_dir_path=output_dir_path,
+        )
+
+        # Refresh file list and UI
+        current_dir = osp.dirname(self.filename)
+        self.import_image_folder(current_dir, load=True)
+
+        if success_count > 0:
+            popup = Popup(
+                self.tr(f"成功导入 Manga109 标注！\n成功：{success_count}，失败：{fail_count}"),
+                self,
+                icon=new_icon_path("copy-green", "svg"),
+            )
+            popup.show_popup(self, popup_height=80, position="center")
+        else:
+            popup = Popup(
+                self.tr("导入 Manga109 标注失败，未找到有效的标注数据。"),
+                self,
+                icon=new_icon_path("error", "svg"),
+            )
+            popup.show_popup(self, position="center")
+
+    except Exception as e:
+        message = self.tr("导入 Manga109 标注时发生错误: %s") % str(e)
+        logger.error(message)
+        popup = Popup(
+            message,
+            self,
+            icon=new_icon_path("error", "svg"),
+        )
+        popup.show_popup(self, position="center")

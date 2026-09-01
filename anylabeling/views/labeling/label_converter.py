@@ -3070,3 +3070,125 @@ class LabelConverter:
             output_file = osp.join(output_dir_path, osp.splitext(image_name)[0] + ".json")
             with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(output_data, f, ensure_ascii=False, indent=2)
+
+    def manga109_to_custom(self, input_xml, image_dir_path, output_dir_path):
+        """
+        将 Manga109-s 数据集的 XML 标注导入为 X-AnyLabeling 格式。
+
+        参数:
+            input_xml: Manga109 标注 XML 文件路径
+            image_dir_path: 包含漫画图片文件的目录
+            output_dir_path: 保存 JSON 文件的目录
+
+        返回:
+            (成功数, 失败数, 输出文件列表)
+        """
+        try:
+            tree = ET.parse(input_xml)
+        except ET.ParseError as e:
+            logger.error(f"XML 解析失败 {input_xml}: {e}")
+            return 0, 1, []
+        root = tree.getroot()
+
+        # 角色 id -> 名称 映射（当前 label 使用元素类型，角色名保留以备扩展）
+        character_names = {}
+        characters = root.find("characters")
+        if characters is not None:
+            for character in characters.findall("character"):
+                character_names[character.get("id")] = character.get("name")
+
+        pages = root.find("pages")
+        if pages is None:
+            logger.error(f"未找到 <pages> 节点: {input_xml}")
+            return 0, 1, []
+
+        success_count = 0
+        fail_count = 0
+        output_files = []
+        skipped_pages = []
+
+        for page in pages.findall("page"):
+            index = page.get("index")
+            if index is None:
+                continue
+            try:
+                page_index = int(index)
+            except ValueError:
+                continue
+
+            image_name = f"{page_index:03d}.jpg"
+            image_path = osp.join(image_dir_path, image_name)
+
+            if not osp.exists(image_path):
+                skipped_pages.append(page_index)
+                continue
+
+            try:
+                image_width = int(page.get("width"))
+                image_height = int(page.get("height"))
+            except (TypeError, ValueError):
+                skipped_pages.append(page_index)
+                continue
+
+            shapes = []
+            for elem in page:
+                tag = elem.tag
+                if tag not in ("body", "face", "frame", "text"):
+                    continue
+                try:
+                    xmin = float(elem.get("xmin"))
+                    ymin = float(elem.get("ymin"))
+                    xmax = float(elem.get("xmax"))
+                    ymax = float(elem.get("ymax"))
+                except (TypeError, ValueError):
+                    continue
+
+                description = ""
+                if tag == "text":
+                    description = (elem.text or "").strip()
+
+                shape = {
+                    "label": tag,
+                    "score": None,
+                    "points": [
+                        [xmin, ymin],
+                        [xmax, ymin],
+                        [xmax, ymax],
+                        [xmin, ymax],
+                    ],
+                    "group_id": None,
+                    "description": description,
+                    "difficult": False,
+                    "shape_type": "rectangle",
+                    "flags": {},
+                    "attributes": {},
+                    "kie_linking": [],
+                }
+                shapes.append(shape)
+
+            output_data = {
+                "version": __version__,
+                "flags": {},
+                "shapes": shapes,
+                "imagePath": image_name,
+                "imageData": None,
+                "imageHeight": image_height,
+                "imageWidth": image_width,
+                "description": "",
+            }
+
+            output_file = osp.join(output_dir_path, f"{page_index:03d}.json")
+            try:
+                with open(output_file, "w", encoding="utf-8") as f:
+                    json.dump(output_data, f, ensure_ascii=False, indent=2)
+                success_count += 1
+                output_files.append(output_file)
+            except OSError as e:
+                logger.error(f"写入 JSON 失败 {output_file}: {e}")
+                fail_count += 1
+
+        if skipped_pages:
+            logger.info(
+                f"跳过未找到图片的页面: {skipped_pages}"
+            )
+        return success_count, fail_count, output_files

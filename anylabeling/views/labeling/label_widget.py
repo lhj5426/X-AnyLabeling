@@ -3044,6 +3044,14 @@ class LabelingWidget(QtWidgets.QWidget):
             tip=self.tr("导入 LabelPlus 格式文件（点模式）"),
         )
 
+        upload_manga109_annotation = action(
+            self.tr("导入 Manga109 XML"),
+            lambda: utils.upload_manga109_annotation(self),
+            None,
+            icon="format_coco",
+            tip=self.tr("导入 Manga109 数据集的 XML 标注文件"),
+        )
+
         # Export
         export_yolo_hbb_annotation = action(
             self.tr("&Export YOLO-Hbb Annotations"),
@@ -3434,6 +3442,7 @@ class LabelingWidget(QtWidgets.QWidget):
             upload_ballontranslator_annotation=upload_ballontranslator_annotation,
             upload_imagetrans_annotation=upload_imagetrans_annotation,
             upload_labelplus_annotation=upload_labelplus_annotation,
+            upload_manga109_annotation=upload_manga109_annotation,
             export_yolo_hbb_annotation=export_yolo_hbb_annotation,
             export_yolo_obb_annotation=export_yolo_obb_annotation,
             export_yolo_seg_annotation=export_yolo_seg_annotation,
@@ -3738,6 +3747,7 @@ class LabelingWidget(QtWidgets.QWidget):
                 upload_ballontranslator_annotation,
                 upload_imagetrans_annotation,
                 upload_labelplus_annotation,
+                upload_manga109_annotation,
             ),
         )
         utils.add_actions(
