@@ -1297,6 +1297,12 @@ class LabelingWidget(QtWidgets.QWidget):
         self.unique_label_list.batch_delete_all_label_shapes.connect(
             self.batch_delete_all_label_shapes
         )
+        self.unique_label_list.clear_label_text_current.connect(
+            self.clear_label_text_current
+        )
+        self.unique_label_list.clear_label_text_all.connect(
+            self.clear_label_text_all
+        )
         self.unique_label_list.batch_change_label_color.connect(
             self.batch_change_label_color
         )
@@ -13568,6 +13574,120 @@ class LabelingWidget(QtWidgets.QWidget):
         # 更新画布
         self.canvas.update()
         self.set_dirty()
+
+    def clear_label_text_current(self, labels):
+        from PyQt5 import QtWidgets
+        labels = set(labels or [])
+        if not labels:
+            return
+        label_counts = {}
+        for shape in self.canvas.shapes:
+            if shape.label in labels and shape.description:
+                label_counts[shape.label] = label_counts.get(shape.label, 0) + 1
+        count = sum(label_counts.values())
+        if len(labels) == 1:
+            label = next(iter(labels))
+            message = (
+                f"确定要清空本页所有标签为 '{label}' 的原文吗？\n"
+                f"共 {count} 个文本框"
+            )
+        else:
+            labels_info = "\n".join(
+                f"  • {label}: {label_counts.get(label, 0)}个"
+                for label in labels
+            )
+            message = (
+                f"确定要清空本页以下标签的所有原文吗？\n\n{labels_info}\n\n"
+                f"共 {count} 个文本框"
+            )
+        reply = QtWidgets.QMessageBox.question(
+            self, "确认清空", message,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        changed = 0
+        for shape in self.canvas.shapes:
+            if shape.label in labels and shape.description:
+                shape.description = ""
+                changed += 1
+        if changed:
+            self.set_dirty(mark_as_manually_edited=False)
+            self.canvas.update()
+
+    def clear_label_text_all(self, labels):
+        import json, os
+        from PyQt5 import QtWidgets
+        labels = set(labels or [])
+        if not labels:
+            return
+
+        total_texts = 0
+        label_counts = {label: 0 for label in labels}
+        json_paths = []
+        for image_file in getattr(self, "image_list", []):
+            path = os.path.splitext(image_file)[0] + ".json"
+            if self.output_dir:
+                path = os.path.join(self.output_dir, os.path.basename(path))
+            if not os.path.exists(path):
+                continue
+            json_paths.append(path)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                for shape in data.get("shapes", []):
+                    label = shape.get("label")
+                    if label in labels and shape.get("description"):
+                        label_counts[label] += 1
+                        total_texts += 1
+            except Exception as exc:
+                logger.error(f"Failed reading {path}: {exc}")
+
+        if len(labels) == 1:
+            label = next(iter(labels))
+            message = (
+                f"确定要清空所有图片中标签为 '{label}' 的原文吗？\n"
+                f"这将影响 {len(self.image_list)} 张图片，且无法撤销！"
+            )
+        else:
+            labels_str = "、".join(f"'{label}'" for label in labels)
+            message = (
+                f"确定要清空所有图片中以下标签的原文吗？\n\n"
+                f"{labels_str}\n\n"
+                f"这将影响 {len(self.image_list)} 张图片，且无法撤销！"
+            )
+        reply = QtWidgets.QMessageBox.question(
+            self, "确认清空", message,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+        changed_files = 0
+        changed_texts = 0
+        for path in json_paths:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                changed = False
+                for shape in data.get("shapes", []):
+                    if shape.get("label") in labels and shape.get("description"):
+                        shape["description"] = ""
+                        changed = True
+                        changed_texts += 1
+                if changed:
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    changed_files += 1
+            except Exception as exc:
+                logger.error(f"Failed clearing OCR text in {path}: {exc}")
+        # 当前页也从刚刚修改后的 JSON 重新载入，和现有“删除所有图片标签”逻辑一致。
+        if self.filename:
+            self.load_file(self.filename)
+        logger.info(
+            f"[清空原文] 标签数={len(labels)}，修改文件={changed_files}，清空文本框={changed_texts}"
+        )
 
     def batch_delete_current_page_shapes_by_labels(self, labels):
         """批量删除本页所有选中标签的矩形"""

@@ -51,6 +51,8 @@ class UniqueLabelQListWidget(EscapableQListWidget):
     batch_delete_current_page_shapes = pyqtSignal(list)  # 批量删除本页所有选中标签的矩形
     batch_delete_all_label_shapes = pyqtSignal(list)  # 批量删除所有图片中选中标签的矩形和标签
     batch_change_label_color = pyqtSignal(list)  # 批量修改标签颜色
+    clear_label_text_current = pyqtSignal(list)
+    clear_label_text_all = pyqtSignal(list)
     # 透明度设置信号
     change_label_alpha = pyqtSignal(str)  # 修改单个标签透明度
     batch_change_label_alpha = pyqtSignal(list)  # 批量修改标签透明度
@@ -255,6 +257,8 @@ class UniqueLabelQListWidget(EscapableQListWidget):
                 utils.new_icon('cancel'),
                 self.tr(f"删除选中标签(所有图片) ({len(selected_labels)}个)")
             )
+            clear_page_text_action = menu.addAction(utils.new_icon('delete'), self.tr(f"清空本页所有选中标签原文 ({len(selected_labels)}个)"))
+            clear_all_text_action = menu.addAction(utils.new_icon('cancel'), self.tr(f"清空选中标签原文(所有图片) ({len(selected_labels)}个)"))
             menu.addSeparator()
             change_color_action = menu.addAction(
                 utils.new_icon('color'),
@@ -290,6 +294,8 @@ class UniqueLabelQListWidget(EscapableQListWidget):
                 utils.new_icon('cancel'),
                 self.tr("删除该标签(所有图片)")
             )
+            clear_page_text_action = menu.addAction(utils.new_icon('delete'), self.tr("清空本页所有该标签原文"))
+            clear_all_text_action = menu.addAction(utils.new_icon('cancel'), self.tr("清空该标签原文(所有图片)"))
             menu.addSeparator()
             change_color_action = menu.addAction(
                 utils.new_icon('color'),
@@ -334,6 +340,10 @@ class UniqueLabelQListWidget(EscapableQListWidget):
             else:
                 # 单个操作
                 self.delete_all_label_shapes.emit(selected_labels[0])
+        elif action == clear_page_text_action:
+            self.clear_label_text_current.emit(selected_labels)
+        elif action == clear_all_text_action:
+            self.clear_label_text_all.emit(selected_labels)
         elif action == change_color_action:
             if is_multi_select:
                 # 批量操作：发送批量信号
