@@ -4,7 +4,7 @@ import os.path as osp
 from PIL import Image
 
 from PyQt5 import QtWidgets, QtGui
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QVBoxLayout,
     QProgressDialog,
@@ -46,6 +46,24 @@ TEXT_PROMPT_MODELS = [
 VIDEO_MODELS = [
     "segment_anything_2_video",
 ]
+
+
+class HayaiBatchWorker(QThread):
+    """Run crop-level Hayai OCR away from the Qt GUI thread."""
+
+    image_done = pyqtSignal(int, str)
+
+    def __init__(self, owner):
+        super().__init__(owner)
+        self.owner = owner
+
+    def run(self):
+        total = len(self.owner.image_list)
+        while self.owner.image_index < total and not self.owner.cancel_processing:
+            image_file = self.owner.image_list[self.owner.image_index]
+            _predict_with_existing_boxes(self.owner, image_file)
+            self.owner.image_index += 1
+            self.image_done.emit(self.owner.image_index, image_file)
 
 
 class TextInputDialog(QDialog):
@@ -312,7 +330,12 @@ def _predict_with_existing_boxes(self, image_file):
     if not model or not hasattr(model, "predict_shapes_from_boxes"):
         return False
 
-    result, timing = model.predict_shapes_from_boxes(img, boxes, image_file)
+    old_batch_mode = getattr(model, "batch_mode", False)
+    model.batch_mode = True
+    try:
+        result, timing = model.predict_shapes_from_boxes(img, boxes, image_file)
+    finally:
+        model.batch_mode = old_batch_mode
     if result is None or not result.shapes:
         return False
 
@@ -320,7 +343,10 @@ def _predict_with_existing_boxes(self, image_file):
     for j, idx in enumerate(box_indices):
         if j < len(result.shapes):
             shapes[idx]["description"] = result.shapes[j].description or ""
-            shapes[idx]["score"] = float(result.shapes[j].score)
+            # Crop-only OCR has no detection-box score.  Preserve the score
+            # produced by the detector that created this existing box.
+            if result.shapes[j].score is not None:
+                shapes[idx]["score"] = float(result.shapes[j].score)
             attrs = getattr(result.shapes[j], 'attributes', {}) or {}
             if attrs:
                 shapes[idx]["attributes"] = dict(attrs)
@@ -344,7 +370,7 @@ def _predict_with_existing_boxes(self, image_file):
     for j, idx in enumerate(box_indices):
         if j < len(result.shapes):
             text = result.shapes[j].description or ""
-            score = float(result.shapes[j].score)
+            score = getattr(result.shapes[j], "ocr_confidence", None)
             grouped[shapes[idx].get("label", "")].append((boxes[j], text, score))
     fname = os.path.basename(image_file)
     print(f"\n[批量已有框OCR] {fname}  共{len(box_indices)}个框 → {timing_str}")
@@ -353,7 +379,8 @@ def _predict_with_existing_boxes(self, image_file):
         for idx, item in enumerate(items, 1):
             coord, text, score = item
             print(f"标签:{label}({idx})")
-            print(f"[{coord}, ('{text}', {score:.4f})]")
+            confidence = f"{score:.4f}" if score is not None else "N/A"
+            print(f"[{coord}, ('{text}', OCR文字置信度={confidence})]")
     sys.stdout.flush()
 
     data["shapes"] = shapes
@@ -601,6 +628,12 @@ def process_next_image(self, progress_dialog):
                     and self.auto_labeling_widget._ocr_mode_current == "existing_ocr"
                 )
 
+                # Hayai is crop-level OCR only.  In batch mode it must always
+                # recognize existing JSON boxes; it has no whole-page detector.
+                model_type = self.auto_labeling_widget.model_manager.loaded_model_config.get("type")
+                if model_type == "hayai_ocr":
+                    use_existing = True
+
                 # 仅检测颜色（下拉菜单：_ocr_mode_current == "text_color"）
                 text_color = (
                     hasattr(self.auto_labeling_widget, '_ocr_mode_current')
@@ -764,6 +797,18 @@ def show_progress_dialog_and_process(self):
     )
     progress_dialog.canceled.connect(lambda: cancel_operation(self))
     progress_dialog.show()
+
+    model_type = self.auto_labeling_widget.model_manager.loaded_model_config.get("type")
+    if model_type == "hayai_ocr":
+        worker = HayaiBatchWorker(self)
+        self._hayai_batch_worker = worker  # Keep the QThread alive for its run.
+        worker.image_done.connect(lambda value, _name: progress_dialog.setValue(value))
+        worker.finished.connect(
+            lambda: finish_processing(self, progress_dialog)
+            if not self.cancel_processing else progress_dialog.close()
+        )
+        worker.start()
+        return
 
     QTimer.singleShot(200, lambda: process_next_image(self, progress_dialog))
 

@@ -790,6 +790,11 @@ class AutoLabelingWidget(QWidget):
             return
 
         # "运行"按钮不受颜色模式切换影响，始终走全流程
+        config = self.model_manager.loaded_model_config or {}
+        if config.get("type") == "hayai_ocr":
+            self.run_recognition_on_all()
+            return
+
         self.model_manager.predict_shapes_threading(
             self.parent.image, self.parent.filename
         )
@@ -1075,11 +1080,12 @@ class AutoLabelingWidget(QWidget):
             for i, (shape, _) in enumerate(box_infos):
                 if i < len(result.shapes):
                     text = result.shapes[i].description
-                    score = result.shapes[i].score
+                    score = getattr(result.shapes[i], "ocr_confidence", None)
                     attrs = getattr(result.shapes[i], 'attributes', {}) or {}
                     out.append([boxes[i], (text, score), attrs])
                     shape.description = text
-                    shape.score = score
+                    if score is not None:
+                        shape.score = score
                     if attrs:
                         shape.attributes = attrs
             # OCR 文本替换
@@ -1090,7 +1096,10 @@ class AutoLabelingWidget(QWidget):
                     if new_desc != desc:
                         shape.description = new_desc
             print(f"\n[选中OCR] 标签:{label}  {fname} → {timing_str}")
-            print(out)
+            for box, pair, attrs in out:
+                text, confidence = pair
+                conf = f"{confidence:.4f}" if confidence is not None else "N/A"
+                print(f"[{box}, ('{text}', OCR文字置信度={conf}), {attrs}]")
             sys.stdout.flush()
             # 触发画布和标签列表重绘
             self.parent.canvas.update()
@@ -1173,10 +1182,11 @@ class AutoLabelingWidget(QWidget):
             for i, (shape, _) in enumerate(box_infos):
                 if i < len(result.shapes):
                     text = result.shapes[i].description
-                    score = result.shapes[i].score
+                    score = getattr(result.shapes[i], "ocr_confidence", None)
                     attrs = getattr(result.shapes[i], 'attributes', {}) or {}
                     shape.description = text
-                    shape.score = score
+                    if score is not None:
+                        shape.score = score
                     if attrs:
                         shape.attributes = attrs
                     grouped[shape.label].append([boxes[i], (text, score), attrs])
@@ -1222,7 +1232,10 @@ class AutoLabelingWidget(QWidget):
                 print(f"标签:{label}  ({len(items)}个)")
                 for idx, item in enumerate(items, 1):
                     print(f"标签:{label}({idx})")
-                    print(f"{item}")
+                    box, pair, attrs = item
+                    text, confidence = pair
+                    conf = f"{confidence:.4f}" if confidence is not None else "N/A"
+                    print(f"[{box}, ('{text}', OCR文字置信度={conf}), {attrs}]")
             sys.stdout.flush()
 
             self.parent.canvas.update()

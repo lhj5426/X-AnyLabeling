@@ -390,3 +390,5 @@
 
 - model_name: "koharu_layout_rfdetr_seg_2xl_1152-local"
   config_file: ":/koharu_layout_rfdetr_seg_2xl_1152.yaml"
+- model_name: "hayai_ocr_v21"
+  config_file: ":/hayai_ocr.yaml"

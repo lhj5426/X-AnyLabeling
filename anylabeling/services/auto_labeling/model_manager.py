@@ -1407,6 +1407,18 @@ class ModelManager(QObject):
                 )
                 return
 
+        elif model_config["type"] == "hayai_ocr":
+            from .hayai_ocr import HayaiOCR
+            try:
+                model_config["model"] = HayaiOCR(
+                    model_config, on_message=self.new_model_status.emit
+                )
+                self.auto_segmentation_model_unselected.emit()
+                logger.info(f"Model loaded successfully: {model_config['type']}")
+            except Exception as e:
+                self.new_model_status.emit(f"Error in loading model: {e}")
+                logger.exception("Error loading Hayai OCR model")
+                return
         elif model_config["type"] == "manga_ocr":
             from .manga_ocr import MangaOCR
 

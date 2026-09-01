@@ -1,0 +1,11 @@
+type: hayai_ocr
+name: hayai_ocr_v21
+display_name: Hayai OCR v2.1 (ONNX)
+encoder_model_path: models/hayai_ocr/hayai_encoder.onnx
+prefill_model_path: models/hayai_ocr/hayai_prefill_universal.onnx
+decode_model_path: models/hayai_ocr/hayai_decode_universal.onnx
+tokenizer_path: models/hayai_ocr/tokenizer.json
+tokenizer_config_path: models/hayai_ocr/tokenizer_config.json
+preprocessor_config_path: models/hayai_ocr/preprocessor_config.json
+max_new_tokens: 128
+ocr_threshold: 0.0
