@@ -3053,14 +3053,9 @@ class Canvas(
                 self.setStatusTip(self.toolTip())
                 self.override_cursor(CURSOR_GRAB)
                 shape.is_hovered = True
-                # [Feature] Automatically highlight shape when the mouse is moved inside it
-                if self.h_shape_is_hovered:
-                    group_mode = (
-                        int(ev.modifiers()) == QtCore.Qt.ControlModifier
-                    )
-                    self.select_shape_point(
-                        pos, multiple_selection_mode=group_mode
-                    )
+                # Hover only highlights the shape. Selection must come from a
+                # mouse click, otherwise every hovered shape is treated as an
+                # active OCR overlay.
                 self.update()
 
                 if shape.shape_type == "rectangle":
@@ -6133,7 +6128,9 @@ class Canvas(
                         )
                 return 0, 0, 0, 0
 
-            def draw_text_in_rect(text, text_rect, fg_color=None, bg_color=None, shape_label=""):
+            def draw_text_in_rect(
+                text, text_rect, fg_color=None, bg_color=None, shape_label="", emphasize=False
+            ):
                 text_rect = QtCore.QRectF(text_rect).normalized()
                 if text_rect.width() <= 1 or text_rect.height() <= 1:
                     return
@@ -6156,8 +6153,11 @@ class Canvas(
                     p.restore()
                     return
 
-                p.setPen(QtCore.Qt.NoPen)
                 p.setBrush(use_bg_color)
+                if emphasize:
+                    p.setPen(QtGui.QPen(QtGui.QColor(130, 75, 0), 2.0 / self.scale))
+                else:
+                    p.setPen(QtCore.Qt.NoPen)
                 p.drawRect(QtCore.QRectF(text_rect))
 
                 p.setPen(QtGui.QPen(use_text_color))
@@ -6270,8 +6270,66 @@ class Canvas(
                         inner_rect.translate(0, row_h)
                 p.restore()
 
+            def is_description_overlay_active(shape):
+                return (
+                    (shape is self.h_hape and getattr(shape, "is_hovered", False))
+                    or shape in self.selected_shapes
+                )
+
+            def description_overlay_rect(shape, text_rect, local_coordinates=False):
+                """Move a hovered or selected source-text overlay beside its box."""
+                is_active = is_description_overlay_active(shape)
+                if not is_active:
+                    return text_rect
+
+                rect = QtCore.QRectF(text_rect)
+                gap = max(4.0, 4.0 / max(self.scale, 0.01))
+                vertical = rect.height() >= rect.width()
+
+                if local_coordinates:
+                    if vertical:
+                        return QtCore.QRectF(
+                            rect.right() + gap, rect.top(), rect.width(), rect.height()
+                        )
+                    return QtCore.QRectF(
+                        rect.left(), rect.bottom() + gap, rect.width(), rect.height()
+                    )
+
+                if vertical:
+                    right = QtCore.QRectF(
+                        rect.right() + gap, rect.top(), rect.width(), rect.height()
+                    )
+                    left = QtCore.QRectF(
+                        rect.left() - gap - rect.width(), rect.top(), rect.width(), rect.height()
+                    )
+                    if not self.pixmap.isNull() and right.right() > self.pixmap.width():
+                        return left if left.left() >= 0 else right
+                    return right
+
+                below = QtCore.QRectF(
+                    rect.left(), rect.bottom() + gap, rect.width(), rect.height()
+                )
+                above = QtCore.QRectF(
+                    rect.left(), rect.top() - gap - rect.height(), rect.width(), rect.height()
+                )
+                if not self.pixmap.isNull() and below.bottom() > self.pixmap.height():
+                    return above if above.top() >= 0 else below
+                return below
+
+            # Draw displaced source overlays last so neighboring text layers cannot cover them.
+            inactive_text_shapes = [
+                shape for shape in viewport_shapes
+                if not is_description_overlay_active(shape)
+            ]
+            active_text_shapes = [
+                shape for shape in viewport_shapes
+                if is_description_overlay_active(shape) and shape is not self.h_hape
+            ]
+            if self.h_hape in viewport_shapes and is_description_overlay_active(self.h_hape):
+                active_text_shapes.append(self.h_hape)
+
             p.save()
-            for shape in viewport_shapes:
+            for shape in inactive_text_shapes + active_text_shapes:
                 if not shape.visible:
                     continue
                 description = shape.description
@@ -6293,6 +6351,14 @@ class Canvas(
                     if 'bg' in attrs and isinstance(attrs['bg'], (list, tuple)) and len(attrs['bg']) >= 3:
                         shape_bg = QtGui.QColor(int(attrs['bg'][0]), int(attrs['bg'][1]), int(attrs['bg'][2]))
                         shape_bg.setAlpha(235)
+
+                description_active = is_description_overlay_active(shape)
+                desc_fg = shape_fg
+                desc_bg = shape_bg
+                if description_active:
+                    # The displaced source layer must remain visually distinct from the normal overlay.
+                    desc_fg = QtGui.QColor(20, 20, 20)
+                    desc_bg = QtGui.QColor(255, 210, 45, 245)
 
                 if shape.shape_type in ["rotation", "rotation3"] and len(shape.points) == 4:
                     # 用 minAreaRect 获取规范化角点，确保文字方向正确
@@ -6330,12 +6396,21 @@ class Canvas(
                     p.setWorldTransform(transform, True)
                     text_rect = QtCore.QRectF(0, 0, width, height)
                     if show_desc and show_trans:
-                        desc_rect = QtCore.QRectF(0, 0, width, height / 2.0)
+                        desc_rect = description_overlay_rect(
+                            shape, text_rect, local_coordinates=True
+                        )
                         trans_rect = QtCore.QRectF(0, height / 2.0, width, height / 2.0)
-                        draw_text_in_rect(description, desc_rect, shape_fg, shape_bg, shape_label)
+                        draw_text_in_rect(description, desc_rect, desc_fg, desc_bg, shape_label, description_active)
                         draw_text_in_rect(translation, trans_rect, shape_fg, shape_bg, shape_label)
                     elif show_desc:
-                        draw_text_in_rect(description, text_rect, shape_fg, shape_bg, shape_label)
+                        draw_text_in_rect(
+                            description,
+                            description_overlay_rect(shape, text_rect, local_coordinates=True),
+                            desc_fg,
+                            desc_bg,
+                            shape_label,
+                            description_active,
+                        )
                     else:
                         draw_text_in_rect(translation, text_rect, shape_fg, shape_bg, shape_label)
                     p.restore()
@@ -6348,12 +6423,19 @@ class Canvas(
                 text_rect = bbox.adjusted(padding, padding, -padding, -padding)
                 if show_desc and show_trans:
                     mid_y = text_rect.top() + text_rect.height() / 2.0
-                    desc_rect = QtCore.QRectF(text_rect.left(), text_rect.top(), text_rect.width(), text_rect.height() / 2.0)
+                    desc_rect = description_overlay_rect(shape, text_rect)
                     trans_rect = QtCore.QRectF(text_rect.left(), mid_y, text_rect.width(), text_rect.height() / 2.0)
-                    draw_text_in_rect(description, desc_rect, shape_fg, shape_bg, shape_label)
+                    draw_text_in_rect(description, desc_rect, desc_fg, desc_bg, shape_label, description_active)
                     draw_text_in_rect(translation, trans_rect, shape_fg, shape_bg, shape_label)
                 elif show_desc:
-                    draw_text_in_rect(description, text_rect, shape_fg, shape_bg, shape_label)
+                    draw_text_in_rect(
+                        description,
+                        description_overlay_rect(shape, text_rect),
+                        desc_fg,
+                        desc_bg,
+                        shape_label,
+                        description_active,
+                    )
                 else:
                     draw_text_in_rect(translation, text_rect, shape_fg, shape_bg, shape_label)
             p.restore()

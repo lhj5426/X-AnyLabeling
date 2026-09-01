@@ -233,6 +233,20 @@ class LayoutSettingsDialog(QtWidgets.QDialog):
         
         grid_group.setLayout(grid_layout)
         layout.addWidget(grid_group)
+
+        # 校对模式下，图片下方原文输入区的显示字号。
+        proofread_group = QtWidgets.QGroupBox("校对设置")
+        proofread_layout = QtWidgets.QHBoxLayout()
+        proofread_layout.addWidget(QtWidgets.QLabel("校对文字字号:"))
+        self.proofread_font_size_spinbox = QtWidgets.QSpinBox()
+        self.proofread_font_size_spinbox.setRange(10, 72)
+        self.proofread_font_size_spinbox.setValue(parent.proofread_font_size)
+        self.proofread_font_size_spinbox.setSuffix(" pt")
+        self.proofread_font_size_spinbox.setFixedWidth(90)
+        proofread_layout.addWidget(self.proofread_font_size_spinbox)
+        proofread_layout.addStretch()
+        proofread_group.setLayout(proofread_layout)
+        layout.addWidget(proofread_group)
         
         # 所有控件创建完成后，连接信号实现实时预览
         self.vertical_radio.toggled.connect(self._apply_settings)
@@ -243,6 +257,7 @@ class LayoutSettingsDialog(QtWidgets.QDialog):
         self.margin_spinbox.valueChanged.connect(self._apply_settings)
         self.border_width_spinbox.valueChanged.connect(self._apply_settings)
         self.radius_spinbox.valueChanged.connect(self._apply_settings)
+        self.proofread_font_size_spinbox.valueChanged.connect(self._apply_settings)
     
     def _apply_settings(self):
         """实时应用设置"""
@@ -261,17 +276,25 @@ class LayoutSettingsDialog(QtWidgets.QDialog):
         parent.spacing = settings['spacing']
         parent.border_width = settings['border_width']
         parent.border_radius = settings['border_radius']
+        parent.proofread_font_size = settings['proofread_font_size']
         
         parent.masonry_widget.columns = parent.columns
         parent.masonry_widget.row_height = parent.row_height
         parent.masonry_widget.spacing = parent.spacing
         parent.masonry_widget.margin = settings['margin']
         parent.masonry_widget.use_justified_layout = settings['use_justified_layout']
+        parent.masonry_widget.proofread_font_size = parent.proofread_font_size
         
         # 更新所有item的边框和圆角
         for item in parent.masonry_widget.items:
             item.set_border_width(parent.border_width)
             item.update_radius(parent.border_radius)
+
+        # 当前校对模式已创建的输入框无需重开窗口即可更新字号。
+        for editor in getattr(parent.masonry_widget, "_proofread_editors", []):
+            font = editor.font()
+            font.setPointSize(parent.proofread_font_size)
+            editor.setFont(font)
         
         # 切换横向/纵向模式
         if settings['horizontal_mode'] != parent.horizontal_mode:
@@ -296,7 +319,8 @@ class LayoutSettingsDialog(QtWidgets.QDialog):
             'spacing': self.spacing_spinbox.value(),
             'margin': self.margin_spinbox.value(),
             'border_width': self.border_width_spinbox.value(),
-            'border_radius': self.radius_spinbox.value()
+            'border_radius': self.radius_spinbox.value(),
+            'proofread_font_size': self.proofread_font_size_spinbox.value(),
         }
 
 
@@ -435,6 +459,30 @@ class ThumbnailItem(QtWidgets.QWidget):
         self._highlight_timer = None  # 高亮动画定时器
         
         # 鼠标指针
+        # OCR proofread mode: an editable source-text area below each image.
+        self.proofread_mode = False
+        self._proofread_editors = []
+        self.proofread_image_height = thumbnail_width
+        self._proofread_loading = False
+        self._proofread_editors = []
+        self._proofread_save_timer = QtCore.QTimer(self)
+        self._proofread_save_timer.setSingleShot(True)
+        self._proofread_save_timer.timeout.connect(self._save_proofread_texts)
+        self.proofread_panel = QtWidgets.QScrollArea(self)
+        self.proofread_panel.setWidgetResizable(True)
+        self.proofread_panel.setFrameShape(QtWidgets.QFrame.Box)
+        self.proofread_panel.setStyleSheet(
+            "QScrollArea { background: #f4f6f8; border: 2px solid #1e88e5; }"
+            "QPlainTextEdit { background: white; color: #111; border: 1px solid #9aa7b5; padding: 4px; font-size: 13px; }"
+            "QLabel { color: #243447; font-weight: bold; }"
+        )
+        self._proofread_content = QtWidgets.QWidget()
+        self._proofread_layout = QtWidgets.QVBoxLayout(self._proofread_content)
+        self._proofread_layout.setContentsMargins(5, 5, 5, 5)
+        self._proofread_layout.setSpacing(4)
+        self.proofread_panel.setWidget(self._proofread_content)
+        self.proofread_panel.hide()
+
         self._select_cursor = None
         self._delete_cursor = None
         
@@ -551,7 +599,10 @@ class ThumbnailItem(QtWidgets.QWidget):
             return f"{self.file_size / (1024 * 1024):.1f} MB"
 
     def _animated_display_rect(self):
-        rect = QtCore.QRectF(0, 0, self.width(), self.height())
+        image_height = (
+            self.proofread_image_height if self.proofread_mode else self.height()
+        )
+        rect = QtCore.QRectF(0, 0, self.width(), image_height)
         if (
             rect.isNull()
             or self.pixmap is None
@@ -595,7 +646,7 @@ class ThumbnailItem(QtWidgets.QWidget):
                 self.actual_height = int(self.thumbnail_width * orig_h / orig_w)
                 self.actual_width = self.thumbnail_width
         
-        self.setFixedSize(self.actual_width, self.actual_height)
+        self._apply_item_size()
         if self.animated_player is not None:
             self.animated_player.set_target_size(
                 QtCore.QSize(self.actual_width, self.actual_height)
@@ -685,7 +736,7 @@ class ThumbnailItem(QtWidgets.QWidget):
             self.actual_height = new_width
         
         # 强制设置尺寸
-        self.setFixedSize(self.actual_width, self.actual_height)
+        self._apply_item_size()
         
         # 强制重绘
         self.update()
@@ -715,6 +766,99 @@ class ThumbnailItem(QtWidgets.QWidget):
             self.need_reload.emit(self)
         
         return self.actual_width
+
+    def _apply_item_size(self):
+        image_height = max(1, int(self.actual_height))
+        self.proofread_image_height = image_height
+        # In proofreading mode the editor is positioned as a separate masonry
+        # row; the image item itself must remain image-height only.
+        total_height = image_height
+        self.setFixedSize(int(self.actual_width), total_height)
+        if self.proofread_mode:
+            self.proofread_panel.setGeometry(
+                0, image_height + 4, int(self.actual_width), image_height
+            )
+
+    def set_proofread_mode(self, enabled, image_height=None):
+        was_enabled = self.proofread_mode
+        self.proofread_mode = bool(enabled)
+        if image_height is not None:
+            self.actual_height = max(1, int(image_height))
+        if self.proofread_mode:
+            # Match the existing merge/grid viewer: fill the allocated image
+            # row instead of letterboxing it with a dark background.
+            self.keep_aspect = False
+            if not was_enabled:
+                self._load_proofread_texts()
+            self.proofread_panel.show()
+        else:
+            self._save_proofread_texts()
+            self.proofread_panel.hide()
+        self._apply_item_size()
+        self.update()
+
+    def _load_proofread_texts(self):
+        self._proofread_loading = True
+        while self._proofread_layout.count():
+            child = self._proofread_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        self._proofread_editors = []
+        json_path = os.path.splitext(self.image_path)[0] + ".json"
+        shapes = []
+        try:
+            with open(_get_win_long_path(json_path), "r", encoding="utf-8") as f:
+                shapes = json.load(f).get("shapes", [])
+        except (OSError, ValueError, TypeError):
+            pass
+        for shape_index, shape in enumerate(shapes):
+            if "description" not in shape:
+                continue
+            label = QtWidgets.QLabel(
+                f"{shape.get('label', 'text')} | 原文 {shape_index + 1}"
+            )
+            editor = QtWidgets.QPlainTextEdit(str(shape.get("description") or ""))
+            editor.setProperty("shape_index", shape_index)
+            editor.setMinimumHeight(58)
+            editor.textChanged.connect(self._schedule_proofread_save)
+            self._proofread_layout.addWidget(label)
+            self._proofread_layout.addWidget(editor)
+            self._proofread_editors.append(editor)
+        if not self._proofread_editors:
+            empty = QtWidgets.QLabel("该图片 JSON 中没有可校对的原文字段")
+            empty.setAlignment(Qt.AlignCenter)
+            self._proofread_layout.addWidget(empty)
+        self._proofread_layout.addStretch()
+        self._proofread_loading = False
+
+    def _schedule_proofread_save(self):
+        if not self._proofread_loading:
+            self._proofread_save_timer.start(350)
+
+    def _save_proofread_texts(self):
+        if self._proofread_loading or not self._proofread_editors:
+            return
+        json_path = os.path.splitext(self.image_path)[0] + ".json"
+        try:
+            with open(_get_win_long_path(json_path), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            shapes = data.get("shapes", [])
+            changed = False
+            for editor in self._proofread_editors:
+                shape_index = editor.property("shape_index")
+                if isinstance(shape_index, int) and shape_index < len(shapes):
+                    value = editor.toPlainText()
+                    if shapes[shape_index].get("description") != value:
+                        shapes[shape_index]["description"] = value
+                        changed = True
+            if changed:
+                data["manually_edited"] = True
+                with open(_get_win_long_path(json_path), "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                self.is_manually_edited = True
+                self.update()
+        except (OSError, ValueError, TypeError) as exc:
+            print(f"[OCR proofread] save failed: {self.image_path}: {exc}")
     
     def mark_for_reload(self):
         """标记需要重新加载"""
@@ -747,7 +891,7 @@ class ThumbnailItem(QtWidgets.QWidget):
                 # 方格子模式：保持比例居中显示，背景填充深灰色
                 painter.fillRect(rect, QtGui.QColor(40, 40, 40))
                 # 保持比例缩放
-                scaled = self.pixmap.scaled(self.width(), self.height(), 
+                scaled = self.pixmap.scaled(int(rect.width()), int(rect.height()), 
                                             Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 # 居中绘制
                 x = (self.width() - scaled.width()) // 2
@@ -761,7 +905,7 @@ class ThumbnailItem(QtWidgets.QWidget):
                 painter.drawPixmap(x, y, scaled)
             else:
                 # 瀑布流模式：填满整个区域
-                scaled = self.pixmap.scaled(self.width(), self.height(), 
+                scaled = self.pixmap.scaled(int(rect.width()), int(rect.height()), 
                                             Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
                 image_rect = rect
                 painter.drawPixmap(0, 0, scaled)
@@ -1529,6 +1673,8 @@ class MasonryWidget(QtWidgets.QWidget):
         self.grid_size = 200  # 方格子尺寸
         self.use_fixed_columns = False  # 横向模式是否使用固定列数（False=自动，True=固定）
         self.use_justified_layout = True  # 方格子模式是否使用两端对齐布局（True=两端对齐，False=固定列宽）
+        self.proofread_mode = False
+        self.proofread_font_size = 18
         self._resize_timer = QtCore.QTimer()
         self._resize_timer.setSingleShot(True)
         self._resize_timer.timeout.connect(self._do_relayout)
@@ -1573,7 +1719,9 @@ class MasonryWidget(QtWidgets.QWidget):
             self.setMinimumHeight(100)
             return
         
-        if self.grid_mode:
+        if self.proofread_mode:
+            self._do_proofread_layout()
+        elif self.grid_mode:
             if self.horizontal_mode:
                 self._do_grid_horizontal_layout()
             else:
@@ -1582,6 +1730,94 @@ class MasonryWidget(QtWidgets.QWidget):
             self._do_horizontal_layout()
         else:
             self._do_vertical_layout()
+
+    def _do_proofread_layout(self):
+        """Arrange image rows followed by matching text rows, two columns."""
+        columns = 2
+        available_width = max(100, self.width() - 2 * self.margin)
+        col_width = max(80, (available_width - self.spacing) // columns)
+        image_heights = []
+        # Remove old standalone editor widgets before rebuilding rows.
+        for editor in getattr(self, "_proofread_editors", []):
+            editor.setParent(None)
+            editor.deleteLater()
+        self._proofread_editors = []
+        for index, item in enumerate(self.items):
+            item.actual_width = col_width
+            if item.image_width > 0 and item.image_height > 0:
+                image_height = max(70, int(col_width * item.image_height / item.image_width))
+            else:
+                image_height = min(col_width, 220)
+            image_height = min(image_height, 420)
+            item.set_proofread_mode(False)
+            item.actual_height = image_height
+            item.setFixedSize(col_width, image_height)
+            image_heights.append(image_height)
+            column = index % columns
+            row = index // columns
+            item.move(
+                int(self.margin + column * (col_width + self.spacing)),
+                int(self.margin + sum(
+                    max(image_heights[r * columns:r * columns + columns]) * 2 + self.spacing
+                    for r in range(row)
+                )),
+            )
+            item.show()
+        rows = (len(self.items) + columns - 1) // columns
+        row_heights = [max(image_heights[r * columns:r * columns + columns]) for r in range(rows)]
+        # Put one independent editor row directly below each image row.
+        for row in range(rows):
+            row_top = self.margin + sum(
+                row_heights[r] * 2 + self.spacing for r in range(row)
+            )
+            editor_top = row_top + row_heights[row] + 2
+            for column in range(columns):
+                index = row * columns + column
+                if index >= len(self.items):
+                    continue
+                item = self.items[index]
+                editor = QtWidgets.QPlainTextEdit(self)
+                editor.setStyleSheet("QPlainTextEdit { background: #ffffff; color: #111111; border: 2px solid #1976d2; padding: 6px; }")
+                font = editor.font()
+                font.setPointSize(self.proofread_font_size)
+                editor.setFont(font)
+                editor.setPlaceholderText("在此输入或校对 OCR 原文")
+                editor.setGeometry(
+                    int(self.margin + column * (col_width + self.spacing)),
+                    int(editor_top), col_width, row_heights[row]
+                )
+                self._load_editor_text(editor, item.image_path)
+                editor.textChanged.connect(lambda e=editor, p=item.image_path: self._save_editor_text(e, p))
+                editor.show()
+                self._proofread_editors.append(editor)
+        self.setMinimumHeight(
+            int(self.margin * 2 + sum(h * 2 + self.spacing for h in row_heights))
+        )
+
+    def _load_editor_text(self, editor, image_path):
+        try:
+            with open(os.path.splitext(image_path)[0] + ".json", "r", encoding="utf-8") as f:
+                data = json.load(f)
+            editor.setPlainText("\n".join(str(s.get("description") or "") for s in data.get("shapes", []) if "description" in s))
+        except (OSError, ValueError, TypeError):
+            editor.setPlainText("")
+
+    def _save_editor_text(self, editor, image_path):
+        if not self.proofread_mode:
+            return
+        try:
+            path = os.path.splitext(image_path)[0] + ".json"
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            values = editor.toPlainText().splitlines()
+            descriptions = [s for s in data.get("shapes", []) if "description" in s]
+            for index, shape in enumerate(descriptions):
+                shape["description"] = values[index] if index < len(values) else ""
+            data["manually_edited"] = True
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except (OSError, ValueError, TypeError):
+            pass
     
     def _do_vertical_layout(self):
         """纵向瀑布流布局（按顺序轮流分配到各列：1→列1, 2→列2, 3→列3, 4→列4, 5→列1...）"""
@@ -2057,6 +2293,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.show_hover_info = True  # 默认显示悬停信息
         
         # 加载持久化设置
+        self.proofread_font_size = 18
         self.load_settings()
         
         self.loaded_count = 0
@@ -2081,6 +2318,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self._last_multi_selected_index = None  # 记录上次点击的索引，用于Shift范围选择（普通模式）
         
         # 初始化鼠标指针
+        self.proofread_mode = False
         self._init_cursors()
         
         self.init_ui()
@@ -2188,6 +2426,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         self.masonry_widget.columns = self.columns
         self.masonry_widget.spacing = self.spacing
         self.masonry_widget.row_height = self.row_height
+        self.masonry_widget.proofread_font_size = self.proofread_font_size
         self.masonry_widget.grid_mode = self.grid_mode
         self.masonry_widget.horizontal_mode = self.horizontal_mode
         self.masonry_widget.border_radius = self.border_radius
@@ -2281,6 +2520,15 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         """)
         self.merge_mode_btn.clicked.connect(self.toggle_merge_mode)
         layout.addWidget(self.merge_mode_btn)
+
+        self.proofread_mode_btn = QtWidgets.QPushButton("校对模式")
+        self.proofread_mode_btn.setFixedSize(70, 28)
+        self.proofread_mode_btn.setStyleSheet("""
+            QPushButton { background: #6f42c1; color: #fff; border: 1px solid #533394; border-radius: 3px; padding: 4px 8px; font-weight: bold; }
+            QPushButton:hover { background: #8055cf; }
+        """)
+        self.proofread_mode_btn.clicked.connect(self.toggle_proofread_mode)
+        layout.addWidget(self.proofread_mode_btn)
         
         # 删合模式状态标签（初始隐藏）
         self.merge_mode_status_label = QtWidgets.QLabel("")
@@ -2936,8 +3184,36 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
         # 保存配置
         self.save_masonry_settings()
     
+    def toggle_proofread_mode(self):
+        """Toggle embedded OCR text proofread cards in the masonry viewer."""
+        if not self.proofread_mode and self.merge_mode:
+            self.toggle_merge_mode()
+        self.proofread_mode = not self.proofread_mode
+        self.masonry_widget.proofread_mode = self.proofread_mode
+        if self.proofread_mode:
+            self.proofread_mode_btn.setText("退出校对")
+            self.proofread_mode_btn.setStyleSheet("""
+                QPushButton { background: #198754; color: #fff; border: 1px solid #146c43; border-radius: 3px; padding: 4px 8px; font-weight: bold; }
+                QPushButton:hover { background: #157347; }
+            """)
+        else:
+            for editor in getattr(self.masonry_widget, "_proofread_editors", []):
+                editor.setParent(None)
+                editor.deleteLater()
+            self.masonry_widget._proofread_editors = []
+            for item in self.masonry_widget.items:
+                item.set_proofread_mode(False)
+            self.proofread_mode_btn.setText("校对模式")
+            self.proofread_mode_btn.setStyleSheet("""
+                QPushButton { background: #6f42c1; color: #fff; border: 1px solid #533394; border-radius: 3px; padding: 4px 8px; font-weight: bold; }
+                QPushButton:hover { background: #8055cf; }
+            """)
+        self.masonry_widget.schedule_relayout(0)
+
     def toggle_merge_mode(self):
         """切换删合模式"""
+        if not self.merge_mode and self.proofread_mode:
+            self.toggle_proofread_mode()
         self.merge_mode = not self.merge_mode
         
         if self.merge_mode:
@@ -3802,6 +4078,9 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 self.border_width = settings.get("border_width", self.border_width)
                 self.columns = settings.get("columns", self.columns)
                 self.row_height = settings.get("row_height", self.row_height)
+                self.proofread_font_size = settings.get(
+                    "proofread_font_size", self.proofread_font_size
+                )
                 self.horizontal_mode = settings.get("horizontal_mode", self.horizontal_mode)
                 self.grid_mode = settings.get("grid_mode", self.grid_mode)
                 self.show_hover_info = settings.get("show_hover_info", self.show_hover_info)
@@ -3851,6 +4130,7 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
                 "border_width": self.border_width,
                 "columns": self.columns,
                 "row_height": self.row_height,
+                "proofread_font_size": self.proofread_font_size,
                 "horizontal_mode": self.horizontal_mode,
                 "grid_mode": self.grid_mode,
                 "show_hover_info": self.show_hover_info,
@@ -4062,6 +4342,8 @@ class MasonryThumbnailDialog(QtWidgets.QDialog):
     def closeEvent(self, event):
         if hasattr(self, 'load_timer'):
             self.load_timer.stop()
+        for item in self.masonry_widget.items:
+            item._save_proofread_texts()
         self.thread_pool.clear()
         for item in self.masonry_widget.items:
             try:
