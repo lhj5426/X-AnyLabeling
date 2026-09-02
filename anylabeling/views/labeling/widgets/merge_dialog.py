@@ -23,6 +23,7 @@ class MergeDialog(QtWidgets.QDialog):
         # 运行期间临时保存的窗口位置（不写入配置文件）
         self.saved_geometry = None
         self._page_signal_connected = False
+        self.merge_preview_dialog = None
 
         self.layout = QtWidgets.QVBoxLayout(self)
         self.layout.setSpacing(6)
@@ -109,6 +110,28 @@ class MergeDialog(QtWidgets.QDialog):
         
         self.require_same_label = QtWidgets.QCheckBox("要求标签完全相同才合并")
         label_layout.addRow(self.require_same_label)
+
+        # --- 合并颜色模式 --- #
+        self.merge_by_color = QtWidgets.QCheckBox("相邻同色合并（按文字颜色）")
+        self.merge_by_color.setChecked(True)
+        self.merge_by_color.setToolTip(
+            "勾选：只有 attributes.fg 文字颜色相同（差异在容差内）的相邻框才会合并，"
+            "用于区分不同说话人，例如女主红色文字、男主/旁白黑色文字。\n"
+            "取消勾选：不分颜色，按现有规则合并所有相邻框。"
+        )
+        label_layout.addRow(self.merge_by_color)
+
+        self.color_tolerance = QtWidgets.QSpinBox()
+        self.color_tolerance.setRange(0, 180)
+        self.color_tolerance.setValue(30)
+        self.color_tolerance.setToolTip(
+            "彩色文字按色相角比较，差异不超过该值(度)视为同一颜色。\n"
+            "灰色/黑色/白色文字（饱和度低）自动视为同一组，可互相合并。"
+        )
+        label_layout.addRow("颜色容差 (色相度):", self.color_tolerance)
+
+        self.color_tolerance.setEnabled(self.merge_by_color.isChecked())
+        self.merge_by_color.toggled.connect(self.color_tolerance.setEnabled)
 
         # 创建"仅在特定标签组内合并"复选框和按钮的水平布局
         specific_groups_row_layout = QtWidgets.QHBoxLayout()
@@ -412,15 +435,18 @@ class MergeDialog(QtWidgets.QDialog):
         self.run_current_button = QtWidgets.QPushButton("对当前文件运行")
         self.run_all_button = QtWidgets.QPushButton("对所有文件运行")
         self.run_range_button = QtWidgets.QPushButton("对范围文件运行")
+        self.preview_button = QtWidgets.QPushButton("预览合并")
         self.cancel_button = QtWidgets.QPushButton("关闭")
         
         button_layout.addWidget(self.run_current_button)
         button_layout.addWidget(self.run_range_button)
         button_layout.addWidget(self.run_all_button)
+        button_layout.addWidget(self.preview_button)
         button_layout.addWidget(self.cancel_button)
         button_layout.addStretch()
         
         self.cancel_button.clicked.connect(self._on_close)
+        self.preview_button.clicked.connect(self.open_merge_preview)
         
         # 🎯 运行按钮点击时也保存设置
         self.run_current_button.clicked.connect(self.save_settings_to_config)
@@ -567,6 +593,9 @@ class MergeDialog(QtWidgets.QDialog):
 
         config["LABEL_MERGE_STRATEGY"] = self.label_merge_strategy.currentData()
 
+        config["MERGE_BY_COLOR"] = self.merge_by_color.isChecked()
+        config["COLOR_MATCH_TOLERANCE"] = self.color_tolerance.value()
+
         config["VERTICAL_MERGE_PARAMS"] = {
             "max_vertical_gap": self.max_vertical_gap.value(),
             "min_width_overlap_ratio": self.min_width_overlap_ratio.value(),
@@ -604,6 +633,8 @@ class MergeDialog(QtWidgets.QDialog):
             "rtl_labels": self.rtl_labels_edit.text(),
             "ttb_labels": self.ttb_labels_edit.text(),
             "label_merge_strategy": self.label_merge_strategy.currentData(),
+            "merge_by_color": self.merge_by_color.isChecked(),
+            "color_tolerance": self.color_tolerance.value(),
             "enable_exclude_labels": self.enable_exclude_labels.isChecked(),
             "exclude_labels": self.exclude_labels.text(),
             "require_same_label": self.require_same_label.isChecked(),
@@ -670,6 +701,10 @@ class MergeDialog(QtWidgets.QDialog):
                 self.label_merge_strategy.setCurrentIndex(i)
                 break
         
+        # 加载按颜色合并设置
+        self.merge_by_color.setChecked(settings.get("merge_by_color", True))
+        self.color_tolerance.setValue(settings.get("color_tolerance", 30))
+
         # 加载黑名单设置
         self.enable_exclude_labels.setChecked(settings.get("enable_exclude_labels", True))
         self.exclude_labels.setText(settings.get("exclude_labels", "other"))
@@ -718,6 +753,19 @@ class MergeDialog(QtWidgets.QDialog):
             self.restoreGeometry(self.saved_geometry)
         # 更新范围限制和当前页
         self.update_range_limits()
+
+    def open_merge_preview(self):
+        """打开合并预览窗口"""
+        from .merge_preview_dialog import MergePreviewDialog
+        if self.merge_preview_dialog is None:
+            # 挂到主窗口下，避免独立无父窗口在切回设置窗时掉到后面
+            parent_window = None
+            if self.parent_widget is not None:
+                parent_window = self.parent_widget.window()
+            self.merge_preview_dialog = MergePreviewDialog(self, parent=parent_window)
+        self.merge_preview_dialog.show()
+        self.merge_preview_dialog.raise_()
+        self.merge_preview_dialog.activateWindow()
 
     def _on_close(self):
         """关闭按钮点击时保存配置并关闭"""

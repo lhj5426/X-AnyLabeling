@@ -301,10 +301,75 @@ def horizontal_can_merge(box1, box2, params, advanced_options):
     else:
         return 0 <= horizontal_gap <= params["max_horizontal_gap"]
 
+def get_shape_fg_color(shape):
+    """读取 shape 的文字颜色 (attributes.fg)，缺失或格式非法时返回 None"""
+    attrs = shape.get("attributes") or {}
+    fg = attrs.get("fg")
+    if isinstance(fg, (list, tuple)) and len(fg) == 3:
+        try:
+            return [int(c) for c in fg]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+def _rgb_chroma(rgb):
+    """绝对饱和度 = 最大通道 - 最小通道 (0-255)，用于判断是否灰/黑/白"""
+    return max(rgb) - min(rgb)
+
+def _rgb_hue(rgb):
+    """返回 RGB 的色相角 (0-360)。灰/黑色相无意义，调用前应先确认是有色。"""
+    r, g, b = [c / 255.0 for c in rgb]
+    mx, mn = max(r, g, b), min(r, g, b)
+    d = mx - mn
+    if d == 0:
+        return 0.0
+    if mx == r:
+        h = (g - b) / d + (6.0 if g < b else 0.0)
+    elif mx == g:
+        h = (b - r) / d + 2.0
+    else:
+        h = (r - g) / d + 4.0
+    return h * 60.0
+
+def colors_can_merge(shape1, shape2, config):
+    """按文字颜色判断两个框是否允许合并。
+    - 灰/黑/白（绝对饱和度低）彼此视为同色，可互相合并；
+    - 彩色与彩色按色相角差异判定；
+    - 灰与彩色不合并；
+    - 无颜色信息的框归入黑色组（灰/黑/白）。"""
+    if not config.get("MERGE_BY_COLOR", False):
+        return True
+
+    c1 = get_shape_fg_color(shape1)
+    c2 = get_shape_fg_color(shape2)
+    # 无颜色信息的框归入黑组（视为纯黑，饱和度 0，属于灰/黑/白组）
+    if c1 is None:
+        c1 = [0, 0, 0]
+    if c2 is None:
+        c2 = [0, 0, 0]
+
+    gray_threshold = config.get("COLOR_GRAY_THRESHOLD", 40)
+    hue_tolerance = config.get("COLOR_MATCH_TOLERANCE", 30)
+
+    is_gray1 = _rgb_chroma(c1) <= gray_threshold
+    is_gray2 = _rgb_chroma(c2) <= gray_threshold
+
+    if is_gray1 or is_gray2:
+        return is_gray1 and is_gray2
+
+    dh = abs(_rgb_hue(c1) - _rgb_hue(c2))
+    dh = min(dh, 360.0 - dh)
+    return dh <= hue_tolerance
+
 def can_merge_shapes(shape1, shape2, mode, config):
     if not can_labels_merge(shape1.get('label', ''), shape2.get('label', ''), config):
         if config.get("ADVANCED_MERGE_OPTIONS", {}).get("debug_mode", False):
             print(f"    跳过: 标签规则不允许 -> {shape1.get('label','')} vs {shape2.get('label','')}")
+        return False
+
+    if not colors_can_merge(shape1, shape2, config):
+        if config.get("ADVANCED_MERGE_OPTIONS", {}).get("debug_mode", False):
+            print(f"    跳过: 文字颜色不同 -> {get_shape_fg_color(shape1)} vs {get_shape_fg_color(shape2)}")
         return False
 
     box1, box2 = get_bounding_box(shape1), get_bounding_box(shape2)
@@ -409,7 +474,7 @@ def perform_merge(shapes, mode, config):
                 group_shapes.sort(key=lambda s: get_bounding_box(s)[0])
 
             # Merge descriptions and labels from the sorted group
-            final_description = "".join(s.get('description', '').strip() for s in group_shapes if s.get('description'))
+            final_description = "\n".join(s.get('description', '').strip() for s in group_shapes if s.get('description'))
             
             # The final_label is already calculated
 
@@ -422,6 +487,17 @@ def perform_merge(shapes, mode, config):
             merged_shape = copy.deepcopy(group_shapes[0]) # Use first shape as a template for flags etc.
             merged_shape['label'] = final_label
             merged_shape['description'] = final_description
+
+            # 保存每个原始框的文字和包围盒，供画布保留文字层渲染（不重新排版）
+            merged_texts = [
+                {"text": (s.get("description") or "").strip(), "box": get_bounding_box(s)}
+                for s in group_shapes
+                if (s.get("description") or "").strip()
+            ]
+            if merged_texts:
+                _attrs = dict(merged_shape.get("attributes") or {})
+                _attrs["merged_texts"] = merged_texts
+                merged_shape["attributes"] = _attrs
 
             if output_shape_type == "rotation":
                 # Check if all shapes in the group have the same direction
@@ -467,6 +543,142 @@ def perform_merge(shapes, mode, config):
     final_shapes.extend(shapes_to_keep)
 
     return final_shapes, total_merge_count, merge_details
+
+def get_merge_edge_metrics(shape1, shape2, mode, config):
+    """计算两个可合并框之间的方向/间隙距离/重叠率，供预览标注使用。"""
+    box1, box2 = get_bounding_box(shape1), get_bounding_box(shape2)
+    if mode == "VERTICAL":
+        params = config.get("VERTICAL_MERGE_PARAMS", {})
+        eps = params.get("overlap_epsilon", 0.0)
+        overlap = max(0.0, min(box1[2], box2[2]) - max(box1[0], box2[0]))
+        overlap_adj = max(0.0, overlap + eps)
+        min_width = max(1e-6, min(box1[2] - box1[0], box2[2] - box2[0]))
+        ratio = (overlap_adj / min_width) * 100.0
+        gap = max(box1[1], box2[1]) - min(box1[3], box2[3])
+        return "上下", gap, ratio
+    elif mode == "HORIZONTAL":
+        params = config.get("HORIZONTAL_MERGE_PARAMS", {})
+        eps = params.get("overlap_epsilon", 0.0)
+        overlap = max(0.0, min(box1[3], box2[3]) - max(box1[1], box2[1]))
+        overlap_adj = max(0.0, overlap + eps)
+        min_height = max(1e-6, min(box1[3] - box1[1], box2[3] - box2[1]))
+        ratio = (overlap_adj / min_height) * 100.0
+        gap = max(box1[0], box2[0]) - min(box1[2], box2[2])
+        return "左右", gap, ratio
+    return "", 0.0, 0.0
+
+def _node_as_shape(node):
+    box = node["box"]
+    return {
+        "label": node["label"],
+        "attributes": node["attributes"],
+        "points": [[box[0], box[1]], [box[2], box[1]], [box[2], box[3]], [box[0], box[3]]],
+        "shape_type": "rectangle",
+    }
+
+def analyze_merge(shapes, config):
+    """预览用：不写文件、不实际合并，返回 (groups, edges)。
+
+    groups: 最终合并组，每组是若干原始 shape 组成的列表（组内会合并成一个框）。
+    edges:  直接合并边列表，每项 (box_a, box_b, direction, gap, overlap_ratio)，
+            box_a/box_b 为该边两端的矩形 [x_min, y_min, x_max, y_max]。
+    """
+    shapes = [s for s in shapes if s is not None]
+    output_shape_type = config.get("OUTPUT_SHAPE_TYPE", "rectangle")
+    mergeable = [s for s in shapes if s.get("shape_type") == output_shape_type]
+    non_mergeable = [s for s in shapes if s.get("shape_type") != output_shape_type]
+
+    mode = config.get("MERGE_MODE", "NONE")
+    if not mergeable or mode == "NONE":
+        return [[s] for s in shapes], []
+
+    # 初始节点：每个框一个节点
+    nodes = []
+    for s in mergeable:
+        box = get_bounding_box(s)
+        nodes.append({
+            "shapes": [s],
+            "box": box,
+            "label": s.get("label", ""),
+            "attributes": s.get("attributes"),
+        })
+
+    edges = []
+
+    if mode == "VERTICAL":
+        passes = ["VERTICAL"]
+    elif mode == "HORIZONTAL":
+        passes = ["HORIZONTAL"]
+    elif mode == "VERTICAL_THEN_HORIZONTAL":
+        passes = ["VERTICAL", "HORIZONTAL"]
+    elif mode == "HORIZONTAL_THEN_VERTICAL":
+        passes = ["HORIZONTAL", "VERTICAL"]
+    else:
+        passes = []
+
+    for m in passes:
+        if len(nodes) <= 1:
+            break
+        n = len(nodes)
+        parent = list(range(n))
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i, j):
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                parent[rj] = ri
+                return True
+            return False
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if find(i) == find(j):
+                    continue
+                sa = _node_as_shape(nodes[i])
+                sb = _node_as_shape(nodes[j])
+                if can_merge_shapes(sa, sb, m, config):
+                    direction, gap, overlap = get_merge_edge_metrics(sa, sb, m, config)
+                    edges.append((list(nodes[i]["box"]), list(nodes[j]["box"]), direction, gap, overlap))
+                    union(i, j)
+
+        # 折叠本趟各合并组为单个节点，供下一趟使用
+        groups_map = {}
+        for i in range(n):
+            groups_map.setdefault(find(i), []).append(i)
+
+        new_nodes = []
+        for idxs in groups_map.values():
+            if len(idxs) == 1:
+                new_nodes.append(nodes[idxs[0]])
+                continue
+            merged_shapes = []
+            boxes = []
+            for i in idxs:
+                merged_shapes.extend(nodes[i]["shapes"])
+                boxes.append(nodes[i]["box"])
+            box = [min(b[0] for b in boxes), min(b[1] for b in boxes),
+                   max(b[2] for b in boxes), max(b[3] for b in boxes)]
+            label = nodes[idxs[0]]["label"]
+            for i in idxs[1:]:
+                label = merge_labels(label, nodes[i]["label"], config.get("LABEL_MERGE_STRATEGY", "FIRST"))
+            new_nodes.append({
+                "shapes": merged_shapes,
+                "box": box,
+                "label": label,
+                "attributes": nodes[idxs[0]]["attributes"],
+            })
+        nodes = new_nodes
+
+    groups = [nd["shapes"] for nd in nodes]
+    for s in non_mergeable:
+        groups.append([s])
+
+    return groups, edges
 
 def process_file(file_path, config):
     try:

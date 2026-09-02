@@ -5653,9 +5653,73 @@ class LabelingWidget(QtWidgets.QWidget):
                     for x, y in approx_contour
                 ]
 
+        # 合并文字（description）：按「文本合并顺序」里配置的标签方向排序，用 \n 分隔。
+        # JSON 层面文字合并成一段，画布层面仍按 \n 分栏/分行显示（保持原来的行）。
+        merge_settings = {}
+        try:
+            from anylabeling.config import USER_CONFIG_FILE
+            import yaml as _yaml
+            if osp.exists(USER_CONFIG_FILE):
+                with open(USER_CONFIG_FILE, "r", encoding="utf-8") as _f:
+                    _user_cfg = _yaml.safe_load(_f) or {}
+                merge_settings = _user_cfg.get("merge_tool_settings", {}) or {}
+        except Exception:
+            merge_settings = {}
+
+        def _split_labels(text):
+            return {l.strip() for l in str(text).split(",") if l.strip()}
+
+        rtl_labels = _split_labels(merge_settings.get("rtl_labels", "balloon,qipao,shuqing"))
+        ttb_labels = _split_labels(merge_settings.get("ttb_labels", "changfangtiao,hengxie"))
+        ltr_labels = _split_labels(merge_settings.get("ltr_labels", ""))
+
+        _merge_label = getattr(union_shape, "label", "") or ""
+        if _merge_label in rtl_labels:
+            _direction = "RTL"
+        elif _merge_label in ttb_labels:
+            _direction = "TTB"
+        else:
+            _direction = "LTR"
+
+        descs = []
+        for _shape in self.canvas.selected_shapes:
+            _d = (getattr(_shape, "description", "") or "").strip()
+            if _d:
+                _pts = _shape.points or []
+                _cx = (
+                    (min(p.x() for p in _pts) + max(p.x() for p in _pts)) / 2
+                    if _pts else 0
+                )
+                _cy = (
+                    (min(p.y() for p in _pts) + max(p.y() for p in _pts)) / 2
+                    if _pts else 0
+                )
+                _box = [
+                    min(p.x() for p in _pts), min(p.y() for p in _pts),
+                    max(p.x() for p in _pts), max(p.y() for p in _pts),
+                ] if _pts else [0, 0, 0, 0]
+                descs.append((_cx, _cy, _box, _d))
+        if descs:
+            if _direction == "RTL":
+                descs.sort(key=lambda item: item[0], reverse=True)
+            elif _direction == "TTB":
+                descs.sort(key=lambda item: item[1])
+            else:  # LTR
+                descs.sort(key=lambda item: item[0])
+            union_shape.description = "\n".join(d for _, _, _, d in descs)
+            # 保存每个原框的文字和包围盒，供画布保留文字层渲染（不重新排版）
+            _attrs = dict(getattr(union_shape, "attributes", {}) or {})
+            _attrs["merged_texts"] = [
+                {"text": d, "box": box} for _, _, box, d in descs
+            ]
+            union_shape.attributes = _attrs
+
         # Append merged shape and remove selected shapes
         self.add_label(union_shape)
         self.remove_labels(self.canvas.delete_selected())
+        # 修复：合并后的形状必须加入画布，否则会从画布上消失（需刷新才出现）
+        self.canvas.shapes.append(union_shape)
+        self.canvas.update()
         self.set_dirty()
         # Update expand margins dialog colors after union operation
         self._update_expand_margins_colors()

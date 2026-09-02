@@ -6360,6 +6360,34 @@ class Canvas(
                     desc_fg = QtGui.QColor(20, 20, 20)
                     desc_bg = QtGui.QColor(255, 210, 45, 245)
 
+                # 合并保留的文字层：按每个原框分别渲染，不重新排版（保持原字号/原位置）
+                if show_desc and attrs and attrs.get("merged_texts"):
+                    # 悬停/选中时整体按「合并后的大框」移到框旁（保持各文字块相对位置）
+                    _overlay_dx = 0.0
+                    _overlay_dy = 0.0
+                    if is_description_overlay_active(shape):
+                        try:
+                            _big_rect = shape.bounding_rect()
+                        except IndexError:
+                            _big_rect = None
+                        if _big_rect is not None:
+                            _big_overlay = description_overlay_rect(shape, _big_rect)
+                            _overlay_dx = _big_overlay.left() - _big_rect.left()
+                            _overlay_dy = _big_overlay.top() - _big_rect.top()
+                    for _mt in attrs["merged_texts"]:
+                        _mt_text = (_mt.get("text") or "").strip()
+                        _mt_box = _mt.get("box")
+                        if not _mt_text or not _mt_box or len(_mt_box) < 4:
+                            continue
+                        _mt_rect = QtCore.QRectF(
+                            _mt_box[0], _mt_box[1],
+                            _mt_box[2] - _mt_box[0], _mt_box[3] - _mt_box[1],
+                        )
+                        if _overlay_dx or _overlay_dy:
+                            _mt_rect.translate(_overlay_dx, _overlay_dy)
+                        draw_text_in_rect(_mt_text, _mt_rect, desc_fg, desc_bg, shape_label, description_active)
+                    continue
+
                 if shape.shape_type in ["rotation", "rotation3"] and len(shape.points) == 4:
                     # 用 minAreaRect 获取规范化角点，确保文字方向正确
                     pts_np = np.array([[p.x(), p.y()] for p in shape.points], dtype=np.float32)
