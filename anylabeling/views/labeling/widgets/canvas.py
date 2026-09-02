@@ -6714,6 +6714,8 @@ class Canvas(
 
                 attrs_text = []
                 for key, value in shape.attributes.items():
+                    if key == "merged_texts":
+                        continue
                     attrs_text.append(f"{key}: {value}")
                 if not attrs_text:
                     continue
