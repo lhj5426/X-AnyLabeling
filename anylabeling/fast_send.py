@@ -1,10 +1,16 @@
 """
 秒级转发器：EnumWindows + SendMessage(WM_COPYDATA)。
-只依赖 ctypes + stdlib，无需 PyQt/conda。
+只依赖 ctypes + stdlib，无需 PyQt/conda/yaml。
 
 使用 EnumWindows 确保在有多个子窗口（横向/垂直/瀑布流 viewer）
 打开时也能精确找到主窗口 HWND，避免向错误的窗口发送 WM_COPYDATA。
+
+匹配优先级：
+1. xanylabeling_TITLE.ini 里的标题精确匹配；
+2. 标题包含 "AnyLabeling" 的窗口；
+3. 原始默认标题 APP_TITLE。
 """
+import os
 import sys
 import ctypes
 
@@ -12,6 +18,7 @@ from app_info import __appname__
 
 WM_COPYDATA = 0x004A
 APP_TITLE = __appname__
+
 
 class COPYDATASTRUCT(ctypes.Structure):
     _fields_ = [
@@ -21,51 +28,80 @@ class COPYDATASTRUCT(ctypes.Structure):
     ]
 
 
-def _find_main_window():
-    """使用 EnumWindows 精确查找主窗口 HWND。
+def _load_active_titles():
+    """读项目根目录下的 xanylabeling_TITLE.ini，每行一个标题。"""
+    app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    title_file = os.path.join(app_dir, "xanylabeling_TITLE.ini")
+    titles = set()
+    if not os.path.isfile(title_file):
+        return titles
+    try:
+        with open(title_file, "r", encoding="utf-8") as f:
+            for line in f:
+                name = line.strip()
+                if name:
+                    titles.add(name)
+        return titles
+    except Exception:
+        return titles
 
-    FindWindowW 在 viewer dialog 打开时可能返回错误的窗口（如 viewer 窗口），
-    使用 EnumWindows 遍历所有顶层窗口，按标题 + 可见性 + 窗口类名精确匹配。
-    """
+
+def _find_main_window():
+    """使用 EnumWindows 按优先级查找主窗口 HWND。"""
     user32 = ctypes.WinDLL("user32", use_last_error=True)
 
     GWL_STYLE = -16
     WS_VISIBLE = 0x10000000
 
-    found = []
+    active_titles = _load_active_titles()
 
     WNDENUMPROC = ctypes.WINFUNCTYPE(
         ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p
     )
 
-    @WNDENUMPROC
-    def enum_proc(hwnd, lparam):
-        length = user32.GetWindowTextLengthW(hwnd)
-        if length == 0:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buf, length + 1)
-        if buf.value != APP_TITLE:
-            return True
-        style = user32.GetWindowLongW(hwnd, GWL_STYLE)
-        if not (style & WS_VISIBLE):
-            return True
-        class_buf = ctypes.create_unicode_buffer(256)
-        user32.GetClassNameW(hwnd, class_buf, 256)
-        class_name = class_buf.value or ""
-        is_main = class_name.startswith("Qt") and "Dialog" not in class_name
-        found.append((hwnd, class_name, is_main))
-        return True
+    def _enum_match(match_fn):
+        """遍历顶层窗口，返回第一个符合 match_fn 且是 Qt 主窗口的 HWND。"""
+        found = []
 
-    user32.EnumWindows(enum_proc, 0)
+        @WNDENUMPROC
+        def enum_proc(hwnd, lparam):
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value or ""
 
-    if not found:
-        return None
-    # 优先返回主窗口（非 Dialog 的 Qt 窗口）
-    for hwnd, _, is_main in found:
-        if is_main:
+            if not match_fn(title):
+                return True
+
+            style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+            if not (style & WS_VISIBLE):
+                return True
+            class_buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, class_buf, 256)
+            class_name = class_buf.value or ""
+            if not (class_name.startswith("Qt") and "Dialog" not in class_name):
+                return True
+            found.append(hwnd)
+            return True
+
+        user32.EnumWindows(enum_proc, 0)
+        return found[0] if found else None
+
+    # 优先级 1：配置文件精确匹配
+    if active_titles:
+        hwnd = _enum_match(lambda title: title in active_titles)
+        if hwnd:
             return hwnd
-    return found[0][0]
+
+    # 优先级 2：包含 AnyLabeling
+    hwnd = _enum_match(lambda title: "AnyLabeling" in title)
+    if hwnd:
+        return hwnd
+
+    # 优先级 3：原始默认标题
+    return _enum_match(lambda title: title == APP_TITLE)
 
 
 if len(sys.argv) < 2:
@@ -73,7 +109,14 @@ if len(sys.argv) < 2:
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
+titles = _load_active_titles()
+
 hwnd = _find_main_window()
+if not hwnd:
+    for t in titles:
+        hwnd = user32.FindWindowW(None, t)
+        if hwnd:
+            break
 if not hwnd:
     hwnd = user32.FindWindowW(None, APP_TITLE)
 if not hwnd:
