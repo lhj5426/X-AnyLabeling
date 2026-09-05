@@ -164,3 +164,4 @@ wassima==2.0.5
 Werkzeug==3.1.4
 winsdk==1.0.0b10
 zipp==3.23.0
+transformers==4.51.3

@@ -20,3 +20,4 @@ jsonlines
 json_repair
 importlib_metadata
 markdown
+transformers==4.51.3

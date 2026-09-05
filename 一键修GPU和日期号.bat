@@ -20,7 +20,7 @@ REM ʱļ
 
         echo !line! | findstr /b /c:"__appname__ =" >nul
         if !errorlevel! == 0 (
-            echo __appname__ = "!date!_X-AnyLabeling"
+            echo __appname__ = "!date!_YSG-AnyLabeling"
         ) else (
             echo !line! | findstr /b /c:"__preferred_device__ =" >nul
             if !errorlevel! == 0 (
